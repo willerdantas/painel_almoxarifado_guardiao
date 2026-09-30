@@ -668,6 +668,7 @@ body {
 table.tabela-dados input.campo-tabela {
   width: 100%;
   min-width: 110px;
+  max-width: 600px;
   padding: 5px 7px;
   border: 1px solid var(--cinza-borda);
   border-radius: 4px;
@@ -1124,6 +1125,11 @@ body.pagina-dashboard .cartao {
   align-items: stretch;
 }
 
+/* alguns slides ficam melhor alinhados a esquerda em vez de centralizados */
+.grafico-dashboard-area-esquerda {
+  justify-content: flex-start;
+}
+
 .grafico-pizza-caixa {
   width: clamp(210px, 24vw, 505px);
   aspect-ratio: 1 / 1;
@@ -1133,6 +1139,35 @@ body.pagina-dashboard .cartao {
 /* slide de estoque nao tem tabela embaixo, entao o grafico pode crescer mais */
 .grafico-pizza-caixa-grande {
   width: clamp(245px, 31vw, 615px);
+}
+
+/* grafico + legenda empilhados (grafico em cima, legenda embaixo) - o bloco inteiro que fica
+   alinhado a esquerda, a lista de itens some fica do lado dele */
+.grafico-barra-com-legenda {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(10px, 1vw, 20px);
+  flex: 1.4;
+  min-width: 400px;
+  max-width: 680px;
+}
+
+/* grafico de barras unico, largo - sem o aspect-ratio 1/1 da caixa de pizza/rosca, que deixaria
+   uma barra larga baixa demais */
+.grafico-barra-principal {
+  height: clamp(230px, 22vw, 360px);
+  position: relative;
+}
+
+/* legenda embaixo do grafico (em vez do lado, que e o uso padrao de .legenda-pizza) - vira uma
+   linha horizontal em vez de coluna, os itens nao precisam da largura minima pensada pro lado */
+.legenda-pizza-horizontal {
+  flex: 0 0 auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  min-width: 0;
+  max-width: none;
 }
 
 .legenda-pizza {
@@ -1171,6 +1206,26 @@ body.pagina-dashboard .cartao {
   max-width: 585px;
   overflow-x: auto;
   font-size: clamp(11px, 0.5vw + 4px, 16px);
+}
+
+.legenda-tabela-caixa h4 {
+  font-size: clamp(10px, 0.45vw + 4px, 15px);
+  font-weight: 600;
+  color: var(--azul-escuro);
+  margin-bottom: clamp(4px, 0.4vw, 12px);
+}
+
+/* 5 colunas com nome de produto comprido - precisa de mais largura que a legenda padrao, mas sem
+   deixar o dashboard inteiro mais largo que as outras telas (ex.: controle de pedidos) */
+.legenda-tabela-caixa-ressuprimento {
+  min-width: 380px;
+  max-width: 900px;
+}
+
+.legenda-tabela-caixa-ressuprimento td:first-child {
+  max-width: 260px;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .tabela-legenda th:first-child,
@@ -1276,6 +1331,7 @@ body.pagina-dashboard .cartao {
 .duas-tabelas > div {
   flex: 1;
   min-width: 280px;
+  max-width: 850px;
   overflow-x: auto;
 }
 

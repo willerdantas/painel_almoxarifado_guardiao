@@ -23,7 +23,7 @@
 
             <div class="slide-dashboard">
               <h2>Valor em Estoque por Armazém</h2>
-              <div class="grafico-dashboard-area grafico-dashboard-area-unico">
+              <div class="grafico-dashboard-area grafico-dashboard-area-unico grafico-dashboard-area-esquerda">
                 <div class="grafico-pizza-caixa grafico-pizza-caixa-grande"><canvas id="graficoEstoque"></canvas></div>
                 <div class="legenda-tabela-caixa">
                   <table class="tabela-dados tabela-legenda">
@@ -43,7 +43,7 @@
 
             <div class="slide-dashboard">
               <h2>Atas e Contratos Vencidos nos Últimos 6 Meses</h2>
-              <div class="grafico-dashboard-area grafico-dashboard-area-com-barras">
+              <div class="grafico-dashboard-area grafico-dashboard-area-com-barras grafico-dashboard-area-esquerda">
                 <div class="grafico-pizza-caixa"><canvas id="graficoVencidos"></canvas></div>
                 <div class="legenda-pizza" id="legendaVencidos"></div>
                 <div class="barras-laterais">
@@ -93,7 +93,7 @@
 
             <div class="slide-dashboard">
               <h2>Atas e Contratos Válidos por Saldo Remanescente</h2>
-              <div class="grafico-dashboard-area">
+              <div class="grafico-dashboard-area grafico-dashboard-area-esquerda">
                 <div class="grafico-pizza-caixa"><canvas id="graficoValidos"></canvas></div>
                 <div class="legenda-pizza" id="legendaValidos"></div>
                 <div class="matriz-dias-caixa">
@@ -140,6 +140,31 @@
                       </tr>
                     </thead>
                     <tbody id="tabelaAtasValidas"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div class="slide-dashboard">
+              <h2>Cobertura de Ponto de Ressuprimento por Armazém</h2>
+              <div class="grafico-dashboard-area grafico-dashboard-area-unico grafico-dashboard-area-esquerda">
+                <div class="grafico-barra-com-legenda">
+                  <div class="grafico-barra-principal"><canvas id="graficoPontoRessuprimento"></canvas></div>
+                  <div class="legenda-pizza legenda-pizza-horizontal" id="legendaPontoRessuprimento"></div>
+                </div>
+                <div class="legenda-tabela-caixa legenda-tabela-caixa-ressuprimento">
+                  <h4>Últimos Itens que Atingiram o Ponto de Ressuprimento</h4>
+                  <table class="tabela-dados">
+                    <thead>
+                      <tr>
+                        <th>Produto</th>
+                        <th>Armazém</th>
+                        <th>Estoque Atual</th>
+                        <th>Ponto de Ressuprimento</th>
+                        <th>Data</th>
+                      </tr>
+                    </thead>
+                    <tbody id="listaItensPontoRessuprimento"></tbody>
                   </table>
                 </div>
               </div>
@@ -286,56 +311,68 @@
       };
     }
 
-    // plugin pras barras empilhadas: escreve o valor dentro do pedaco quando cabe, senao poe do
-    // lado com um tracinho (pedaco fino de mes com poucos registros nao fica sem numero)
-    const PLUGIN_ROTULOS_BARRA_EMPILHADA = {
-      id: "rotulosBarraEmpilhada",
-      afterDatasetsDraw(chart) {
-        try {
-          const { ctx } = chart;
-          ctx.save();
-          ctx.font = "bold 10px 'Segoe UI', Arial, sans-serif";
+    // plugin pras barras empilhadas: escreve o rotulo dentro do pedaco quando cabe, senao poe do
+    // lado com um tracinho (pedaco fino nao fica sem numero). formatador decide o texto (valor
+    // cru nas barras mensais, "quantidade (percentual%)" na barra de ponto de ressuprimento)
+    function criarPluginRotulosBarraEmpilhada(formatador = (valor) => String(valor)) {
+      return {
+        id: "rotulosBarraEmpilhada",
+        afterDatasetsDraw(chart) {
+          try {
+            const { ctx } = chart;
+            ctx.save();
+            ctx.font = "bold 10px 'Segoe UI', Arial, sans-serif";
+            const ALTURA_LINHA = 12;
 
-          chart.data.datasets.forEach((dataset, indiceDataset) => {
-            const meta = chart.getDatasetMeta(indiceDataset);
-            if (meta.hidden) return;
-            meta.data.forEach((segmento, indice) => {
-              const valor = Number(dataset.data[indice]) || 0;
-              if (!valor) return;
+            chart.data.datasets.forEach((dataset, indiceDataset) => {
+              const meta = chart.getDatasetMeta(indiceDataset);
+              if (meta.hidden) return;
+              meta.data.forEach((segmento, indice) => {
+                const valor = Number(dataset.data[indice]) || 0;
+                if (!valor) return;
 
-              const { x, y, base, width } = segmento.getProps(["x", "y", "base", "width"], true);
-              const alturaSegmento = Math.abs(base - y);
-              const meioY = (y + base) / 2;
-              const texto = String(valor);
+                const { x, y, base, width } = segmento.getProps(["x", "y", "base", "width"], true);
+                const alturaSegmento = Math.abs(base - y);
+                const meioY = (y + base) / 2;
+                // formatador pode devolver varias linhas separadas por \n (ex.: quantidade numa
+                // linha e percentual embaixo) - cada linha e desenhada separada, empilhada no centro
+                const linhas = String(formatador(valor, dataset, indice)).split("\n");
+                const larguraTexto = Math.max(...linhas.map((linha) => ctx.measureText(linha).width));
+                const alturaTexto = linhas.length * ALTURA_LINHA;
+                const yInicial = meioY - ((linhas.length - 1) * ALTURA_LINHA) / 2;
 
-              if (alturaSegmento >= 15) {
-                ctx.fillStyle = "#ffffff";
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.fillText(texto, x, meioY);
-              } else {
-                const p1x = x + width / 2;
-                const p2x = p1x + 8;
-                ctx.strokeStyle = "#8a94a3";
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.moveTo(p1x, meioY);
-                ctx.lineTo(p2x, meioY);
-                ctx.stroke();
+                // so escreve dentro se a barra tiver altura E largura suficientes - antes so
+                // checava a altura, entao um rotulo comprido (tipo "730 (82%)") podia estourar
+                // pros lados numa barra fina e ficar cortado/sobreposto na barra vizinha
+                if (alturaSegmento >= alturaTexto + 4 && larguraTexto <= width - 6) {
+                  ctx.fillStyle = "#ffffff";
+                  ctx.textAlign = "center";
+                  ctx.textBaseline = "middle";
+                  linhas.forEach((linha, i) => ctx.fillText(linha, x, yInicial + i * ALTURA_LINHA));
+                } else {
+                  const p1x = x + width / 2;
+                  const p2x = p1x + 8;
+                  ctx.strokeStyle = "#8a94a3";
+                  ctx.lineWidth = 1;
+                  ctx.beginPath();
+                  ctx.moveTo(p1x, meioY);
+                  ctx.lineTo(p2x, meioY);
+                  ctx.stroke();
 
-                ctx.fillStyle = "#1c2b3a";
-                ctx.textAlign = "left";
-                ctx.textBaseline = "middle";
-                ctx.fillText(texto, p2x + 2, meioY);
-              }
+                  ctx.fillStyle = "#1c2b3a";
+                  ctx.textAlign = "left";
+                  ctx.textBaseline = "middle";
+                  linhas.forEach((linha, i) => ctx.fillText(linha, p2x + 2, yInicial + i * ALTURA_LINHA));
+                }
+              });
             });
-          });
-          ctx.restore();
-        } catch (erro) {
-          console.error("rotulosBarraEmpilhada:", erro);
-        }
-      },
-    };
+            ctx.restore();
+          } catch (erro) {
+            console.error("rotulosBarraEmpilhada:", erro);
+          }
+        },
+      };
+    }
 
     function montarLegenda(containerId, itens) {
       document.getElementById(containerId).innerHTML = itens
@@ -352,6 +389,26 @@
 
     function linhaVazia(colunas) {
       return `<tr><td colspan="${colunas}" class="msg-vazio">Nenhum registro encontrado.</td></tr>`;
+    }
+
+    // quebra um texto longo em varias linhas (por palavra inteira) - usado nos rotulos do eixo X
+    // do grafico de barras, o chart.js desenha cada item do array como uma linha separada
+    function quebrarTexto(texto, maxCaracteresPorLinha = 14) {
+      const palavras = String(texto ?? "").split(" ");
+      const linhas = [];
+      let linhaAtual = "";
+
+      palavras.forEach((palavra) => {
+        const candidata = linhaAtual ? `${linhaAtual} ${palavra}` : palavra;
+        if (candidata.length > maxCaracteresPorLinha && linhaAtual) {
+          linhas.push(linhaAtual);
+          linhaAtual = palavra;
+        } else {
+          linhaAtual = candidata;
+        }
+      });
+      if (linhaAtual) linhas.push(linhaAtual);
+      return linhas;
     }
 
     function montarTabelaSaldo(containerId, dados) {
@@ -382,7 +439,7 @@
         const dados = resultado.dados || [];
 
         new Chart(document.getElementById("graficoEstoque"), {
-          type: "pie",
+          type: "doughnut",
           data: {
             labels: dados.map((item) => item.nome_armazem),
             datasets: [{ data: dados.map((item) => Number(item.valor)), backgroundColor: PALETA_ARMAZEM }],
@@ -441,7 +498,7 @@
           },
           plugins: { legend: { display: false }, tooltip: { enabled: false } },
         },
-        plugins: [PLUGIN_ROTULOS_BARRA_EMPILHADA],
+        plugins: [criarPluginRotulosBarraEmpilhada()],
       });
     }
 
@@ -478,7 +535,7 @@
         const chaves = ["cem_por_cento", "acima_50", "acima_30", "acima_10", "zero_por_cento"];
 
         new Chart(document.getElementById(idGrafico), {
-          type: "pie",
+          type: "doughnut",
           data: {
             labels: chaves.map((chave) => ROTULOS_SALDO[chave]),
             datasets: [{ data: chaves.map((chave) => Number(buckets[chave] || 0)), backgroundColor: chaves.map((chave) => CORES_SALDO[chave]) }],
@@ -519,12 +576,110 @@
       }
     }
 
+    const CORES_PONTO_RESSUPRIMENTO = { sem_ponto: "#d0271d", com_ponto: "#2e9e44" };
+    const ROTULOS_PONTO_RESSUPRIMENTO = { sem_ponto: "Sem Ponto de Ressuprimento", com_ponto: "Com Ponto de Ressuprimento" };
+
+    // slide 4: cobertura de ponto de ressuprimento por armazem - barra 100% empilhada (sem x com
+    // ponto configurado), rotulo de cada pedaco mostra a quantidade de itens e o percentual
+    async function carregarPontoRessuprimento() {
+      try {
+        const resp = await fetch("/api/dashboard_ponto_ressuprimento");
+        const dados = await resp.json();
+        const lista = Array.isArray(dados) ? dados : [];
+
+        const datasetSem = {
+          label: ROTULOS_PONTO_RESSUPRIMENTO.sem_ponto,
+          data: lista.map((item) => Number(item.percentual_sem) || 0),
+          quantidades: lista.map((item) => Number(item.sem_ponto) || 0),
+          backgroundColor: CORES_PONTO_RESSUPRIMENTO.sem_ponto,
+        };
+        const datasetCom = {
+          label: ROTULOS_PONTO_RESSUPRIMENTO.com_ponto,
+          data: lista.map((item) => Number(item.percentual_com) || 0),
+          quantidades: lista.map((item) => Number(item.com_ponto) || 0),
+          backgroundColor: CORES_PONTO_RESSUPRIMENTO.com_ponto,
+        };
+
+        new Chart(document.getElementById("graficoPontoRessuprimento"), {
+          type: "bar",
+          data: {
+            labels: lista.map((item) => quebrarTexto(item.nome_armazem)),
+            datasets: [datasetSem, datasetCom],
+          },
+          options: {
+            maintainAspectRatio: false,
+            events: [],
+            // poucos armazens (as vezes so uns 6) numa barra larga deixavam cada barra fina e
+            // bem espacada, com cara de "esticado" - limita a grossura e deixa as barras juntas
+            datasets: { bar: { maxBarThickness: 56, categoryPercentage: 0.6, barPercentage: 0.9 } },
+            // rotulo em duas linhas (quantidade em cima, percentual embaixo) - ainda precisa de
+            // uma folga pro texto dos pedacos finos (desenhado do lado de fora) nao cortar na borda
+            layout: { padding: { right: 45, top: 10 } },
+            scales: {
+              x: { stacked: true, ticks: { font: { size: 10 } } },
+              y: { stacked: true, min: 0, max: 100, ticks: { callback: (valor) => `${valor}%`, font: { size: 10 } } },
+            },
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+          },
+          plugins: [
+            criarPluginRotulosBarraEmpilhada(
+              (percentual, dataset, indice) => `${dataset.quantidades[indice]}\n${Math.round(percentual)}%`
+            ),
+          ],
+        });
+
+        montarLegenda("legendaPontoRessuprimento", [
+          {
+            cor: CORES_PONTO_RESSUPRIMENTO.sem_ponto,
+            rotulo: ROTULOS_PONTO_RESSUPRIMENTO.sem_ponto,
+            valor: `${datasetSem.quantidades.reduce((soma, valor) => soma + valor, 0)}`,
+          },
+          {
+            cor: CORES_PONTO_RESSUPRIMENTO.com_ponto,
+            rotulo: ROTULOS_PONTO_RESSUPRIMENTO.com_ponto,
+            valor: `${datasetCom.quantidades.reduce((soma, valor) => soma + valor, 0)}`,
+          },
+        ]);
+      } catch (erro) {
+        console.error("Erro ao carregar ponto de ressuprimento:", erro);
+      }
+    }
+
+    // lista ao lado do grafico: ultimos 10 itens que atingiram o ponto de ressuprimento
+    // (estoque atual <= ponto), do mais recente pro mais antigo
+    async function carregarItensPontoRessuprimento() {
+      const corpo = document.getElementById("listaItensPontoRessuprimento");
+      try {
+        const resp = await fetch("/api/dashboard_itens_ponto_ressuprimento");
+        const dados = await resp.json();
+        const lista = Array.isArray(dados) ? dados : [];
+        corpo.innerHTML = lista.length
+          ? lista
+              .map(
+                (item) => `
+          <tr>
+            <td class="celula-quebra">${item.nome_produto ?? ""}</td>
+            <td class="celula-quebra">${item.nome_armazem ?? ""}</td>
+            <td>${formatarQuantidade(item.quantidade_atual)}</td>
+            <td>${formatarQuantidade(item.ponto_ressuprimento)}</td>
+            <td>${item.data ?? ""}</td>
+          </tr>`
+              )
+              .join("")
+          : linhaVazia(5);
+      } catch (erro) {
+        corpo.innerHTML = linhaVazia(5);
+      }
+    }
+
     carregarEstoque();
     carregarAtasContratos("/api/dashboard_atas_contratos_vencidos", "graficoVencidos", "legendaVencidos", "tabelaContratosVencidos", "tabelaAtasVencidas", {
       atas: "graficoBarraAtasVencidas",
       contratos: "graficoBarraContratosVencidos",
     });
     carregarAtasContratos("/api/dashboard_atas_contratos_validos", "graficoValidos", "legendaValidos", "tabelaContratosValidos", "tabelaAtasValidas", null, "matrizDiasValidos");
+    carregarPontoRessuprimento();
+    carregarItensPontoRessuprimento();
 
     // carrossel: troca de slide sozinho a cada 30s, com pontinhos clicaveis pra pular na hora
     const trilha = document.getElementById("trilhaDashboard");

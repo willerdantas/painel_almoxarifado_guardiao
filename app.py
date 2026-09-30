@@ -2005,6 +2005,61 @@ def api_dashboard_estoque_armazem():
         return jsonify({"erro": str(erro)}), 500
 
 
+@app.route("/api/dashboard_ponto_ressuprimento")
+def api_dashboard_ponto_ressuprimento():
+    # por armazem (so tipoarmazem C): dos itens que tem estoque (quantidade > 0), quantos tem
+    # ponto de ressuprimento configurado (> 0) e quantos nao tem (= 0 ou nulo) - parametro vem de
+    # estoquearmazem, a mesma tabela usada em /api/estoque_abastecimento
+    sql = """
+        SELECT
+            COALESCE(pes.nome, arm.sigla) AS nome_armazem,
+            count(*) FILTER (WHERE ea.quantidade > 0) AS total_itens,
+            count(*) FILTER (WHERE ea.quantidade > 0 AND COALESCE(ea.pontoressuprimento, 0) = 0) AS sem_ponto,
+            count(*) FILTER (WHERE ea.quantidade > 0 AND COALESCE(ea.pontoressuprimento, 0) > 0) AS com_ponto
+        FROM public.estoquearmazem ea
+        JOIN public.armazem arm ON arm.armazem = ea.armazem
+        LEFT JOIN public.pessoa pes ON pes.pessoa = arm.pessoa
+        WHERE arm.tipoarmazem = 'C'
+        GROUP BY arm.armazem, COALESCE(pes.nome, arm.sigla)
+        HAVING count(*) FILTER (WHERE ea.quantidade > 0) > 0
+        ORDER BY nome_armazem
+    """
+    try:
+        dados = run_query(sql)
+        for linha in dados:
+            total = int(linha["total_itens"]) or 1
+            linha["percentual_sem"] = round(int(linha["sem_ponto"]) / total * 100, 1)
+            linha["percentual_com"] = round(int(linha["com_ponto"]) / total * 100, 1)
+        return jsonify(dados)
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+
+
+@app.route("/api/dashboard_itens_ponto_ressuprimento")
+def api_dashboard_itens_ponto_ressuprimento():
+    # ultimos 10 itens que atingiram o ponto de ressuprimento (estoque atual <= ponto), do mais
+    # recente pro mais antigo - "data" vem de estoquearmazem._update, que muda toda vez que a
+    # quantidade/parametro daquele produto+armazem e recalculado (ou seja, a cada movimentacao)
+    sql = """
+        SELECT
+            p.nome AS nome_produto,
+            COALESCE(pes_arm.nome, arm.sigla) AS nome_armazem,
+            ea.quantidade AS quantidade_atual,
+            ea.pontoressuprimento AS ponto_ressuprimento,
+            to_char(ea._update, 'DD/MM/YY') AS data
+        FROM public.estoquearmazem ea
+        JOIN public.armazem arm ON arm.armazem = ea.armazem
+        LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
+        JOIN public.produto p ON p.produto = ea.produto
+        WHERE arm.tipoarmazem = 'C'
+        AND ea.pontoressuprimento > 0
+        AND ea.quantidade <= ea.pontoressuprimento
+        ORDER BY ea._update DESC
+        LIMIT 10
+    """
+    return _consulta_generica(sql)
+
+
 @app.route("/api/dashboard_atas_contratos_vencidos")
 def api_dashboard_atas_contratos_vencidos():
     try:
