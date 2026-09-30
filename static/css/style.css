@@ -1081,6 +1081,7 @@ body.pagina-dashboard .cartao {
 /* carrossel do dashboard: trilha com os 3 slides lado a lado, so um aparece por vez via transform */
 .carrossel-dashboard {
   overflow: hidden;
+  max-width: 1500px;
 }
 
 .trilha-dashboard {
