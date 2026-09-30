@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSYSTEM | Processos de Pagamento</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <div id="menuContainer"></div>
+
+    <main class="conteudo">
+      <div class="topo-pagina">
+        <h1>Processos de Pagamento</h1>
+        <div class="topo-direita">
+          <div class="area-usuario">
+            <span class="usuario-logado" id="usuarioLogado"></span>
+            <button class="botao-sair" id="botaoSairTopo">Sair</button>
+          </div>
+          <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+        </div>
+      </div>
+
+      <div class="cartao">
+        <div id="areaTabela">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script src="/static/js/tabela.js"></script>
+  <script>
+    // caverna so abre pra quem tem crachá
+    protegerPagina();
+    iniciarMenu("pagamentos");
+    carregarTabela("/api/pagamentos", "areaTabela");
+  </script>
+</body>
+</html>

@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSYSTEM | Produtos Vencidos</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <div id="menuContainer"></div>
+
+    <main class="conteudo">
+      <div class="topo-pagina">
+        <h1>Produtos Vencidos</h1>
+        <div class="topo-direita">
+          <div class="area-usuario">
+            <span class="usuario-logado" id="usuarioLogado"></span>
+            <button class="botao-sair" id="botaoSairTopo">Sair</button>
+          </div>
+          <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+        </div>
+      </div>
+
+      <section class="cartao filtros">
+        <form id="formFiltros" class="grade-filtros">
+          <div class="campo-filtro campo-curto">
+            <label for="filtroCodSeplag">Cód. Seplag</label>
+            <input type="text" id="filtroCodSeplag" placeholder="Ex.: 371891" />
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroCodAlmox">Cód. Almox</label>
+            <input type="text" id="filtroCodAlmox" placeholder="Ex.: 6355" />
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroCodProduto">Cód. Produto</label>
+            <input type="text" id="filtroCodProduto" placeholder="Ex.: 105844" />
+          </div>
+
+          <div class="campo-filtro campo-autocompletar campo-largo">
+            <label for="filtroNomeProduto">Nome do Produto</label>
+            <input type="text" id="filtroNomeProduto" placeholder="Ex.: Agulha descartável" autocomplete="off" />
+            <div class="sugestoes" id="sugestoesNomeProduto"></div>
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroLote">Lote</label>
+            <input type="text" id="filtroLote" placeholder="Ex.: 2026A01" />
+          </div>
+
+          <div class="campo-filtro campo-acao">
+            <div class="grupo-botoes-filtro">
+              <button type="submit" class="botao-filtrar">Filtrar</button>
+              <button type="button" class="botao-resetar" id="botaoResetarFiltros">Resetar</button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Produtos</h2>
+          <span class="contador-secao" id="contadorProdutos">0</span>
+        </div>
+        <div id="areaProdutos">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+        <div class="paginacao" id="areaPaginacao"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script src="/static/js/tabela.js"></script>
+  <script>
+    // caverna so abre pra quem tem crachá
+    protegerPagina();
+    iniciarMenu("vencidos");
+
+    let paginaAtual = 1;
+
+    function montarQueryFiltros() {
+      const params = new URLSearchParams();
+      const codSeplag = document.getElementById("filtroCodSeplag").value.trim();
+      const codAlmox = document.getElementById("filtroCodAlmox").value.trim();
+      const codProduto = document.getElementById("filtroCodProduto").value.trim();
+      const nomeProduto = document.getElementById("filtroNomeProduto").value.trim();
+      const lote = document.getElementById("filtroLote").value.trim();
+
+      if (codSeplag) params.set("cod_seplag", codSeplag);
+      if (codAlmox) params.set("cod_almox", codAlmox);
+      if (codProduto) params.set("cod_produto", codProduto);
+      if (nomeProduto) params.set("nome_produto", nomeProduto);
+      if (lote) params.set("lote", lote);
+      if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
+
+      return params;
+    }
+
+    function renderizarProdutos(dados) {
+      const container = document.getElementById("areaProdutos");
+
+      if (!Array.isArray(dados) || dados.length === 0) {
+        container.innerHTML = '<p class="msg-vazio">Nenhum produto vencido encontrado, homem.</p>';
+        return;
+      }
+
+      const linhas = dados
+        .map(
+          (linha) => `
+        <tr class="linha-produto" data-produto="${linha.cod_produto}">
+          <td>${linha.cod_seplag ?? ""}</td>
+          <td>${linha.cod_almox ?? ""}</td>
+          <td>${linha.cod_produto ?? ""}</td>
+          <td class="celula-quebra">${linha.nome_produto ?? ""}</td>
+          <td>${linha.classe ?? ""}</td>
+          <td>${linha.sub_grupo ?? ""}</td>
+          <td>${linha.apresentacao ?? ""}</td>
+          <td>${linha.procedimento_sus ?? ""}</td>
+          <td>${linha.total_estoque ?? ""}</td>
+        </tr>`
+        )
+        .join("");
+
+      container.innerHTML = `
+        <table class="tabela-dados">
+          <thead>
+            <tr>
+              <th>Cód. Seplag</th>
+              <th>Cód. Almox</th>
+              <th>Cód. Produto</th>
+              <th>Nome do Produto</th>
+              <th>Classe</th>
+              <th>Sub Grupo</th>
+              <th>Apresentação</th>
+              <th>Procedimento SUS</th>
+              <th>Total Vencido</th>
+            </tr>
+          </thead>
+          <tbody>${linhas}</tbody>
+        </table>`;
+
+      container.querySelectorAll(".linha-produto").forEach((linha) => {
+        linha.addEventListener("click", () => alternarLotes(linha));
+      });
+    }
+
+    // seta vermelha em L (90 graus) que indica "isso pertence a linha de cima"
+    const SETA_HIERARQUIA = `
+      <svg class="seta-hierarquia" width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M8 0 V12 A8 8 0 0 0 16 20 H22" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+        <path d="M18 16 L23 20 L18 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>`;
+
+    // clique no produto abre uma linha logo abaixo com os lotes vencidos/quantidades - so uma aberta por vez
+    async function alternarLotes(linha) {
+      const linhaDetalhe = linha.nextElementSibling;
+
+      if (linhaDetalhe && linhaDetalhe.classList.contains("linha-lotes")) {
+        linhaDetalhe.remove();
+        linha.classList.remove("linha-produto-ativa");
+        return;
+      }
+
+      fecharLotesAbertos();
+      linha.classList.add("linha-produto-ativa");
+
+      const numeroColunas = linha.children.length;
+      const trDetalhe = document.createElement("tr");
+      trDetalhe.className = "linha-lotes";
+      trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Carregando lotes...</p></td>`;
+      linha.after(trDetalhe);
+
+      try {
+        const params = new URLSearchParams({ produto: linha.dataset.produto });
+        const filtroLoteAtual = document.getElementById("filtroLote").value.trim();
+        if (filtroLoteAtual) params.set("lote", filtroLoteAtual);
+        if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
+
+        const resp = await fetch(`/api/vencidos_lotes?${params.toString()}`);
+        const lotes = await resp.json();
+        trDetalhe.innerHTML = `<td colspan="${numeroColunas}">${montarTabelaLotes(lotes)}</td>`;
+      } catch (erro) {
+        trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Erro ao carregar lotes: ${erro}</p></td>`;
+      }
+    }
+
+    function fecharLotesAbertos() {
+      const aberta = document.querySelector(".linha-lotes");
+      if (aberta) aberta.remove();
+      document.querySelectorAll(".linha-produto-ativa").forEach((el) => el.classList.remove("linha-produto-ativa"));
+    }
+
+    function montarTabelaLotes(lotes) {
+      if (!Array.isArray(lotes) || lotes.length === 0) {
+        return '<p class="msg-vazio">Nenhum lote vencido encontrado pra esse produto.</p>';
+      }
+
+      const linhas = lotes
+        .map(
+          (item) => `
+        <tr>
+          <td>${formatarCnpj(item.cnpj)}</td>
+          <td>${item.fornecedor ?? ""}</td>
+          <td>${item.nome_fantasia ?? ""}</td>
+          <td>${item.lote ?? ""}</td>
+          <td>${item.validade ?? ""}</td>
+          <td>${item.quantidade ?? ""}</td>
+        </tr>`
+        )
+        .join("");
+
+      return `
+        <div class="bloco-hierarquia">
+          ${SETA_HIERARQUIA}
+          <table class="tabela-lotes">
+            <thead>
+              <tr>
+                <th>CNPJ</th>
+                <th>Fornecedor</th>
+                <th>Nome Fantasia</th>
+                <th>Lote</th>
+                <th>Validade</th>
+                <th>Quantidade</th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // paginador compacto: anterior, um punhado de numeros perto da atual, proxima
+    function renderizarPaginacao(total, pagina, tamanhoPagina) {
+      const area = document.getElementById("areaPaginacao");
+      const totalPaginas = Math.max(Math.ceil(total / tamanhoPagina), 1);
+
+      if (totalPaginas <= 1) {
+        area.innerHTML = "";
+        return;
+      }
+
+      const inicio = Math.max(pagina - 2, 1);
+      const fim = Math.min(inicio + 4, totalPaginas);
+
+      let botoes = `<button type="button" class="botao-pagina" data-pagina="${pagina - 1}" ${pagina <= 1 ? "disabled" : ""}>‹ Anterior</button>`;
+
+      for (let n = inicio; n <= fim; n++) {
+        botoes += `<button type="button" class="botao-pagina ${n === pagina ? "ativo" : ""}" data-pagina="${n}">${n}</button>`;
+      }
+
+      botoes += `<button type="button" class="botao-pagina" data-pagina="${pagina + 1}" ${pagina >= totalPaginas ? "disabled" : ""}>Próxima ›</button>`;
+
+      area.innerHTML = botoes;
+
+      area.querySelectorAll(".botao-pagina").forEach((botao) => {
+        botao.addEventListener("click", () => buscarProdutos(Number(botao.dataset.pagina)));
+      });
+    }
+
+    async function buscarProdutos(pagina) {
+      paginaAtual = pagina;
+      const params = montarQueryFiltros();
+      params.set("pagina", pagina);
+
+      const container = document.getElementById("areaProdutos");
+      container.innerHTML = '<p class="msg-vazio">Carregando dado, aguenta ai...</p>';
+
+      try {
+        const resp = await fetch(`/api/vencidos?${params.toString()}`);
+        const resultado = await resp.json();
+
+        document.getElementById("contadorProdutos").textContent = resultado.total ?? 0;
+        renderizarProdutos(resultado.dados);
+        renderizarPaginacao(resultado.total ?? 0, resultado.pagina ?? pagina, resultado.tamanho_pagina ?? 20);
+      } catch (erro) {
+        container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${erro}</p>`;
+        document.getElementById("areaPaginacao").innerHTML = "";
+      }
+    }
+
+    document.getElementById("formFiltros").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      esconderSugestoes();
+      buscarProdutos(1);
+    });
+
+    document.getElementById("botaoResetarFiltros").addEventListener("click", () => {
+      document.getElementById("formFiltros").reset();
+      esconderSugestoes();
+      buscarProdutos(1);
+    });
+
+    // sugestao de nome enquanto digita, com debounce pra nao martelar a api a cada tecla
+    const campoNomeProduto = document.getElementById("filtroNomeProduto");
+    const caixaSugestoes = document.getElementById("sugestoesNomeProduto");
+    let temporizadorSugestao = null;
+
+    function esconderSugestoes() {
+      caixaSugestoes.innerHTML = "";
+      caixaSugestoes.classList.remove("aberto");
+    }
+
+    async function buscarSugestoes(termo) {
+      try {
+        const resp = await fetch(`/api/produtos_sugestoes?termo=${encodeURIComponent(termo)}`);
+        const dados = await resp.json();
+
+        if (!Array.isArray(dados) || dados.length === 0) {
+          esconderSugestoes();
+          return;
+        }
+
+        caixaSugestoes.innerHTML = dados
+          .map((item) => `<div class="item-sugestao" data-nome="${item.nome_produto}">${item.nome_produto}</div>`)
+          .join("");
+        caixaSugestoes.classList.add("aberto");
+
+        caixaSugestoes.querySelectorAll(".item-sugestao").forEach((item) => {
+          item.addEventListener("click", () => {
+            campoNomeProduto.value = item.dataset.nome;
+            esconderSugestoes();
+            buscarProdutos(1);
+          });
+        });
+      } catch (erro) {
+        esconderSugestoes();
+      }
+    }
+
+    campoNomeProduto.addEventListener("input", () => {
+      const termo = campoNomeProduto.value.trim();
+      clearTimeout(temporizadorSugestao);
+
+      if (!termo) {
+        esconderSugestoes();
+        return;
+      }
+
+      temporizadorSugestao = setTimeout(() => buscarSugestoes(termo), 250);
+    });
+
+    document.addEventListener("click", (ev) => {
+      if (!ev.target.closest(".campo-autocompletar")) esconderSugestoes();
+    });
+
+    buscarProdutos(1);
+  </script>
+</body>
+</html>

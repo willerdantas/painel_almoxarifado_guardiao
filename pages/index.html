@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSYSTEM | Almoxarifado</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-flutuante" />
+
+  <div class="tela-login">
+    <div class="caixa-login">
+      <h1><span class="logo-in">IN</span>SYSTEM</h1>
+      <p class="aviso">Use o mesmo usuário e senha do sistema Guardião</p>
+
+      <form id="formLogin">
+        <input type="text" id="usuario" placeholder="Usuário" autocomplete="username" required />
+        <input type="password" id="senha" placeholder="Senha (modo teste: não é conferida)" autocomplete="current-password" />
+        <button type="submit">Entrar</button>
+      </form>
+      <p class="erro-login" id="erroLogin"></p>
+      <a href="/pages/dashboard.html" class="link-dashboard">Ver painel de indicadores</a>
+      <a href="/pages/painel_pedidos.html" class="link-dashboard">Ver painel de pedidos</a>
+    </div>
+  </div>
+
+  <script>
+    // homem digita, homem entra
+    document.getElementById("formLogin").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const usuario = document.getElementById("usuario").value.trim();
+      const senha = document.getElementById("senha").value;
+      const erro = document.getElementById("erroLogin");
+      erro.textContent = "";
+
+      try {
+        const resp = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ usuario, senha }),
+        });
+        const dado = await resp.json();
+
+        if (dado.ok) {
+          localStorage.setItem("usuario", dado.usuario);
+          localStorage.setItem("identificacao", dado.identificacao);
+          window.location.href = "/pages/estoque.html";
+        } else {
+          erro.textContent = dado.msg || "Falha no login";
+        }
+      } catch (e) {
+        erro.textContent = "Sem sinal de fumaça com o servidor";
+      }
+    });
+  </script>
+</body>
+</html>

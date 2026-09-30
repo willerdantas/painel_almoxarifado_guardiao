@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSYSTEM | Atas e Contratos Vencidos</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <div id="menuContainer"></div>
+
+    <main class="conteudo">
+      <div class="topo-pagina">
+        <h1>Painel de Atas e Contratos Vencidos</h1>
+        <div class="topo-direita">
+          <div class="area-usuario">
+            <span class="usuario-logado" id="usuarioLogado"></span>
+            <button class="botao-sair" id="botaoSairTopo">Sair</button>
+          </div>
+          <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+        </div>
+      </div>
+
+      <section class="cartao filtros">
+        <form id="formFiltros" class="grade-filtros">
+          <div class="campo-filtro">
+            <label for="filtroNumeroAta">Número da Ata</label>
+            <input type="text" id="filtroNumeroAta" placeholder="Ex.: 012/2026" />
+          </div>
+
+          <div class="campo-filtro">
+            <label for="filtroNumeroContrato">Número do Contrato</label>
+            <input type="text" id="filtroNumeroContrato" placeholder="Ex.: 012/2026" />
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroCnpj">CNPJ</label>
+            <input type="text" id="filtroCnpj" placeholder="Ex.: 00.000.000/0000-00" />
+          </div>
+
+          <div class="campo-filtro campo-autocompletar campo-largo">
+            <label for="filtroFornecedor">Fornecedor</label>
+            <input type="text" id="filtroFornecedor" placeholder="Ex.: Art Medica" autocomplete="off" />
+            <div class="sugestoes" id="sugestoesFornecedor"></div>
+          </div>
+
+          <div class="campo-filtro campo-autocompletar campo-largo">
+            <label for="filtroProduto">Produto</label>
+            <input type="text" id="filtroProduto" placeholder="Ex.: Luva Cirúrgica" autocomplete="off" />
+            <div class="sugestoes" id="sugestoesProduto"></div>
+          </div>
+
+          <div class="campo-filtro campo-acao">
+            <div class="grupo-botoes-filtro">
+              <button type="submit" class="botao-filtrar">Filtrar</button>
+              <button type="button" class="botao-resetar" id="botaoResetarFiltros">Resetar</button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <div class="secao-navegacao">
+        <a href="/pages/atas_contratos.html" class="botao-navegacao">◂ Ver Atas e Contratos Válidos</a>
+      </div>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Atas Vencidas</h2>
+          <span class="contador-secao" id="contadorAtasVencidas">0</span>
+        </div>
+        <div id="areaAtasVencidas">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+        <div class="paginacao" id="paginacaoAtasVencidas"></div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Contratos Vencidos</h2>
+          <span class="contador-secao" id="contadorContratosVencidos">0</span>
+        </div>
+        <div id="areaContratosVencidos">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+        <div class="paginacao" id="paginacaoContratosVencidos"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script src="/static/js/tabela.js"></script>
+  <script>
+    // caverna so abre pra quem tem crachá
+    protegerPagina();
+    iniciarMenu("atas_contratos");
+
+    // cada secao guarda os ids (area/contador/paginacao) e os filtros tipo+situacao que manda pra api
+    const SECOES = {
+      atas_vencidas: { tipo: "ata", situacao: "vencidos", area: "areaAtasVencidas", contador: "contadorAtasVencidas", paginacao: "paginacaoAtasVencidas" },
+      contratos_vencidos: { tipo: "contrato", situacao: "vencidos", area: "areaContratosVencidos", contador: "contadorContratosVencidos", paginacao: "paginacaoContratosVencidos" },
+    };
+
+    function montarQueryFiltros() {
+      const params = new URLSearchParams();
+      const numeroAta = document.getElementById("filtroNumeroAta").value.trim();
+      const numeroContrato = document.getElementById("filtroNumeroContrato").value.trim();
+      const cnpj = document.getElementById("filtroCnpj").value.trim();
+      const fornecedor = document.getElementById("filtroFornecedor").value.trim();
+      const produto = document.getElementById("filtroProduto").value.trim();
+
+      if (numeroAta) params.set("numero_ata", numeroAta);
+      if (numeroContrato) params.set("numero_contrato", numeroContrato);
+      if (cnpj) params.set("cnpj", cnpj);
+      if (fornecedor) params.set("fornecedor", fornecedor);
+      if (produto) params.set("produto", produto);
+
+      return params;
+    }
+
+    // seta vermelha em L (90 graus), mesma da tela de produtos, pra indicar hierarquia
+    const SETA_HIERARQUIA = `
+      <svg class="seta-hierarquia" width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M8 0 V12 A8 8 0 0 0 16 20 H22" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+        <path d="M18 16 L23 20 L18 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>`;
+
+    function renderizarContratos(dados, containerId) {
+      const container = document.getElementById(containerId);
+
+      if (!Array.isArray(dados) || dados.length === 0) {
+        container.innerHTML = '<p class="msg-vazio">Nenhuma ata/contrato encontrada, homem.</p>';
+        return;
+      }
+
+      const NUMERO_COLUNAS = 9;
+
+      const linhas = dados
+        .map(
+          (linha) => `
+        <tr class="linha-contrato" data-pedidocabecalho="${linha.pedidocabecalho}" data-identificacao="${linha.numeroidentificacao}">
+          <td>${formatarCnpj(linha.cnpj)}</td>
+          <td>${linha.fornecedor ?? ""}</td>
+          <td>${linha.nome_fantasia ?? ""}</td>
+          <td>${linha.num_ata ?? ""}</td>
+          <td>${linha.num_contrato ?? ""}</td>
+          <td>${linha.data_inicio ?? ""}</td>
+          <td>${linha.data_fim ?? ""}</td>
+          <td>${linha.prazo ?? ""}</td>
+          <td><button type="button" class="botao-aditivos">Aditivos</button></td>
+        </tr>
+        <tr class="linha-saldo">
+          <td colspan="${NUMERO_COLUNAS}">${montarBarraSaldo(linha)}</td>
+        </tr>`
+        )
+        .join("");
+
+      container.innerHTML = `
+        <table class="tabela-dados">
+          <thead>
+            <tr>
+              <th>CNPJ</th>
+              <th>Fornecedor</th>
+              <th>Nome Fantasia</th>
+              <th>Núm. Ata</th>
+              <th>Núm. Contrato</th>
+              <th>Data Início</th>
+              <th>Data Fim</th>
+              <th>Prazo (dias)</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${linhas}</tbody>
+        </table>`;
+
+      container.querySelectorAll(".botao-aditivos").forEach((botao) => {
+        botao.addEventListener("click", (ev) => {
+          const linhaContrato = ev.currentTarget.closest("tr");
+          alternarDetalhe(linhaContrato, "aditivos");
+        });
+      });
+
+      container.querySelectorAll(".botao-itens").forEach((botao) => {
+        botao.addEventListener("click", (ev) => {
+          const linhaContrato = ev.currentTarget.closest("tr").previousElementSibling;
+          alternarDetalhe(linhaContrato, "itens");
+        });
+      });
+    }
+
+    // verde > 50%, laranja > 30%, amarela > 10%, vermelha <= 10% de saldo remanescente
+    function corBarraSaldo(percentualRemanescente) {
+      const valor = Number(percentualRemanescente) || 0;
+      if (valor > 50) return "verde";
+      if (valor > 30) return "laranja";
+      if (valor > 10) return "amarela";
+      return "vermelha";
+    }
+
+    function montarBarraSaldo(linha) {
+      const percentualRemanescente = Math.min(Math.max(Number(linha.percentual_remanescente) || 0, 0), 100);
+      const cor = corBarraSaldo(percentualRemanescente);
+
+      return `
+        <div class="barra-saldo-linha">
+          <span class="saldo-info"><strong>Saldo Total:</strong> ${formatarMoeda(linha.saldo_total)}</span>
+          <span class="saldo-info"><strong>Saldo Utilizado:</strong> ${formatarMoeda(linha.saldo_utilizado)}</span>
+          <div class="barra-percentual">
+            <div class="barra-percentual-preenchida ${cor}" style="width: ${percentualRemanescente}%"></div>
+            <span class="barra-percentual-texto">${percentualRemanescente.toFixed(2)}% remanescente</span>
+          </div>
+          <button type="button" class="botao-itens">Itens</button>
+        </div>`;
+    }
+
+    // clique em "Aditivos" ou "Itens" abre uma linha logo abaixo da linha-saldo - so uma aberta por vez
+    // (linhaContrato eh sempre a 1a das duas linhas do registro; a linha-saldo vem logo depois dela)
+    async function alternarDetalhe(linhaContrato, tipo) {
+      const linhaSaldo = linhaContrato.nextElementSibling;
+      const linhaDetalhe = linhaSaldo.nextElementSibling;
+      const classeDetalhe = `linha-detalhe-${tipo}`;
+
+      if (linhaDetalhe && linhaDetalhe.classList.contains(classeDetalhe)) {
+        linhaDetalhe.remove();
+        linhaContrato.classList.remove("linha-contrato-ativa");
+        return;
+      }
+
+      fecharDetalhesAbertos();
+      linhaContrato.classList.add("linha-contrato-ativa");
+
+      const trDetalhe = document.createElement("tr");
+      trDetalhe.className = classeDetalhe;
+      trDetalhe.innerHTML = `<td colspan="9"><p class="msg-vazio">Carregando...</p></td>`;
+      linhaSaldo.after(trDetalhe);
+
+      try {
+        if (tipo === "aditivos") {
+          const resp = await fetch(`/api/atas_contratos_aditivos?identificacao=${encodeURIComponent(linhaContrato.dataset.identificacao)}`);
+          const aditivos = await resp.json();
+          trDetalhe.innerHTML = `<td colspan="9">${montarTabelaAditivos(aditivos)}</td>`;
+        } else {
+          const resp = await fetch(`/api/atas_contratos_itens?pedidocabecalho=${encodeURIComponent(linhaContrato.dataset.pedidocabecalho)}`);
+          const itens = await resp.json();
+          trDetalhe.innerHTML = `<td colspan="9">${montarTabelaItens(itens)}</td>`;
+        }
+      } catch (erro) {
+        trDetalhe.innerHTML = `<td colspan="9"><p class="msg-vazio">Erro ao carregar: ${erro}</p></td>`;
+      }
+    }
+
+    function fecharDetalhesAbertos() {
+      document.querySelectorAll('[class^="linha-detalhe-"]').forEach((el) => el.remove());
+      document.querySelectorAll(".linha-contrato-ativa").forEach((el) => el.classList.remove("linha-contrato-ativa"));
+    }
+
+    function montarTabelaAditivos(aditivos) {
+      if (!Array.isArray(aditivos) || aditivos.length === 0) {
+        return '<p class="msg-vazio">Nenhum registro encontrado.</p>';
+      }
+
+      const linhas = aditivos
+        .map(
+          (item) => `
+        <tr>
+          <td>${item.numero_aditivo == 0 ? "Original" : item.numero_aditivo}</td>
+          <td>${item.num_ata ?? ""}</td>
+          <td>${item.num_contrato ?? ""}</td>
+          <td>${item.data_inicio ?? ""}</td>
+          <td>${item.data_fim ?? ""}</td>
+        </tr>`
+        )
+        .join("");
+
+      return `
+        <div class="bloco-hierarquia">
+          ${SETA_HIERARQUIA}
+          <table class="tabela-lotes">
+            <thead>
+              <tr>
+                <th>Aditivo</th>
+                <th>Núm. Ata</th>
+                <th>Núm. Contrato</th>
+                <th>Data Início</th>
+                <th>Data Fim</th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+    }
+
+    function montarBarraSaldoItem(item) {
+      const percentualRemanescente = Math.min(Math.max(Number(item.percentual_remanescente) || 0, 0), 100);
+      const cor = corBarraSaldo(percentualRemanescente);
+
+      return `
+        <div class="barra-saldo-linha">
+          <span class="saldo-info"><strong>Qtd. Utilizada:</strong> ${item.quantidade_utilizada ?? "0"}</span>
+          <div class="barra-percentual">
+            <div class="barra-percentual-preenchida ${cor}" style="width: ${percentualRemanescente}%"></div>
+            <span class="barra-percentual-texto">${percentualRemanescente.toFixed(2)}% remanescente</span>
+          </div>
+        </div>`;
+    }
+
+    function montarTabelaItens(itens) {
+      if (!Array.isArray(itens) || itens.length === 0) {
+        return '<p class="msg-vazio">Nenhum item encontrado.</p>';
+      }
+
+      const linhas = itens
+        .map(
+          (item) => `
+        <tr class="linha-item">
+          <td class="celula-quebra">${item.nome_produto ?? ""}</td>
+          <td>${item.quantidade ?? ""}</td>
+          <td>${formatarMoeda(item.valor_unitario)}</td>
+          <td>${formatarMoeda(item.subtotal)}</td>
+          <td>${formatarMoeda(item.saldo_valor)}</td>
+          <td></td>
+        </tr>
+        <tr class="linha-saldo">
+          <td colspan="6">${montarBarraSaldoItem(item)}</td>
+        </tr>`
+        )
+        .join("");
+
+      return `
+        <div class="bloco-hierarquia">
+          ${SETA_HIERARQUIA}
+          <table class="tabela-lotes">
+            <thead>
+              <tr>
+                <th>Produto</th>
+                <th>Quantidade Total</th>
+                <th>Vl. Unitário</th>
+                <th>Subtotal</th>
+                <th>Saldo Remanescente</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // paginador compacto: anterior, um punhado de numeros perto da atual, proxima
+    function renderizarPaginacao(total, pagina, tamanhoPagina, chaveSecao, paginacaoId) {
+      const area = document.getElementById(paginacaoId);
+      const totalPaginas = Math.max(Math.ceil(total / tamanhoPagina), 1);
+
+      if (totalPaginas <= 1) {
+        area.innerHTML = "";
+        return;
+      }
+
+      const inicio = Math.max(pagina - 2, 1);
+      const fim = Math.min(inicio + 4, totalPaginas);
+
+      let botoes = `<button type="button" class="botao-pagina" data-pagina="${pagina - 1}" ${pagina <= 1 ? "disabled" : ""}>‹ Anterior</button>`;
+
+      for (let n = inicio; n <= fim; n++) {
+        botoes += `<button type="button" class="botao-pagina ${n === pagina ? "ativo" : ""}" data-pagina="${n}">${n}</button>`;
+      }
+
+      botoes += `<button type="button" class="botao-pagina" data-pagina="${pagina + 1}" ${pagina >= totalPaginas ? "disabled" : ""}>Próxima ›</button>`;
+
+      area.innerHTML = botoes;
+
+      area.querySelectorAll(".botao-pagina").forEach((botao) => {
+        botao.addEventListener("click", () => buscarSecao(chaveSecao, Number(botao.dataset.pagina)));
+      });
+    }
+
+    async function buscarSecao(chaveSecao, pagina) {
+      const secao = SECOES[chaveSecao];
+      const params = montarQueryFiltros();
+      params.set("tipo", secao.tipo);
+      params.set("situacao", secao.situacao);
+      params.set("pagina", pagina);
+
+      const container = document.getElementById(secao.area);
+      container.innerHTML = '<p class="msg-vazio">Carregando dado, aguenta ai...</p>';
+
+      try {
+        const resp = await fetch(`/api/atas_contratos?${params.toString()}`);
+        const resultado = await resp.json();
+
+        document.getElementById(secao.contador).textContent = resultado.total ?? 0;
+        renderizarContratos(resultado.dados, secao.area);
+        renderizarPaginacao(resultado.total ?? 0, resultado.pagina ?? pagina, resultado.tamanho_pagina ?? 20, chaveSecao, secao.paginacao);
+      } catch (erro) {
+        container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${erro}</p>`;
+        document.getElementById(secao.paginacao).innerHTML = "";
+      }
+    }
+
+    function buscarAtasContratos() {
+      Object.keys(SECOES).forEach((chave) => buscarSecao(chave, 1));
+    }
+
+    document.getElementById("formFiltros").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      buscarAtasContratos();
+    });
+
+    document.getElementById("botaoResetarFiltros").addEventListener("click", () => {
+      document.getElementById("formFiltros").reset();
+      buscarAtasContratos();
+    });
+
+    // sugestao de fornecedor enquanto digita, com debounce pra nao martelar a api a cada tecla
+    const campoFornecedor = document.getElementById("filtroFornecedor");
+    const caixaSugestoesFornecedor = document.getElementById("sugestoesFornecedor");
+    let temporizadorSugestaoFornecedor = null;
+
+    function esconderSugestoesFornecedor() {
+      caixaSugestoesFornecedor.innerHTML = "";
+      caixaSugestoesFornecedor.classList.remove("aberto");
+    }
+
+    async function buscarSugestoesFornecedor(termo) {
+      try {
+        const resp = await fetch(`/api/fornecedores_sugestoes?termo=${encodeURIComponent(termo)}`);
+        const dados = await resp.json();
+
+        if (!Array.isArray(dados) || dados.length === 0) {
+          esconderSugestoesFornecedor();
+          return;
+        }
+
+        caixaSugestoesFornecedor.innerHTML = dados
+          .map((item) => `<div class="item-sugestao" data-nome="${item.fornecedor}">${item.fornecedor}</div>`)
+          .join("");
+        caixaSugestoesFornecedor.classList.add("aberto");
+
+        caixaSugestoesFornecedor.querySelectorAll(".item-sugestao").forEach((item) => {
+          item.addEventListener("click", () => {
+            campoFornecedor.value = item.dataset.nome;
+            esconderSugestoesFornecedor();
+            buscarAtasContratos();
+          });
+        });
+      } catch (erro) {
+        esconderSugestoesFornecedor();
+      }
+    }
+
+    campoFornecedor.addEventListener("input", () => {
+      const termo = campoFornecedor.value.trim();
+      clearTimeout(temporizadorSugestaoFornecedor);
+
+      if (!termo) {
+        esconderSugestoesFornecedor();
+        return;
+      }
+
+      temporizadorSugestaoFornecedor = setTimeout(() => buscarSugestoesFornecedor(termo), 250);
+    });
+
+    // sugestao de produto enquanto digita, com debounce pra nao martelar a api a cada tecla
+    const campoProduto = document.getElementById("filtroProduto");
+    const caixaSugestoesProduto = document.getElementById("sugestoesProduto");
+    let temporizadorSugestaoProduto = null;
+
+    function esconderSugestoesProduto() {
+      caixaSugestoesProduto.innerHTML = "";
+      caixaSugestoesProduto.classList.remove("aberto");
+    }
+
+    async function buscarSugestoesProduto(termo) {
+      try {
+        const resp = await fetch(`/api/produtos_sugestoes?termo=${encodeURIComponent(termo)}`);
+        const dados = await resp.json();
+
+        if (!Array.isArray(dados) || dados.length === 0) {
+          esconderSugestoesProduto();
+          return;
+        }
+
+        caixaSugestoesProduto.innerHTML = dados
+          .map((item) => `<div class="item-sugestao" data-nome="${item.nome_produto}">${item.nome_produto}</div>`)
+          .join("");
+        caixaSugestoesProduto.classList.add("aberto");
+
+        caixaSugestoesProduto.querySelectorAll(".item-sugestao").forEach((item) => {
+          item.addEventListener("click", () => {
+            campoProduto.value = item.dataset.nome;
+            esconderSugestoesProduto();
+            buscarAtasContratos();
+          });
+        });
+      } catch (erro) {
+        esconderSugestoesProduto();
+      }
+    }
+
+    campoProduto.addEventListener("input", () => {
+      const termo = campoProduto.value.trim();
+      clearTimeout(temporizadorSugestaoProduto);
+
+      if (!termo) {
+        esconderSugestoesProduto();
+        return;
+      }
+
+      temporizadorSugestaoProduto = setTimeout(() => buscarSugestoesProduto(termo), 250);
+    });
+
+    document.addEventListener("click", (ev) => {
+      if (!ev.target.closest(".campo-autocompletar")) {
+        esconderSugestoesFornecedor();
+        esconderSugestoesProduto();
+      }
+    });
+
+    buscarAtasContratos();
+  </script>
+</body>
+</html>

@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSYSTEM | Separação de Pedidos</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <div id="menuContainer"></div>
+
+    <main class="conteudo">
+      <div class="topo-pagina">
+        <h1>Separação de Pedidos</h1>
+        <div class="topo-direita">
+          <div class="area-usuario">
+            <span class="usuario-logado" id="usuarioLogado"></span>
+            <button class="botao-sair" id="botaoSairTopo">Sair</button>
+          </div>
+          <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+        </div>
+      </div>
+
+      <div class="linha-topo-secao">
+        <section class="cartao filtros">
+          <form id="formFiltros" class="grade-filtros">
+            <div class="campo-filtro">
+              <label for="filtroNumero">Número do Pedido</label>
+              <input type="text" id="filtroNumero" placeholder="Ex.: 4521" />
+            </div>
+
+            <div class="campo-filtro">
+              <label for="filtroDataInicio">Data Início</label>
+              <input type="date" id="filtroDataInicio" />
+            </div>
+
+            <div class="campo-filtro">
+              <label for="filtroDataFim">Data Fim</label>
+              <input type="date" id="filtroDataFim" />
+            </div>
+
+            <div class="campo-filtro">
+              <label for="filtroUnidade">Unidade</label>
+              <select id="filtroUnidade">
+                <option value="">Todas</option>
+              </select>
+            </div>
+
+            <div class="campo-filtro campo-acao">
+              <button type="submit" class="botao-filtrar">Aplicar Filtro</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="cartao contagem-pedidos">
+          <span class="contagem-numero" id="contagemPedidos">0</span>
+          <span class="contagem-rotulo">Pedidos encontrados</span>
+        </section>
+      </div>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Pedidos a Separar</h2>
+          <span class="contador-secao" id="contadorASeparar">0</span>
+        </div>
+        <div id="areaASeparar" class="area-rolavel">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Pedidos em Separação</h2>
+          <span class="contador-secao" id="contadorEmSeparacao">0</span>
+        </div>
+        <div id="areaEmSeparacao" class="area-rolavel">
+          <p class="msg-vazio">Nenhum pedido em separação ainda.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script src="/static/js/tabela.js"></script>
+  <script>
+    // caverna so abre pra quem tem crachá
+    protegerPagina();
+    iniciarMenu("separacao_pedidos");
+
+    // padrao mostra tudo a partir de 01-09-2026 (janela util de dado real de teste) ate hoje,
+    // igual foi feito no controle de pedidos
+    document.getElementById("filtroDataInicio").value = "2026-09-01";
+    document.getElementById("filtroDataFim").value = dataHojeISO();
+
+    function montarQueryFiltros() {
+      const params = new URLSearchParams();
+      const numero = document.getElementById("filtroNumero").value.trim();
+      const dataInicio = document.getElementById("filtroDataInicio").value;
+      const dataFim = document.getElementById("filtroDataFim").value;
+      const unidade = document.getElementById("filtroUnidade").value.trim();
+
+      if (numero) params.set("numero", numero);
+      if (dataInicio) params.set("data_inicio", dataInicio);
+      if (dataFim) params.set("data_fim", dataFim);
+      if (unidade) params.set("unidade", unidade);
+      if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
+
+      return params.toString();
+    }
+
+    // seta vermelha em L (90 graus) que indica "isso pertence a linha de cima"
+    const SETA_HIERARQUIA = `
+      <svg class="seta-hierarquia" width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M8 0 V12 A8 8 0 0 0 16 20 H22" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+        <path d="M18 16 L23 20 L18 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>`;
+
+    // pedidos a separar - clicar no botao reivindica o pedido pra esse usuario (so um por vez)
+    function renderizarASeparar(lista, bloqueado) {
+      const containerId = "areaASeparar";
+      const container = document.getElementById(containerId);
+      document.getElementById("contadorASeparar").textContent = lista.length;
+
+      if (lista.length === 0) {
+        container.innerHTML = '<p class="msg-vazio">Nenhum pedido aqui, homem.</p>';
+        return;
+      }
+
+      const linhas = lista
+        .map(
+          (linha) => `
+        <tr>
+          <td>${linha.numero_pedido ?? ""}</td>
+          <td>${linha.requisitante ?? ""}</td>
+          <td>${linha.data_requisicao ?? ""}</td>
+          <td>${linha.tipo_movimentacao ?? ""}</td>
+          <td>
+            <button type="button" class="botao-separar" data-pedido="${linha.numero_pedido}" ${bloqueado ? "disabled" : ""} title="${bloqueado ? "Pedido em Separação" : ""}">
+              Separar Pedido
+            </button>
+          </td>
+        </tr>`
+        )
+        .join("");
+
+      container.innerHTML = `
+        <table class="tabela-dados">
+          <thead>
+            <tr>
+              <th>Número do Pedido</th>
+              <th>Requisitante</th>
+              <th>Data da Requisição</th>
+              <th>Tipo de Movimentação</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${linhas}</tbody>
+        </table>`;
+
+      container.querySelectorAll(".botao-separar").forEach((botao) => {
+        botao.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          if (botao.disabled) {
+            alert("Pedido em Separação");
+            return;
+          }
+          separarPedido(botao.dataset.pedido);
+        });
+      });
+    }
+
+    async function separarPedido(numeroPedido) {
+      try {
+        const resp = await fetch("/api/separar_pedido", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ saidacabecalho: numeroPedido, usuario_logado: identificacaoLogada() }),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          alert(dado.msg || "Não foi possível separar esse pedido.");
+          buscarPedidos();
+          return;
+        }
+        buscarPedidos();
+      } catch (erro) {
+        alert(`Erro ao separar pedido: ${erro}`);
+      }
+    }
+
+    // pedidos ja reivindicados - clique na linha abre os itens com checkbox de "separado"
+    function renderizarEmSeparacao(lista) {
+      const container = document.getElementById("areaEmSeparacao");
+      document.getElementById("contadorEmSeparacao").textContent = lista.length;
+
+      if (lista.length === 0) {
+        container.innerHTML = '<p class="msg-vazio">Nenhum pedido em separação ainda.</p>';
+        return;
+      }
+
+      const linhas = lista
+        .map(
+          (linha) => `
+        <tr class="linha-produto" data-pedido="${linha.numero_pedido}">
+          <td>${linha.numero_pedido ?? ""}</td>
+          <td>${linha.requisitante ?? ""}</td>
+          <td>${linha.data_requisicao ?? ""}</td>
+          <td>${linha.tipo_movimentacao ?? ""}</td>
+          <td>${linha.responsavel ?? ""}</td>
+          <td>${linha.data_separacao ?? ""}</td>
+          <td>${linha.hora_separacao ?? ""}</td>
+          <td><button type="button" class="botao-concluir" data-pedido="${linha.numero_pedido}" disabled>Concluir</button></td>
+        </tr>`
+        )
+        .join("");
+
+      container.innerHTML = `
+        <table class="tabela-dados">
+          <thead>
+            <tr>
+              <th>Número do Pedido</th>
+              <th>Requisitante</th>
+              <th>Data da Requisição</th>
+              <th>Tipo de Movimentação</th>
+              <th>Responsável pela Separação</th>
+              <th>Data da Separação</th>
+              <th>Hora da Separação</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${linhas}</tbody>
+        </table>`;
+
+      container.querySelectorAll(".botao-concluir").forEach((botao) => {
+        botao.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          concluirSeparacao(botao.dataset.pedido);
+        });
+      });
+
+      container.querySelectorAll(".linha-produto").forEach((linha) => {
+        linha.addEventListener("click", () => alternarItensSeparacao(linha));
+      });
+    }
+
+    // clique no pedido em separacao abre os itens com uma caixa de selecao pra marcar cada um
+    // como separado - so uma aberta por vez, so dentro de "em separacao"
+    async function alternarItensSeparacao(linha) {
+      const linhaDetalhe = linha.nextElementSibling;
+
+      if (linhaDetalhe && linhaDetalhe.classList.contains("linha-lotes")) {
+        linhaDetalhe.remove();
+        linha.classList.remove("linha-produto-ativa");
+        return;
+      }
+
+      const container = document.getElementById("areaEmSeparacao");
+      const abertaAntes = container.querySelector(".linha-lotes");
+      if (abertaAntes) abertaAntes.remove();
+      container.querySelectorAll(".linha-produto-ativa").forEach((el) => el.classList.remove("linha-produto-ativa"));
+      linha.classList.add("linha-produto-ativa");
+
+      const numeroColunas = linha.children.length;
+      const trDetalhe = document.createElement("tr");
+      trDetalhe.className = "linha-lotes";
+      trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Carregando itens...</p></td>`;
+      linha.after(trDetalhe);
+
+      try {
+        const resp = await fetch(`/api/separacao_itens?saidacabecalho=${encodeURIComponent(linha.dataset.pedido)}`);
+        const itens = await resp.json();
+        trDetalhe.innerHTML = `<td colspan="${numeroColunas}">${montarTabelaItensSeparacao(itens)}</td>`;
+
+        trDetalhe.querySelectorAll(".checkbox-item-separado").forEach((caixa) => {
+          caixa.addEventListener("change", () => atualizarBotaoConcluir(linha.dataset.pedido));
+        });
+        atualizarBotaoConcluir(linha.dataset.pedido);
+      } catch (erro) {
+        trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Erro ao carregar itens: ${erro}</p></td>`;
+      }
+    }
+
+    function montarTabelaItensSeparacao(itens) {
+      if (!Array.isArray(itens) || itens.length === 0) {
+        return '<p class="msg-vazio">Nenhum item encontrado pra esse pedido.</p>';
+      }
+
+      const linhas = itens
+        .map(
+          (item) => `
+        <tr>
+          <td><input type="checkbox" class="checkbox-item-separado" data-saidaitem="${item.saidaitem}" /></td>
+          <td class="celula-quebra">${item.nome_produto ?? ""}</td>
+          <td>${item.quantidade ?? ""}</td>
+          <td>${item.lote ?? ""}</td>
+          <td>${item.validade ?? ""}</td>
+        </tr>`
+        )
+        .join("");
+
+      return `
+        <div class="bloco-hierarquia">
+          ${SETA_HIERARQUIA}
+          <table class="tabela-lotes">
+            <thead>
+              <tr>
+                <th>Separado</th>
+                <th>Produto</th>
+                <th>Quantidade</th>
+                <th>Lote</th>
+                <th>Validade</th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // caso tenha algum item sem marcar, mantem o botao desabilitado e mostra qual falta no title
+    function atualizarBotaoConcluir(numeroPedido) {
+      const linha = document.querySelector(`#areaEmSeparacao tr.linha-produto[data-pedido="${numeroPedido}"]`);
+      if (!linha) return;
+      const linhaDetalhe = linha.nextElementSibling;
+      if (!linhaDetalhe || !linhaDetalhe.classList.contains("linha-lotes")) return;
+
+      const caixas = linhaDetalhe.querySelectorAll(".checkbox-item-separado");
+      const faltando = [...caixas].filter((c) => !c.checked);
+      const botao = linha.querySelector(".botao-concluir");
+      if (!botao) return;
+
+      botao.disabled = faltando.length > 0;
+      botao.title = faltando.length > 0 ? `Falta marcar ${faltando.length} item(ns)` : "";
+    }
+
+    async function concluirSeparacao(numeroPedido) {
+      if (!confirm(`Confirma concluir a separação do pedido ${numeroPedido}?`)) return;
+      try {
+        const resp = await fetch("/api/separacao_concluir", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ saidacabecalho: numeroPedido, usuario_logado: identificacaoLogada() }),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          alert(dado.msg || "Não foi possível concluir esse pedido.");
+          return;
+        }
+        buscarPedidos();
+      } catch (erro) {
+        alert(`Erro ao concluir separação: ${erro}`);
+      }
+    }
+
+    // busca "a separar" e "em separacao" juntos - antes checa se esse usuario ja tem pedido
+    // reivindicado, pra desenhar os botoes de "Separar Pedido" ja bloqueados quando for o caso
+    async function buscarPedidos() {
+      let bloqueado = false;
+      try {
+        const respAtiva = await fetch(`/api/separacao_ativa?usuario_logado=${encodeURIComponent(identificacaoLogada())}`);
+        const ativa = await respAtiva.json();
+        bloqueado = !!ativa;
+      } catch (erro) {
+        bloqueado = false;
+      }
+
+      const query = montarQueryFiltros();
+      const endpointASeparar = query ? `/api/pedidos_separacao?${query}` : "/api/pedidos_separacao";
+      try {
+        const resp = await fetch(endpointASeparar);
+        const dados = await resp.json();
+        const lista = Array.isArray(dados) ? dados : [];
+        document.getElementById("contagemPedidos").textContent = lista.length;
+        renderizarASeparar(lista, bloqueado);
+      } catch (erro) {
+        renderizarASeparar([], bloqueado);
+      }
+
+      const paramsEm = new URLSearchParams();
+      if (identificacaoLogada()) paramsEm.set("usuario_logado", identificacaoLogada());
+      try {
+        const respEm = await fetch(`/api/pedidos_em_separacao?${paramsEm.toString()}`);
+        const dadosEm = await respEm.json();
+        renderizarEmSeparacao(Array.isArray(dadosEm) ? dadosEm : []);
+      } catch (erro) {
+        renderizarEmSeparacao([]);
+      }
+    }
+
+    document.getElementById("formFiltros").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      buscarPedidos();
+    });
+
+    preencherSelect("/api/unidades", "filtroUnidade");
+    buscarPedidos();
+  </script>
+</body>
+</html>

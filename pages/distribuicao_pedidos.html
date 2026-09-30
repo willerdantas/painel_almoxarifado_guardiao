@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSYSTEM | Distribuição de Pedidos</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <div id="menuContainer"></div>
+
+    <main class="conteudo">
+      <div class="topo-pagina">
+        <h1>Distribuição de Pedidos</h1>
+        <div class="topo-direita">
+          <div class="area-usuario">
+            <span class="usuario-logado" id="usuarioLogado"></span>
+            <button class="botao-sair" id="botaoSairTopo">Sair</button>
+          </div>
+          <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+        </div>
+      </div>
+
+      <div class="linha-topo-secao">
+        <section class="cartao filtros">
+          <form id="formFiltros" class="grade-filtros">
+            <div class="campo-filtro">
+              <label for="filtroNumero">Número do Pedido</label>
+              <input type="text" id="filtroNumero" placeholder="Ex.: 4521" />
+            </div>
+
+            <div class="campo-filtro">
+              <label for="filtroDataInicio">Data Início</label>
+              <input type="date" id="filtroDataInicio" />
+            </div>
+
+            <div class="campo-filtro">
+              <label for="filtroDataFim">Data Fim</label>
+              <input type="date" id="filtroDataFim" />
+            </div>
+
+            <div class="campo-filtro">
+              <label for="filtroUnidade">Unidade</label>
+              <select id="filtroUnidade">
+                <option value="">Todas</option>
+              </select>
+            </div>
+
+            <div class="campo-filtro campo-acao">
+              <button type="submit" class="botao-filtrar">Aplicar Filtro</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="cartao contagem-pedidos">
+          <span class="contagem-numero" id="contagemPedidos">0</span>
+          <span class="contagem-rotulo">Pedidos encontrados</span>
+        </section>
+      </div>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Pedidos para Distribuição</h2>
+          <span class="contador-secao" id="contadorParaDistribuicao">0</span>
+        </div>
+        <div class="acoes-selecao-lote">
+          <span id="vagasDistribuicao"></span>
+          <button type="button" id="botaoDistribuirSelecionados" disabled>Distribuir Selecionados (0)</button>
+        </div>
+        <div id="areaParaDistribuicao" class="area-rolavel">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Pedidos em Distribuição</h2>
+          <span class="contador-secao" id="contadorEmDistribuicao">0</span>
+        </div>
+        <div id="areaEmDistribuicao" class="area-rolavel">
+          <p class="msg-vazio">Nenhum pedido em distribuição ainda.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script src="/static/js/tabela.js"></script>
+  <script>
+    // caverna so abre pra quem tem crachá
+    protegerPagina();
+    iniciarMenu("distribuicao_pedidos");
+
+    const LIMITE_DISTRIBUICAO = 10;
+    let vagasRestantes = LIMITE_DISTRIBUICAO;
+
+    // padrao mostra tudo a partir de 01-09-2026 (janela util de dado real de teste) ate hoje,
+    // igual foi feito em separacao/controle de pedidos
+    document.getElementById("filtroDataInicio").value = "2026-09-01";
+    document.getElementById("filtroDataFim").value = dataHojeISO();
+
+    function montarQueryFiltros() {
+      const params = new URLSearchParams();
+      const numero = document.getElementById("filtroNumero").value.trim();
+      const dataInicio = document.getElementById("filtroDataInicio").value;
+      const dataFim = document.getElementById("filtroDataFim").value;
+      const unidade = document.getElementById("filtroUnidade").value.trim();
+
+      if (numero) params.set("numero", numero);
+      if (dataInicio) params.set("data_inicio", dataInicio);
+      if (dataFim) params.set("data_fim", dataFim);
+      if (unidade) params.set("unidade", unidade);
+      if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
+
+      return params.toString();
+    }
+
+    // seta vermelha em L (90 graus) que indica "isso pertence a linha de cima"
+    const SETA_HIERARQUIA = `
+      <svg class="seta-hierarquia" width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M8 0 V12 A8 8 0 0 0 16 20 H22" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+        <path d="M18 16 L23 20 L18 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>`;
+
+    // pedidos disponiveis pra distribuicao - cada linha tem uma caixa de selecao (ate 10 por vez,
+    // diferente da separacao que trava em 1). O clique na linha (fora da caixa) abre os itens
+    function renderizarParaDistribuicao(lista) {
+      const containerId = "areaParaDistribuicao";
+      const container = document.getElementById(containerId);
+      document.getElementById("contadorParaDistribuicao").textContent = lista.length;
+
+      if (lista.length === 0) {
+        container.innerHTML = '<p class="msg-vazio">Nenhum pedido aqui, homem.</p>';
+        atualizarSelecaoDistribuicao();
+        return;
+      }
+
+      const linhas = lista
+        .map(
+          (linha) => `
+        <tr>
+          <td><input type="checkbox" class="checkbox-selecionar-distribuicao" data-pedido="${linha.numero_pedido}" /></td>
+          <td>${linha.numero_pedido ?? ""}</td>
+          <td>${linha.requisitante ?? ""}</td>
+          <td>${linha.data_requisicao ?? ""}</td>
+          <td>${linha.tipo_movimentacao ?? ""}</td>
+        </tr>`
+        )
+        .join("");
+
+      container.innerHTML = `
+        <table class="tabela-dados">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Número do Pedido</th>
+              <th>Requisitante</th>
+              <th>Data da Requisição</th>
+              <th>Tipo de Movimentação</th>
+            </tr>
+          </thead>
+          <tbody>${linhas}</tbody>
+        </table>`;
+
+      container.querySelectorAll(".checkbox-selecionar-distribuicao").forEach((caixa) => {
+        caixa.addEventListener("change", atualizarSelecaoDistribuicao);
+      });
+
+      atualizarSelecaoDistribuicao();
+    }
+
+    // conta quantas caixas estao marcadas, trava novas marcacoes quando bate o limite de vagas e
+    // liga/desliga o botao de distribuir em lote
+    function atualizarSelecaoDistribuicao() {
+      const todas = document.querySelectorAll("#areaParaDistribuicao .checkbox-selecionar-distribuicao");
+      const marcadas = document.querySelectorAll("#areaParaDistribuicao .checkbox-selecionar-distribuicao:checked");
+      const botao = document.getElementById("botaoDistribuirSelecionados");
+
+      todas.forEach((caixa) => {
+        if (!caixa.checked) caixa.disabled = marcadas.length >= vagasRestantes;
+      });
+
+      botao.textContent = `Distribuir Selecionados (${marcadas.length})`;
+      botao.disabled = marcadas.length === 0 || marcadas.length > vagasRestantes;
+
+      document.getElementById("vagasDistribuicao").textContent =
+        `Vagas disponíveis: ${vagasRestantes} de ${LIMITE_DISTRIBUICAO}`;
+    }
+
+    document.getElementById("botaoDistribuirSelecionados").addEventListener("click", async () => {
+      const marcadas = [...document.querySelectorAll("#areaParaDistribuicao .checkbox-selecionar-distribuicao:checked")];
+      const numeros = marcadas.map((caixa) => caixa.dataset.pedido);
+      if (numeros.length === 0) return;
+
+      try {
+        const resp = await fetch("/api/distribuir_pedidos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ saidacabecalhos: numeros, usuario_logado: identificacaoLogada() }),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          alert(dado.msg || "Não foi possível distribuir esses pedidos.");
+          return;
+        }
+        buscarPedidos();
+      } catch (erro) {
+        alert(`Erro ao distribuir pedidos: ${erro}`);
+      }
+    });
+
+    // pedidos ja reivindicados pra distribuicao - clique na linha abre os itens com checkbox de
+    // "separado". Cada pedido conclui de forma independente (nao trava os outros ate 10)
+    function renderizarEmDistribuicao(lista) {
+      const container = document.getElementById("areaEmDistribuicao");
+      document.getElementById("contadorEmDistribuicao").textContent = lista.length;
+
+      if (lista.length === 0) {
+        container.innerHTML = '<p class="msg-vazio">Nenhum pedido em distribuição ainda.</p>';
+        return;
+      }
+
+      const linhas = lista
+        .map(
+          (linha) => `
+        <tr class="linha-produto" data-pedido="${linha.numero_pedido}">
+          <td>${linha.numero_pedido ?? ""}</td>
+          <td>${linha.requisitante ?? ""}</td>
+          <td>${linha.data_requisicao ?? ""}</td>
+          <td>${linha.tipo_movimentacao ?? ""}</td>
+          <td>${linha.responsavel ?? ""}</td>
+          <td>${linha.data_distribuicao ?? ""}</td>
+          <td>${linha.hora_distribuicao ?? ""}</td>
+          <td><button type="button" class="botao-concluir" data-pedido="${linha.numero_pedido}" disabled>Concluir</button></td>
+        </tr>`
+        )
+        .join("");
+
+      container.innerHTML = `
+        <table class="tabela-dados">
+          <thead>
+            <tr>
+              <th>Número do Pedido</th>
+              <th>Requisitante</th>
+              <th>Data da Requisição</th>
+              <th>Tipo de Movimentação</th>
+              <th>Responsável pela Distribuição</th>
+              <th>Data da Distribuição</th>
+              <th>Hora da Distribuição</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${linhas}</tbody>
+        </table>`;
+
+      container.querySelectorAll(".botao-concluir").forEach((botao) => {
+        botao.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          concluirDistribuicao(botao.dataset.pedido);
+        });
+      });
+
+      container.querySelectorAll(".linha-produto").forEach((linha) => {
+        linha.addEventListener("click", () => alternarItensDistribuicao(linha));
+      });
+    }
+
+    // clique no pedido em distribuicao abre os itens com uma caixa de selecao pra marcar cada um -
+    // so uma aberta por vez, so dentro de "em distribuicao"
+    async function alternarItensDistribuicao(linha) {
+      const linhaDetalhe = linha.nextElementSibling;
+
+      if (linhaDetalhe && linhaDetalhe.classList.contains("linha-lotes")) {
+        linhaDetalhe.remove();
+        linha.classList.remove("linha-produto-ativa");
+        return;
+      }
+
+      const container = document.getElementById("areaEmDistribuicao");
+      const abertaAntes = container.querySelector(".linha-lotes");
+      if (abertaAntes) abertaAntes.remove();
+      container.querySelectorAll(".linha-produto-ativa").forEach((el) => el.classList.remove("linha-produto-ativa"));
+      linha.classList.add("linha-produto-ativa");
+
+      const numeroColunas = linha.children.length;
+      const trDetalhe = document.createElement("tr");
+      trDetalhe.className = "linha-lotes";
+      trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Carregando itens...</p></td>`;
+      linha.after(trDetalhe);
+
+      try {
+        const resp = await fetch(`/api/distribuicao_itens?saidacabecalho=${encodeURIComponent(linha.dataset.pedido)}`);
+        const itens = await resp.json();
+        trDetalhe.innerHTML = `<td colspan="${numeroColunas}">${montarTabelaItensDistribuicao(itens)}</td>`;
+
+        trDetalhe.querySelectorAll(".checkbox-item-distribuido").forEach((caixa) => {
+          caixa.addEventListener("change", () => atualizarBotaoConcluirDistribuicao(linha.dataset.pedido));
+        });
+        atualizarBotaoConcluirDistribuicao(linha.dataset.pedido);
+      } catch (erro) {
+        trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Erro ao carregar itens: ${erro}</p></td>`;
+      }
+    }
+
+    function montarTabelaItensDistribuicao(itens) {
+      if (!Array.isArray(itens) || itens.length === 0) {
+        return '<p class="msg-vazio">Nenhum item encontrado pra esse pedido.</p>';
+      }
+
+      const linhas = itens
+        .map(
+          (item) => `
+        <tr>
+          <td><input type="checkbox" class="checkbox-item-distribuido" data-saidaitem="${item.saidaitem}" /></td>
+          <td class="celula-quebra">${item.nome_produto ?? ""}</td>
+          <td>${item.quantidade ?? ""}</td>
+          <td>${item.lote ?? ""}</td>
+          <td>${item.validade ?? ""}</td>
+        </tr>`
+        )
+        .join("");
+
+      return `
+        <div class="bloco-hierarquia">
+          ${SETA_HIERARQUIA}
+          <table class="tabela-lotes">
+            <thead>
+              <tr>
+                <th>Distribuído</th>
+                <th>Produto</th>
+                <th>Quantidade</th>
+                <th>Lote</th>
+                <th>Validade</th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // caso tenha algum item sem marcar, mantem o botao desabilitado e mostra qual falta no title
+    function atualizarBotaoConcluirDistribuicao(numeroPedido) {
+      const linha = document.querySelector(`#areaEmDistribuicao tr.linha-produto[data-pedido="${numeroPedido}"]`);
+      if (!linha) return;
+      const linhaDetalhe = linha.nextElementSibling;
+      if (!linhaDetalhe || !linhaDetalhe.classList.contains("linha-lotes")) return;
+
+      const caixas = linhaDetalhe.querySelectorAll(".checkbox-item-distribuido");
+      const faltando = [...caixas].filter((c) => !c.checked);
+      const botao = linha.querySelector(".botao-concluir");
+      if (!botao) return;
+
+      botao.disabled = faltando.length > 0;
+      botao.title = faltando.length > 0 ? `Falta marcar ${faltando.length} item(ns)` : "";
+    }
+
+    async function concluirDistribuicao(numeroPedido) {
+      if (!confirm(`Confirma concluir a distribuição do pedido ${numeroPedido}?`)) return;
+      try {
+        const resp = await fetch("/api/distribuicao_concluir", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ saidacabecalho: numeroPedido, usuario_logado: identificacaoLogada() }),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          alert(dado.msg || "Não foi possível concluir esse pedido.");
+          return;
+        }
+        buscarPedidos();
+      } catch (erro) {
+        alert(`Erro ao concluir distribuição: ${erro}`);
+      }
+    }
+
+    // busca "para distribuicao" e "em distribuicao" juntos - antes checa quantos pedidos esse
+    // usuario ja tem em andamento, pra saber quantas vagas restam (limite de 10)
+    async function buscarPedidos() {
+      vagasRestantes = LIMITE_DISTRIBUICAO;
+      try {
+        const respAtivos = await fetch(`/api/distribuicao_ativos?usuario_logado=${encodeURIComponent(identificacaoLogada())}`);
+        const ativos = await respAtivos.json();
+        vagasRestantes = LIMITE_DISTRIBUICAO - (Array.isArray(ativos) ? ativos.length : 0);
+      } catch (erro) {
+        vagasRestantes = LIMITE_DISTRIBUICAO;
+      }
+
+      const query = montarQueryFiltros();
+      const endpointParaDistribuicao = query ? `/api/pedidos_distribuicao?${query}` : "/api/pedidos_distribuicao";
+      try {
+        const resp = await fetch(endpointParaDistribuicao);
+        const dados = await resp.json();
+        const lista = Array.isArray(dados) ? dados : [];
+        document.getElementById("contagemPedidos").textContent = lista.length;
+        renderizarParaDistribuicao(lista);
+      } catch (erro) {
+        renderizarParaDistribuicao([]);
+      }
+
+      const paramsEm = new URLSearchParams();
+      if (identificacaoLogada()) paramsEm.set("usuario_logado", identificacaoLogada());
+      try {
+        const respEm = await fetch(`/api/pedidos_em_distribuicao?${paramsEm.toString()}`);
+        const dadosEm = await respEm.json();
+        renderizarEmDistribuicao(Array.isArray(dadosEm) ? dadosEm : []);
+      } catch (erro) {
+        renderizarEmDistribuicao([]);
+      }
+    }
+
+    document.getElementById("formFiltros").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      buscarPedidos();
+    });
+
+    preencherSelect("/api/unidades", "filtroUnidade");
+    buscarPedidos();
+  </script>
+</body>
+</html>

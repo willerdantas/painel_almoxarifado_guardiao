@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSYSTEM | Painel de Pedidos</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <div id="menuContainer"></div>
+
+    <main class="conteudo">
+      <div class="topo-pagina">
+        <h1>Painel de Pedidos</h1>
+        <div class="topo-direita" id="topoDireita"></div>
+      </div>
+
+      <div class="linha-cards-painel">
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="cardNovos">0</span>
+          <span class="contagem-rotulo">Novos Pedidos</span>
+        </div>
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="cardASeparar">0</span>
+          <span class="contagem-rotulo">Pedidos a Separar</span>
+        </div>
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="cardEmSeparacao">0</span>
+          <span class="contagem-rotulo">Pedidos em Separação</span>
+        </div>
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="cardParaDistribuicao">0</span>
+          <span class="contagem-rotulo">Pedidos para Distribuição</span>
+        </div>
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="cardEmDistribuicao">0</span>
+          <span class="contagem-rotulo">Pedidos em Distribuição</span>
+        </div>
+      </div>
+
+      <div class="linha-painel-chamada">
+        <div class="cartao painel-chamada" id="painelChamada">
+          <span class="chamada-vazia">Nenhuma chamada ainda.</span>
+        </div>
+
+        <div class="cartao lista-chamados">
+          <h2>Últimas Chamadas</h2>
+          <ul id="listaUltimasChamadas">
+            <li><span class="chamado-requisitante">Nenhuma chamada ainda.</span></li>
+          </ul>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script src="/static/js/tabela.js"></script>
+  <script>
+    // painel publico, igual o dashboard - acessivel direto da tela de login, sem crachá. so muda
+    // o topo (usuario+sair vs botao de login) e o menu lateral (some quando nao esta logado)
+    const logado = !!localStorage.getItem("usuario");
+    const topoDireita = document.getElementById("topoDireita");
+
+    if (logado) {
+      topoDireita.innerHTML = `
+        <div class="area-usuario">
+          <span class="usuario-logado" id="usuarioLogado"></span>
+          <button class="botao-sair" id="botaoSairTopo">Sair</button>
+        </div>
+        <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+      `;
+      iniciarMenu("painel_pedidos");
+    } else {
+      topoDireita.innerHTML = `
+        <button class="botao-sair" id="botaoLoginTopo">Login</button>
+        <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+      `;
+      document.getElementById("botaoLoginTopo").addEventListener("click", () => {
+        window.location.href = "/";
+      });
+    }
+
+    const INTERVALO_ATUALIZACAO_MS = 5000;
+
+    function montarQuery(extra) {
+      const params = new URLSearchParams(extra || {});
+      if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
+      return params.toString();
+    }
+
+    async function atualizarContadores() {
+      try {
+        const resp = await fetch(`/api/painel_contadores?${montarQuery()}`);
+        const dados = await resp.json();
+        document.getElementById("cardNovos").textContent = dados.novos ?? 0;
+        document.getElementById("cardASeparar").textContent = dados.a_separar ?? 0;
+        document.getElementById("cardEmSeparacao").textContent = dados.em_separacao ?? 0;
+        document.getElementById("cardParaDistribuicao").textContent = dados.para_distribuicao ?? 0;
+        document.getElementById("cardEmDistribuicao").textContent = dados.em_distribuicao ?? 0;
+      } catch (erro) {
+        console.error("Erro ao atualizar contadores:", erro);
+      }
+    }
+
+    function renderizarPainelChamada(chamada) {
+      const painel = document.getElementById("painelChamada");
+
+      if (!chamada) {
+        painel.innerHTML = '<span class="chamada-vazia">Nenhuma chamada ainda.</span>';
+        return;
+      }
+
+      painel.innerHTML = `
+        <span class="chamada-rotulo">Chamando</span>
+        <span class="chamada-numero">${chamada.numero_pedido ?? ""}</span>
+        <span class="chamada-requisitante">${chamada.requisitante ?? ""}</span>
+        <span class="chamada-etapa">${chamada.etapa ?? ""}</span>
+      `;
+    }
+
+    function renderizarUltimasChamadas(lista) {
+      const container = document.getElementById("listaUltimasChamadas");
+
+      if (!Array.isArray(lista) || lista.length === 0) {
+        container.innerHTML = '<li><span class="chamado-requisitante">Nenhuma chamada ainda.</span></li>';
+        return;
+      }
+
+      container.innerHTML = lista
+        .map(
+          (chamado) => `
+        <li>
+          <div class="chamado-info">
+            <span class="chamado-numero">${chamado.numero_pedido ?? ""}</span>
+            <span class="chamado-requisitante">${chamado.requisitante ?? ""}</span>
+            <span class="chamado-status">${chamado.etapa ?? ""}</span>
+          </div>
+          <span class="chamado-momento">${chamado.data_chamada ?? ""}<br />${chamado.hora_chamada ?? ""}</span>
+        </li>`
+        )
+        .join("");
+    }
+
+    async function atualizarChamados() {
+      try {
+        const resp = await fetch(`/api/painel_chamados?${montarQuery({ limite: 5 })}`);
+        const dados = await resp.json();
+        const lista = Array.isArray(dados) ? dados : [];
+        renderizarPainelChamada(lista[0] || null);
+        renderizarUltimasChamadas(lista);
+      } catch (erro) {
+        console.error("Erro ao atualizar chamados:", erro);
+      }
+    }
+
+    function atualizarPainel() {
+      atualizarContadores();
+      atualizarChamados();
+    }
+
+    atualizarPainel();
+    setInterval(atualizarPainel, INTERVALO_ATUALIZACAO_MS);
+  </script>
+</body>
+</html>

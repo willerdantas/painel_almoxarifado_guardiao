@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSYSTEM | Dashboard</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <script src="/static/js/chart.umd.min.js"></script>
+</head>
+<body class="pagina-dashboard">
+  <div class="app-shell">
+    <div id="menuContainer"></div>
+
+    <main class="conteudo">
+      <div class="topo-pagina">
+        <h1>Dashboards</h1>
+        <div class="topo-direita" id="topoDireita"></div>
+      </div>
+
+      <section class="cartao">
+        <div class="carrossel-dashboard">
+          <div class="trilha-dashboard" id="trilhaDashboard">
+
+            <div class="slide-dashboard">
+              <h2>Valor em Estoque por Armazém</h2>
+              <div class="grafico-dashboard-area grafico-dashboard-area-unico">
+                <div class="grafico-pizza-caixa grafico-pizza-caixa-grande"><canvas id="graficoEstoque"></canvas></div>
+                <div class="legenda-tabela-caixa">
+                  <table class="tabela-dados tabela-legenda">
+                    <thead>
+                      <tr>
+                        <th></th>
+                        <th>Armazém</th>
+                        <th>Valor em Estoque</th>
+                        <th>Percentual</th>
+                      </tr>
+                    </thead>
+                    <tbody id="legendaEstoque"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div class="slide-dashboard">
+              <h2>Atas e Contratos Vencidos nos Últimos 6 Meses</h2>
+              <div class="grafico-dashboard-area grafico-dashboard-area-com-barras">
+                <div class="grafico-pizza-caixa"><canvas id="graficoVencidos"></canvas></div>
+                <div class="legenda-pizza" id="legendaVencidos"></div>
+                <div class="barras-laterais">
+                  <div class="barra-lateral-caixa">
+                    <h4>Atas por Percentual Utilizado</h4>
+                    <div class="barra-lateral-canvas"><canvas id="graficoBarraAtasVencidas"></canvas></div>
+                  </div>
+                  <div class="barra-lateral-caixa">
+                    <h4>Contratos por Percentual Utilizado</h4>
+                    <div class="barra-lateral-canvas"><canvas id="graficoBarraContratosVencidos"></canvas></div>
+                  </div>
+                </div>
+              </div>
+              <div class="duas-tabelas">
+                <div>
+                  <h3>Top 5 Contratos por Valor</h3>
+                  <table class="tabela-dados">
+                    <thead>
+                      <tr>
+                        <th>Fornecedor</th>
+                        <th>Núm. Contrato</th>
+                        <th>Data Fim</th>
+                        <th>Saldo Total</th>
+                        <th>% Remanescente</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tabelaContratosVencidos"></tbody>
+                  </table>
+                </div>
+                <div>
+                  <h3>Top 5 Atas por Valor</h3>
+                  <table class="tabela-dados">
+                    <thead>
+                      <tr>
+                        <th>Fornecedor</th>
+                        <th>Núm. Ata</th>
+                        <th>Data Fim</th>
+                        <th>Saldo Total</th>
+                        <th>% Remanescente</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tabelaAtasVencidas"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div class="slide-dashboard">
+              <h2>Atas e Contratos Válidos por Saldo Remanescente</h2>
+              <div class="grafico-dashboard-area">
+                <div class="grafico-pizza-caixa"><canvas id="graficoValidos"></canvas></div>
+                <div class="legenda-pizza" id="legendaValidos"></div>
+                <div class="matriz-dias-caixa">
+                  <table class="tabela-dados tabela-matriz-dias">
+                    <thead>
+                      <tr>
+                        <th></th>
+                        <th>Até 30 dias</th>
+                        <th>Até 90 dias</th>
+                        <th>Até 180 dias</th>
+                        <th>Mais de 180 dias</th>
+                      </tr>
+                    </thead>
+                    <tbody id="matrizDiasValidos"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="duas-tabelas">
+                <div>
+                  <h3>Top 5 Contratos com Saldo Zerado</h3>
+                  <table class="tabela-dados">
+                    <thead>
+                      <tr>
+                        <th>Fornecedor</th>
+                        <th>Núm. Contrato</th>
+                        <th>Data Fim</th>
+                        <th>Saldo Total</th>
+                        <th>% Remanescente</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tabelaContratosValidos"></tbody>
+                  </table>
+                </div>
+                <div>
+                  <h3>Top 5 Atas com Saldo Zerado</h3>
+                  <table class="tabela-dados">
+                    <thead>
+                      <tr>
+                        <th>Fornecedor</th>
+                        <th>Núm. Ata</th>
+                        <th>Data Fim</th>
+                        <th>Saldo Total</th>
+                        <th>% Remanescente</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tabelaAtasValidas"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+        <div class="pontos-dashboard" id="pontosDashboard"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script>
+    // dashboard funciona logado ou nao - so muda o topo (usuario+sair vs botao de login) e o menu
+    const logado = !!localStorage.getItem("usuario");
+    const topoDireita = document.getElementById("topoDireita");
+
+    if (logado) {
+      topoDireita.innerHTML = `
+        <div class="area-usuario">
+          <span class="usuario-logado" id="usuarioLogado"></span>
+          <button class="botao-sair" id="botaoSairTopo">Sair</button>
+        </div>
+        <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+      `;
+      iniciarMenu("dashboard");
+    } else {
+      topoDireita.innerHTML = `
+        <button class="botao-sair" id="botaoLoginTopo">Login</button>
+        <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+      `;
+      document.getElementById("botaoLoginTopo").addEventListener("click", () => {
+        window.location.href = "/";
+      });
+    }
+
+    // paleta pro grafico de armazem (quantidade de fatias varia) e cores fixas pro grafico de saldo
+    const PALETA_ARMAZEM = ["#1c6dd0", "#2e9e44", "#e08a1e", "#d4b800", "#d0271d", "#8e44ad", "#16a085", "#c0392b", "#2c3e50", "#7f8c8d"];
+    const CORES_SALDO = { cem_por_cento: "#1c6dd0", acima_50: "#2e9e44", acima_30: "#e08a1e", acima_10: "#d4b800", zero_por_cento: "#d0271d" };
+    const ROTULOS_SALDO = { cem_por_cento: "100% (não utilizado)", acima_50: "Acima de 50%", acima_30: "Acima de 30%", acima_10: "Acima de 10%", zero_por_cento: "0% (esgotado)" };
+
+    // plugin generico pra pizza: escreve o valor dentro da fatia quando cabe, senao poe do lado
+    // de fora com um tracinho apontando pra fatia (fatia fina nao esconde o numero)
+    // formatador vem preso no fechamento da fabrica, NAO dentro de chart.options - o chart.js trata
+    // qualquer funcao guardada em options.plugins.* como "scriptable option" e chama ela sozinho com
+    // um contexto interno dele, entao o valor nunca chegava certo no formatador (bug ja visto e corrigido)
+    function criarPluginRotulosPizza(formatador = (v) => String(v), somentePercentual = false) {
+      return {
+        id: "rotulosPizza",
+        afterDatasetsDraw(chart) {
+        try {
+          const dataset = chart.data.datasets[0];
+          const meta = chart.getDatasetMeta(0);
+          if (!dataset || !meta) return;
+          const total = dataset.data.reduce((soma, valor) => soma + (Number(valor) || 0), 0);
+          if (!total) return;
+
+          const { ctx } = chart;
+          ctx.save();
+          ctx.font = "bold 12px 'Segoe UI', Arial, sans-serif";
+
+          // 1a passada: separa quem cabe dentro (desenha na hora) de quem precisa ir pra fora,
+          // guardando os de fora pra resolver sobreposicao antes de desenhar
+          const foraEsquerda = [];
+          const foraDireita = [];
+          let raioFora = 0;
+
+          meta.data.forEach((fatia, indice) => {
+            const valor = Number(dataset.data[indice]) || 0;
+            if (!valor) return;
+
+            const { startAngle, endAngle, outerRadius, innerRadius, x, y } = fatia.getProps(
+              ["startAngle", "endAngle", "outerRadius", "innerRadius", "x", "y"],
+              true
+            );
+            const percentual = valor / total;
+            const anguloMeio = (startAngle + endAngle) / 2;
+            const raioMedio = (innerRadius + outerRadius) / 2;
+            const texto = somentePercentual
+              ? `${(percentual * 100).toFixed(1)}%`
+              : `${formatador(valor)} (${(percentual * 100).toFixed(1)}%)`;
+
+            const larguraTexto = ctx.measureText(texto).width;
+            const comprimentoArco = percentual * 2 * Math.PI * raioMedio;
+            const cabeDentro = comprimentoArco > larguraTexto + 10 && percentual > 0.05;
+
+            if (cabeDentro) {
+              const px = x + Math.cos(anguloMeio) * raioMedio;
+              const py = y + Math.sin(anguloMeio) * raioMedio;
+              ctx.fillStyle = "#ffffff";
+              ctx.textAlign = "center";
+              ctx.textBaseline = "middle";
+              ctx.fillText(texto, px, py);
+            } else {
+              raioFora = Math.max(raioFora, outerRadius);
+              const p1x = x + Math.cos(anguloMeio) * outerRadius;
+              const p1y = y + Math.sin(anguloMeio) * outerRadius;
+              const ladoDireito = Math.cos(anguloMeio) >= 0;
+              const item = { p1x, p1y, texto, larguraTexto, yIdeal: y + Math.sin(anguloMeio) * (outerRadius + 14) };
+              (ladoDireito ? foraDireita : foraEsquerda).push(item);
+            }
+          });
+
+          // 2a passada: nas colunas de fora (uma de cada lado), empurra pra baixo quem colidiria
+          // com o rotulo anterior, assim nenhum numero fica escondido atras do outro
+          const ESPACAMENTO_MINIMO = 15;
+          [foraEsquerda, foraDireita].forEach((coluna) => {
+            coluna.sort((a, b) => a.yIdeal - b.yIdeal);
+            let ultimoY = -Infinity;
+            coluna.forEach((item) => {
+              item.y = Math.max(item.yIdeal, ultimoY + ESPACAMENTO_MINIMO);
+              ultimoY = item.y;
+            });
+          });
+
+          const centroChart = meta.data[0] ? meta.data[0].getProps(["x"], true).x : 0;
+          const colunaX = raioFora + 24;
+
+          [
+            { coluna: foraEsquerda, ladoDireito: false, colX: centroChart - colunaX },
+            { coluna: foraDireita, ladoDireito: true, colX: centroChart + colunaX },
+          ].forEach(({ coluna, ladoDireito, colX }) => {
+            coluna.forEach((item) => {
+              ctx.strokeStyle = "#8a94a3";
+              ctx.lineWidth = 1;
+              ctx.beginPath();
+              ctx.moveTo(item.p1x, item.p1y);
+              ctx.lineTo(colX, item.y);
+              ctx.stroke();
+
+              ctx.fillStyle = "#1c2b3a";
+              ctx.textAlign = ladoDireito ? "left" : "right";
+              ctx.textBaseline = "middle";
+              ctx.fillText(item.texto, colX + (ladoDireito ? 3 : -3), item.y);
+            });
+          });
+
+          ctx.restore();
+        } catch (erro) {
+          console.error("rotulosPizza:", erro);
+        }
+        },
+      };
+    }
+
+    // plugin pras barras empilhadas: escreve o valor dentro do pedaco quando cabe, senao poe do
+    // lado com um tracinho (pedaco fino de mes com poucos registros nao fica sem numero)
+    const PLUGIN_ROTULOS_BARRA_EMPILHADA = {
+      id: "rotulosBarraEmpilhada",
+      afterDatasetsDraw(chart) {
+        try {
+          const { ctx } = chart;
+          ctx.save();
+          ctx.font = "bold 10px 'Segoe UI', Arial, sans-serif";
+
+          chart.data.datasets.forEach((dataset, indiceDataset) => {
+            const meta = chart.getDatasetMeta(indiceDataset);
+            if (meta.hidden) return;
+            meta.data.forEach((segmento, indice) => {
+              const valor = Number(dataset.data[indice]) || 0;
+              if (!valor) return;
+
+              const { x, y, base, width } = segmento.getProps(["x", "y", "base", "width"], true);
+              const alturaSegmento = Math.abs(base - y);
+              const meioY = (y + base) / 2;
+              const texto = String(valor);
+
+              if (alturaSegmento >= 15) {
+                ctx.fillStyle = "#ffffff";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(texto, x, meioY);
+              } else {
+                const p1x = x + width / 2;
+                const p2x = p1x + 8;
+                ctx.strokeStyle = "#8a94a3";
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(p1x, meioY);
+                ctx.lineTo(p2x, meioY);
+                ctx.stroke();
+
+                ctx.fillStyle = "#1c2b3a";
+                ctx.textAlign = "left";
+                ctx.textBaseline = "middle";
+                ctx.fillText(texto, p2x + 2, meioY);
+              }
+            });
+          });
+          ctx.restore();
+        } catch (erro) {
+          console.error("rotulosBarraEmpilhada:", erro);
+        }
+      },
+    };
+
+    function montarLegenda(containerId, itens) {
+      document.getElementById(containerId).innerHTML = itens
+        .map(
+          (item) => `
+        <div class="item-legenda">
+          <span class="ponto-legenda" style="background: ${item.cor}"></span>
+          <span>${item.rotulo}</span>
+          <span class="valor-legenda">${item.valor}</span>
+        </div>`
+        )
+        .join("");
+    }
+
+    function linhaVazia(colunas) {
+      return `<tr><td colspan="${colunas}" class="msg-vazio">Nenhum registro encontrado.</td></tr>`;
+    }
+
+    function montarTabelaSaldo(containerId, dados) {
+      const corpo = document.getElementById(containerId);
+      if (!Array.isArray(dados) || dados.length === 0) {
+        corpo.innerHTML = linhaVazia(5);
+        return;
+      }
+      corpo.innerHTML = dados
+        .map(
+          (item) => `
+        <tr>
+          <td class="celula-quebra">${item.fornecedor ?? ""}</td>
+          <td>${item.num_ata ?? item.num_contrato ?? ""}</td>
+          <td>${item.data_fim ?? ""}</td>
+          <td>${formatarMoeda(item.saldo_total)}</td>
+          <td>${Number(item.percentual_remanescente ?? 0).toFixed(2)}%</td>
+        </tr>`
+        )
+        .join("");
+    }
+
+    // slide 1: valor em estoque por armazem (so tipoarmazem C)
+    async function carregarEstoque() {
+      try {
+        const resp = await fetch("/api/dashboard_estoque_armazem");
+        const resultado = await resp.json();
+        const dados = resultado.dados || [];
+
+        new Chart(document.getElementById("graficoEstoque"), {
+          type: "pie",
+          data: {
+            labels: dados.map((item) => item.nome_armazem),
+            datasets: [{ data: dados.map((item) => Number(item.valor)), backgroundColor: PALETA_ARMAZEM }],
+          },
+          options: {
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            events: [],
+            maintainAspectRatio: false,
+            layout: { padding: 90 },
+          },
+          plugins: [criarPluginRotulosPizza(null, true)],
+        });
+
+        const corpo = document.getElementById("legendaEstoque");
+        corpo.innerHTML = dados.length
+          ? dados
+              .map(
+                (item, indice) => `
+          <tr>
+            <td><span class="ponto-legenda" style="background: ${PALETA_ARMAZEM[indice % PALETA_ARMAZEM.length]}"></span></td>
+            <td class="celula-quebra">${item.nome_armazem}</td>
+            <td>${formatarMoeda(item.valor)}</td>
+            <td>${item.percentual}%</td>
+          </tr>`
+              )
+              .join("")
+          : linhaVazia(4);
+      } catch (erro) {
+        document.getElementById("legendaEstoque").innerHTML = linhaVazia(4);
+      }
+    }
+
+    // barra empilhada mes a mes - uma barra por mes, cada uma dividida nos mesmos 5 pedacos do grafico de pizza
+    function montarBarraEmpilhada(canvasId, porMes, serie) {
+      const chaves = ["cem_por_cento", "acima_50", "acima_30", "acima_10", "zero_por_cento"];
+      const rotulosMeses = (porMes && porMes.rotulos) || [];
+      const dadosSerie = (porMes && porMes[serie]) || [];
+
+      new Chart(document.getElementById(canvasId), {
+        type: "bar",
+        data: {
+          labels: rotulosMeses,
+          datasets: chaves.map((chave) => ({
+            label: ROTULOS_SALDO[chave],
+            data: dadosSerie.map((mes) => Number(mes[chave] || 0)),
+            backgroundColor: CORES_SALDO[chave],
+          })),
+        },
+        options: {
+          maintainAspectRatio: false,
+          events: [],
+          layout: { padding: { right: 26 } },
+          scales: {
+            x: { stacked: true, ticks: { font: { size: 10 } } },
+            y: { stacked: true, beginAtZero: true, ticks: { precision: 0, font: { size: 10 } } },
+          },
+          plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        },
+        plugins: [PLUGIN_ROTULOS_BARRA_EMPILHADA],
+      });
+    }
+
+    // tabela cruzada: linha = pedaco de percentual de utilizacao (igual a legenda), coluna = dias a vencer
+    function montarMatrizDias(containerId, matriz) {
+      const chaves = ["cem_por_cento", "acima_50", "acima_30", "acima_10", "zero_por_cento"];
+      const colunas = ["dias_30", "dias_90", "dias_180", "dias_mais"];
+      const corpo = document.getElementById(containerId);
+
+      if (!matriz) {
+        corpo.innerHTML = linhaVazia(5);
+        return;
+      }
+
+      corpo.innerHTML = chaves
+        .map((chave) => {
+          const linha = matriz[chave] || {};
+          const celulas = colunas.map((coluna) => `<td>${linha[coluna] ?? 0}</td>`).join("");
+          return `
+        <tr>
+          <td><span class="ponto-legenda-tabela" style="background: ${CORES_SALDO[chave]}"></span>${ROTULOS_SALDO[chave]}</td>
+          ${celulas}
+        </tr>`;
+        })
+        .join("");
+    }
+
+    // slides 2 e 3: atas/contratos separados por faixa de saldo remanescente
+    async function carregarAtasContratos(endpoint, idGrafico, idLegenda, idTabelaContratos, idTabelaAtas, idsBarras, idMatrizDias) {
+      try {
+        const resp = await fetch(endpoint);
+        const resultado = await resp.json();
+        const buckets = resultado.buckets || {};
+        const chaves = ["cem_por_cento", "acima_50", "acima_30", "acima_10", "zero_por_cento"];
+
+        new Chart(document.getElementById(idGrafico), {
+          type: "pie",
+          data: {
+            labels: chaves.map((chave) => ROTULOS_SALDO[chave]),
+            datasets: [{ data: chaves.map((chave) => Number(buckets[chave] || 0)), backgroundColor: chaves.map((chave) => CORES_SALDO[chave]) }],
+          },
+          options: {
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            events: [],
+            maintainAspectRatio: false,
+            layout: { padding: 90 },
+          },
+          plugins: [criarPluginRotulosPizza()],
+        });
+
+        const totalRegistros = chaves.reduce((soma, chave) => soma + Number(buckets[chave] || 0), 0) || 1;
+        montarLegenda(
+          idLegenda,
+          chaves.map((chave) => {
+            const quantidade = Number(buckets[chave] || 0);
+            const percentual = ((quantidade / totalRegistros) * 100).toFixed(2);
+            return { cor: CORES_SALDO[chave], rotulo: ROTULOS_SALDO[chave], valor: `${quantidade} · ${percentual}%` };
+          })
+        );
+
+        montarTabelaSaldo(idTabelaContratos, resultado.contratos);
+        montarTabelaSaldo(idTabelaAtas, resultado.atas);
+
+        if (idsBarras) {
+          montarBarraEmpilhada(idsBarras.atas, resultado.por_mes, "atas");
+          montarBarraEmpilhada(idsBarras.contratos, resultado.por_mes, "contratos");
+        }
+
+        if (idMatrizDias) {
+          montarMatrizDias(idMatrizDias, resultado.matriz_dias);
+        }
+      } catch (erro) {
+        document.getElementById(idTabelaContratos).innerHTML = linhaVazia(5);
+        document.getElementById(idTabelaAtas).innerHTML = linhaVazia(5);
+      }
+    }
+
+    carregarEstoque();
+    carregarAtasContratos("/api/dashboard_atas_contratos_vencidos", "graficoVencidos", "legendaVencidos", "tabelaContratosVencidos", "tabelaAtasVencidas", {
+      atas: "graficoBarraAtasVencidas",
+      contratos: "graficoBarraContratosVencidos",
+    });
+    carregarAtasContratos("/api/dashboard_atas_contratos_validos", "graficoValidos", "legendaValidos", "tabelaContratosValidos", "tabelaAtasValidas", null, "matrizDiasValidos");
+
+    // carrossel: troca de slide sozinho a cada 30s, com pontinhos clicaveis pra pular na hora
+    const trilha = document.getElementById("trilhaDashboard");
+    const totalSlides = document.querySelectorAll(".slide-dashboard").length;
+    const areaPontos = document.getElementById("pontosDashboard");
+    let slideAtual = 0;
+    let temporizadorCarrossel = null;
+
+    areaPontos.innerHTML = Array.from({ length: totalSlides })
+      .map((_, indice) => `<button type="button" class="ponto-dashboard" data-slide="${indice}"></button>`)
+      .join("");
+    const pontos = areaPontos.querySelectorAll(".ponto-dashboard");
+
+    function irParaSlide(indice) {
+      slideAtual = indice;
+      trilha.style.transform = `translateX(-${slideAtual * 100}%)`;
+      pontos.forEach((ponto, i) => ponto.classList.toggle("ativo", i === slideAtual));
+    }
+
+    function iniciarRotacaoAutomatica() {
+      clearInterval(temporizadorCarrossel);
+      temporizadorCarrossel = setInterval(() => {
+        irParaSlide((slideAtual + 1) % totalSlides);
+      }, 30000);
+    }
+
+    pontos.forEach((ponto) => {
+      ponto.addEventListener("click", () => {
+        irParaSlide(Number(ponto.dataset.slide));
+        iniciarRotacaoAutomatica();
+      });
+    });
+
+    irParaSlide(0);
+    iniciarRotacaoAutomatica();
+  </script>
+</body>
+</html>
