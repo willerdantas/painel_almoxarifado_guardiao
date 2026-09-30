@@ -286,7 +286,7 @@
           (item) => `
         <tr>
           <td class="celula-quebra">${item.nome_produto ?? ""}</td>
-          <td>${item.quantidade ?? ""}</td>
+          <td>${formatarQuantidade(item.quantidade)}</td>
         </tr>`
         )
         .join("");
@@ -433,7 +433,7 @@
           (item) => `
         <tr>
           <td class="celula-quebra">${item.nome_produto ?? ""}</td>
-          <td>${item.quantidade ?? ""}</td>
+          <td>${formatarQuantidade(item.quantidade)}</td>
           <td>${item.lote ?? ""}</td>
           <td>${item.validade ?? ""}</td>
         </tr>`

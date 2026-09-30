@@ -322,7 +322,7 @@
         <tr>
           <td><input type="checkbox" class="checkbox-item-distribuido" data-saidaitem="${item.saidaitem}" /></td>
           <td class="celula-quebra">${item.nome_produto ?? ""}</td>
-          <td>${item.quantidade ?? ""}</td>
+          <td>${formatarQuantidade(item.quantidade)}</td>
           <td>${item.lote ?? ""}</td>
           <td>${item.validade ?? ""}</td>
         </tr>`
