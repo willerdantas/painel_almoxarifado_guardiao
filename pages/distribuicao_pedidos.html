@@ -22,42 +22,35 @@
         </div>
       </div>
 
-      <div class="linha-topo-secao">
-        <section class="cartao filtros">
-          <form id="formFiltros" class="grade-filtros">
-            <div class="campo-filtro">
-              <label for="filtroNumero">Número do Pedido</label>
-              <input type="text" id="filtroNumero" placeholder="Ex.: 4521" />
-            </div>
+      <section class="cartao filtros">
+        <form id="formFiltros" class="grade-filtros">
+          <div class="campo-filtro">
+            <label for="filtroNumero">Número do Pedido</label>
+            <input type="text" id="filtroNumero" placeholder="Ex.: 4521" />
+          </div>
 
-            <div class="campo-filtro">
-              <label for="filtroDataInicio">Data Início</label>
-              <input type="date" id="filtroDataInicio" />
-            </div>
+          <div class="campo-filtro">
+            <label for="filtroDataInicio">Data Início</label>
+            <input type="date" id="filtroDataInicio" />
+          </div>
 
-            <div class="campo-filtro">
-              <label for="filtroDataFim">Data Fim</label>
-              <input type="date" id="filtroDataFim" />
-            </div>
+          <div class="campo-filtro">
+            <label for="filtroDataFim">Data Fim</label>
+            <input type="date" id="filtroDataFim" />
+          </div>
 
-            <div class="campo-filtro">
-              <label for="filtroUnidade">Unidade</label>
-              <select id="filtroUnidade">
-                <option value="">Todas</option>
-              </select>
-            </div>
+          <div class="campo-filtro">
+            <label for="filtroUnidade">Unidade</label>
+            <select id="filtroUnidade">
+              <option value="">Todas</option>
+            </select>
+          </div>
 
-            <div class="campo-filtro campo-acao">
-              <button type="submit" class="botao-filtrar">Aplicar Filtro</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="cartao contagem-pedidos">
-          <span class="contagem-numero" id="contagemPedidos">0</span>
-          <span class="contagem-rotulo">Pedidos encontrados</span>
-        </section>
-      </div>
+          <div class="campo-filtro campo-acao">
+            <button type="submit" class="botao-filtrar">Aplicar Filtro</button>
+          </div>
+        </form>
+      </section>
 
       <section class="cartao secao-pedidos">
         <div class="secao-cabecalho">
@@ -140,13 +133,13 @@
         .map(
           (linha) => `
         <tr>
-          <td><input type="checkbox" class="checkbox-selecionar-distribuicao" data-pedido="${linha.numero_pedido}" /></td>
-          <td>${linha.numero_pedido ?? ""}</td>
-          <td class="celula-quebra">${linha.requisitante ?? ""}</td>
-          <td>${linha.data_requisicao ?? ""}</td>
-          <td>${linha.tipo_movimentacao ?? ""}</td>
-          <td>${formatarQuantidade(linha.quantidade_itens)}</td>
-          <td>${formatarQuantidade(linha.quantidade_total)}</td>
+          <td data-label="Selecionar"><input type="checkbox" class="checkbox-selecionar-distribuicao" data-pedido="${linha.numero_pedido}" /></td>
+          <td data-label="N. do Pedido">${linha.numero_pedido ?? ""}</td>
+          <td class="celula-quebra" data-label="Requisitante">${linha.requisitante ?? ""}</td>
+          <td data-label="Dt. da Requisição">${linha.data_requisicao ?? ""}</td>
+          <td data-label="Tipo de Movimentação">${linha.tipo_movimentacao ?? ""}</td>
+          <td data-label="Qtde. de Itens">${formatarQuantidade(linha.quantidade_itens)}</td>
+          <td data-label="Qtde. Total">${formatarQuantidade(linha.quantidade_total)}</td>
         </tr>`
         )
         .join("");
@@ -229,16 +222,16 @@
         .map(
           (linha) => `
         <tr class="linha-produto" data-pedido="${linha.numero_pedido}">
-          <td>${linha.numero_pedido ?? ""}</td>
-          <td class="celula-quebra">${linha.requisitante ?? ""}</td>
-          <td>${linha.data_requisicao ?? ""}</td>
-          <td>${linha.tipo_movimentacao ?? ""}</td>
-          <td>${formatarQuantidade(linha.quantidade_itens)}</td>
-          <td>${formatarQuantidade(linha.quantidade_total)}</td>
-          <td class="celula-quebra">${linha.responsavel ?? ""}</td>
-          <td>${linha.data_distribuicao ?? ""}</td>
-          <td>${linha.hora_distribuicao ?? ""}</td>
-          <td><button type="button" class="botao-concluir" data-pedido="${linha.numero_pedido}" disabled>Concluir</button></td>
+          <td data-label="N. do Pedido">${linha.numero_pedido ?? ""}</td>
+          <td class="celula-quebra" data-label="Requisitante">${linha.requisitante ?? ""}</td>
+          <td data-label="Dt. da Requisição">${linha.data_requisicao ?? ""}</td>
+          <td data-label="Tipo de Movimentação">${linha.tipo_movimentacao ?? ""}</td>
+          <td data-label="Qtde. de Itens">${formatarQuantidade(linha.quantidade_itens)}</td>
+          <td data-label="Qtde. Total">${formatarQuantidade(linha.quantidade_total)}</td>
+          <td class="celula-quebra" data-label="Responsável pela Distribuição">${linha.responsavel ?? ""}</td>
+          <td data-label="Dt. da Distribuição">${linha.data_distribuicao ?? ""}</td>
+          <td data-label="Hr. da Distribuição">${linha.hora_distribuicao ?? ""}</td>
+          <td data-label="Ação"><button type="button" class="botao-concluir" data-pedido="${linha.numero_pedido}" disabled>Concluir</button></td>
         </tr>`
         )
         .join("");
@@ -320,11 +313,11 @@
         .map(
           (item) => `
         <tr>
-          <td><input type="checkbox" class="checkbox-item-distribuido" data-saidaitem="${item.saidaitem}" /></td>
-          <td class="celula-quebra">${item.nome_produto ?? ""}</td>
-          <td>${formatarQuantidade(item.quantidade)}</td>
-          <td>${item.lote ?? ""}</td>
-          <td>${item.validade ?? ""}</td>
+          <td data-label="Distribuído"><input type="checkbox" class="checkbox-item-distribuido" data-saidaitem="${item.saidaitem}" /></td>
+          <td class="celula-quebra" data-label="Produto">${item.nome_produto ?? ""}</td>
+          <td data-label="Qtde.">${formatarQuantidade(item.quantidade)}</td>
+          <td data-label="Lote">${item.lote ?? ""}</td>
+          <td data-label="Validade">${item.validade ?? ""}</td>
         </tr>`
         )
         .join("");
@@ -400,7 +393,6 @@
         const resp = await fetch(endpointParaDistribuicao);
         const dados = await resp.json();
         const lista = Array.isArray(dados) ? dados : [];
-        document.getElementById("contagemPedidos").textContent = lista.length;
         renderizarParaDistribuicao(lista);
       } catch (erro) {
         renderizarParaDistribuicao([]);
