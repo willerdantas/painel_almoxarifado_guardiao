@@ -1299,7 +1299,7 @@ body.pagina-dashboard .cartao {
   gap: clamp(13px, 1.15vw, 26px);
   flex: 1.4;
   min-width: 245px;
-  max-width: 520px;
+  max-width: 600px;
 }
 
 .barra-lateral-caixa {
