@@ -1422,4 +1422,31 @@ body.pagina-dashboard .duas-tabelas table.tabela-dados td {
   .caixa-login {
     padding: 28px 22px;
   }
+
+  /* separacao/distribuicao de pedidos: tabelas densas, cards/botoes apertados no celular */
+  .pagina-separacao-distribuicao .acoes-selecao-lote {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .pagina-separacao-distribuicao .acoes-selecao-lote button {
+    width: 100%;
+  }
+
+  .pagina-separacao-distribuicao table.tabela-dados th,
+  .pagina-separacao-distribuicao table.tabela-dados td {
+    padding: 7px 8px;
+    font-size: 12px;
+  }
+
+  .pagina-separacao-distribuicao table.tabela-dados td.celula-quebra {
+    max-width: 140px;
+  }
+
+  .pagina-separacao-distribuicao .botao-separar,
+  .pagina-separacao-distribuicao .botao-concluir {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
 }

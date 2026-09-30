@@ -6,7 +6,7 @@
   <title>INSYSTEM | Distribuição de Pedidos</title>
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
-<body>
+<body class="pagina-separacao-distribuicao">
   <div class="app-shell">
     <div id="menuContainer"></div>
 
@@ -142,9 +142,11 @@
         <tr>
           <td><input type="checkbox" class="checkbox-selecionar-distribuicao" data-pedido="${linha.numero_pedido}" /></td>
           <td>${linha.numero_pedido ?? ""}</td>
-          <td>${linha.requisitante ?? ""}</td>
+          <td class="celula-quebra">${linha.requisitante ?? ""}</td>
           <td>${linha.data_requisicao ?? ""}</td>
           <td>${linha.tipo_movimentacao ?? ""}</td>
+          <td>${formatarQuantidade(linha.quantidade_itens)}</td>
+          <td>${formatarQuantidade(linha.quantidade_total)}</td>
         </tr>`
         )
         .join("");
@@ -154,10 +156,12 @@
           <thead>
             <tr>
               <th></th>
-              <th>Número do Pedido</th>
+              <th>N. do Pedido</th>
               <th>Requisitante</th>
-              <th>Data da Requisição</th>
+              <th>Dt. da Requisição</th>
               <th>Tipo de Movimentação</th>
+              <th>Qtde. de Itens</th>
+              <th>Qtde. Total</th>
             </tr>
           </thead>
           <tbody>${linhas}</tbody>
@@ -226,10 +230,12 @@
           (linha) => `
         <tr class="linha-produto" data-pedido="${linha.numero_pedido}">
           <td>${linha.numero_pedido ?? ""}</td>
-          <td>${linha.requisitante ?? ""}</td>
+          <td class="celula-quebra">${linha.requisitante ?? ""}</td>
           <td>${linha.data_requisicao ?? ""}</td>
           <td>${linha.tipo_movimentacao ?? ""}</td>
-          <td>${linha.responsavel ?? ""}</td>
+          <td>${formatarQuantidade(linha.quantidade_itens)}</td>
+          <td>${formatarQuantidade(linha.quantidade_total)}</td>
+          <td class="celula-quebra">${linha.responsavel ?? ""}</td>
           <td>${linha.data_distribuicao ?? ""}</td>
           <td>${linha.hora_distribuicao ?? ""}</td>
           <td><button type="button" class="botao-concluir" data-pedido="${linha.numero_pedido}" disabled>Concluir</button></td>
@@ -241,13 +247,15 @@
         <table class="tabela-dados">
           <thead>
             <tr>
-              <th>Número do Pedido</th>
+              <th>N. do Pedido</th>
               <th>Requisitante</th>
-              <th>Data da Requisição</th>
+              <th>Dt. da Requisição</th>
               <th>Tipo de Movimentação</th>
+              <th>Qtde. de Itens</th>
+              <th>Qtde. Total</th>
               <th>Responsável pela Distribuição</th>
-              <th>Data da Distribuição</th>
-              <th>Hora da Distribuição</th>
+              <th>Dt. da Distribuição</th>
+              <th>Hr. da Distribuição</th>
               <th></th>
             </tr>
           </thead>
@@ -329,7 +337,7 @@
               <tr>
                 <th>Distribuído</th>
                 <th>Produto</th>
-                <th>Quantidade</th>
+                <th>Qtde.</th>
                 <th>Lote</th>
                 <th>Validade</th>
               </tr>

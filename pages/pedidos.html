@@ -217,10 +217,10 @@
       const linhas = dados
         .map(
           (linha) => `
-        <tr class="linha-produto" data-requisicao="${linha["Número do Pedido"]}">
-          <td>${linha["Número do Pedido"] ?? ""}</td>
+        <tr class="linha-produto" data-requisicao="${linha["N. do Pedido"]}">
+          <td>${linha["N. do Pedido"] ?? ""}</td>
           <td>${linha["Requisitante"] ?? ""}</td>
-          <td>${linha["Data da Requisição"] ?? ""}</td>
+          <td>${linha["Dt. da Requisição"] ?? ""}</td>
         </tr>`
         )
         .join("");
@@ -229,9 +229,9 @@
         <table class="tabela-dados">
           <thead>
             <tr>
-              <th>Número do Pedido</th>
+              <th>N. do Pedido</th>
               <th>Requisitante</th>
-              <th>Data da Requisição</th>
+              <th>Dt. da Requisição</th>
             </tr>
           </thead>
           <tbody>${linhas}</tbody>
@@ -298,7 +298,7 @@
             <thead>
               <tr>
                 <th>Produto</th>
-                <th>Quantidade</th>
+                <th>Qtde.</th>
               </tr>
             </thead>
             <tbody>${linhas}</tbody>
@@ -331,9 +331,9 @@
         <table class="tabela-dados">
           <thead>
             <tr>
-              <th>Número do Pedido</th>
+              <th>N. do Pedido</th>
               <th>Requisitante</th>
-              <th>Data da Requisição</th>
+              <th>Dt. da Requisição</th>
               <th>Tipo de Movimentação</th>
             </tr>
           </thead>
@@ -359,6 +359,8 @@
           <td>${linha.requisitante ?? ""}</td>
           <td>${linha.data_requisicao ?? ""}</td>
           <td>${linha.tipo_movimentacao ?? ""}</td>
+          <td>${formatarQuantidade(linha.quantidade_itens)}</td>
+          <td>${formatarQuantidade(linha.quantidade_total)}</td>
           <td>${linha.responsavel ?? ""}</td>
           <td>${linha.data_separacao ?? ""}</td>
           <td>${linha.hora_separacao ?? ""}</td>
@@ -370,13 +372,15 @@
         <table class="tabela-dados">
           <thead>
             <tr>
-              <th>Número do Pedido</th>
+              <th>N. do Pedido</th>
               <th>Requisitante</th>
-              <th>Data da Requisição</th>
+              <th>Dt. da Requisição</th>
               <th>Tipo de Movimentação</th>
+              <th>Qtde. de Itens</th>
+              <th>Qtde. Total</th>
               <th>Responsável pela Separação</th>
-              <th>Data da Separação</th>
-              <th>Hora da Separação</th>
+              <th>Dt. da Separação</th>
+              <th>Hr. da Separação</th>
             </tr>
           </thead>
           <tbody>${linhas}</tbody>
@@ -443,7 +447,7 @@
             <thead>
               <tr>
                 <th>Produto</th>
-                <th>Quantidade</th>
+                <th>Qtde.</th>
                 <th>Lote</th>
                 <th>Validade</th>
               </tr>
@@ -480,9 +484,9 @@
         <table class="tabela-dados">
           <thead>
             <tr>
-              <th>Número do Pedido</th>
+              <th>N. do Pedido</th>
               <th>Requisitante</th>
-              <th>Data da Requisição</th>
+              <th>Dt. da Requisição</th>
               <th>Tipo de Movimentação</th>
             </tr>
           </thead>
@@ -512,6 +516,8 @@
           <td>${linha.requisitante ?? ""}</td>
           <td>${linha.data_requisicao ?? ""}</td>
           <td>${linha.tipo_movimentacao ?? ""}</td>
+          <td>${formatarQuantidade(linha.quantidade_itens)}</td>
+          <td>${formatarQuantidade(linha.quantidade_total)}</td>
           <td>${linha.responsavel ?? ""}</td>
           <td>${linha.data_distribuicao ?? ""}</td>
           <td>${linha.hora_distribuicao ?? ""}</td>
@@ -523,13 +529,15 @@
         <table class="tabela-dados">
           <thead>
             <tr>
-              <th>Número do Pedido</th>
+              <th>N. do Pedido</th>
               <th>Requisitante</th>
-              <th>Data da Requisição</th>
+              <th>Dt. da Requisição</th>
               <th>Tipo de Movimentação</th>
+              <th>Qtde. de Itens</th>
+              <th>Qtde. Total</th>
               <th>Responsável pela Distribuição</th>
-              <th>Data da Distribuição</th>
-              <th>Hora da Distribuição</th>
+              <th>Dt. da Distribuição</th>
+              <th>Hr. da Distribuição</th>
             </tr>
           </thead>
           <tbody>${linhas}</tbody>

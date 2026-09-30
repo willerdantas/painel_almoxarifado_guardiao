@@ -6,7 +6,7 @@
   <title>INSYSTEM | Separação de Pedidos</title>
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
-<body>
+<body class="pagina-separacao-distribuicao">
   <div class="app-shell">
     <div id="menuContainer"></div>
 
@@ -132,7 +132,7 @@
           (linha) => `
         <tr>
           <td>${linha.numero_pedido ?? ""}</td>
-          <td>${linha.requisitante ?? ""}</td>
+          <td class="celula-quebra">${linha.requisitante ?? ""}</td>
           <td>${linha.data_requisicao ?? ""}</td>
           <td>${linha.tipo_movimentacao ?? ""}</td>
           <td>
@@ -148,9 +148,9 @@
         <table class="tabela-dados">
           <thead>
             <tr>
-              <th>Número do Pedido</th>
+              <th>N. do Pedido</th>
               <th>Requisitante</th>
-              <th>Data da Requisição</th>
+              <th>Dt. da Requisição</th>
               <th>Tipo de Movimentação</th>
               <th></th>
             </tr>
@@ -204,10 +204,12 @@
           (linha) => `
         <tr class="linha-produto" data-pedido="${linha.numero_pedido}">
           <td>${linha.numero_pedido ?? ""}</td>
-          <td>${linha.requisitante ?? ""}</td>
+          <td class="celula-quebra">${linha.requisitante ?? ""}</td>
           <td>${linha.data_requisicao ?? ""}</td>
           <td>${linha.tipo_movimentacao ?? ""}</td>
-          <td>${linha.responsavel ?? ""}</td>
+          <td>${formatarQuantidade(linha.quantidade_itens)}</td>
+          <td>${formatarQuantidade(linha.quantidade_total)}</td>
+          <td class="celula-quebra">${linha.responsavel ?? ""}</td>
           <td>${linha.data_separacao ?? ""}</td>
           <td>${linha.hora_separacao ?? ""}</td>
           <td><button type="button" class="botao-concluir" data-pedido="${linha.numero_pedido}" disabled>Concluir</button></td>
@@ -219,13 +221,15 @@
         <table class="tabela-dados">
           <thead>
             <tr>
-              <th>Número do Pedido</th>
+              <th>N. do Pedido</th>
               <th>Requisitante</th>
-              <th>Data da Requisição</th>
+              <th>Dt. da Requisição</th>
               <th>Tipo de Movimentação</th>
+              <th>Qtde. de Itens</th>
+              <th>Qtde. Total</th>
               <th>Responsável pela Separação</th>
-              <th>Data da Separação</th>
-              <th>Hora da Separação</th>
+              <th>Dt. da Separação</th>
+              <th>Hr. da Separação</th>
               <th></th>
             </tr>
           </thead>
@@ -307,7 +311,7 @@
               <tr>
                 <th>Separado</th>
                 <th>Produto</th>
-                <th>Quantidade</th>
+                <th>Qtde.</th>
                 <th>Lote</th>
                 <th>Validade</th>
               </tr>

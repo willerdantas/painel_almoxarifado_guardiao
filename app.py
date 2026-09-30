@@ -244,9 +244,9 @@ def api_pedidos_novos():
         SET LOCAL enable_hashjoin = off;
         SET LOCAL enable_mergejoin = off;
         SELECT
-            rq.requisicao AS "Número do Pedido",
+            rq.requisicao AS "N. do Pedido",
             pes_rqt.nome AS "Requisitante",
-            to_char(rq.data, 'DD/MM/YY') AS "Data da Requisição"
+            to_char(rq.data, 'DD/MM/YY') AS "Dt. da Requisição"
         FROM public.requisicao rq
         JOIN public.requisitante rqt ON rq.requisitante = rqt.requisitante
         JOIN public.pessoa pes_rqt ON rqt.pessoa = pes_rqt.pessoa
@@ -309,7 +309,9 @@ def _consulta_pedidos(numero=None, data_inicio=None, data_fim=None, armazem=None
             sc.saidacabecalho AS numero_pedido,
             pes.nome AS requisitante,
             to_char(sc.data, 'DD/MM/YY') AS data_requisicao,
-            tm.descricao AS tipo_movimentacao
+            tm.descricao AS tipo_movimentacao,
+            (SELECT count(*) FROM public.saidaitem si WHERE si.saidacabecalho = sc.saidacabecalho) AS quantidade_itens,
+            (SELECT COALESCE(SUM(si.quantidade), 0) FROM public.saidaitem si WHERE si.saidacabecalho = sc.saidacabecalho) AS quantidade_total
         {base_from}
         {where}
         ORDER BY sc.data DESC
@@ -431,7 +433,9 @@ def api_pedidos_em_separacao():
             COALESCE(pes_resp.nome, u.nome) AS responsavel,
             am.usuario AS responsavel_usuario_id,
             to_char(am.min_creation, 'DD/MM/YY') AS data_separacao,
-            to_char(am.min_creation, 'HH24:MI') AS hora_separacao
+            to_char(am.min_creation, 'HH24:MI') AS hora_separacao,
+            (SELECT count(*) FROM public.saidaitem si WHERE si.saidacabecalho = sc.saidacabecalho) AS quantidade_itens,
+            (SELECT COALESCE(SUM(si.quantidade), 0) FROM public.saidaitem si WHERE si.saidacabecalho = sc.saidacabecalho) AS quantidade_total
         FROM (
             SELECT DISTINCT ON (am2.saidacabecalho) am2.saidacabecalho, am2.usuario, am2._creation AS min_creation
             FROM public.armazemmovimentacao am2
@@ -585,7 +589,9 @@ def api_pedidos_em_distribuicao():
             COALESCE(pes_resp.nome, u.nome) AS responsavel,
             am.usuario AS responsavel_usuario_id,
             to_char(am.min_creation, 'DD/MM/YY') AS data_distribuicao,
-            to_char(am.min_creation, 'HH24:MI') AS hora_distribuicao
+            to_char(am.min_creation, 'HH24:MI') AS hora_distribuicao,
+            (SELECT count(*) FROM public.saidaitem si WHERE si.saidacabecalho = sc.saidacabecalho) AS quantidade_itens,
+            (SELECT COALESCE(SUM(si.quantidade), 0) FROM public.saidaitem si WHERE si.saidacabecalho = sc.saidacabecalho) AS quantidade_total
         FROM (
             SELECT DISTINCT ON (am2.saidacabecalho) am2.saidacabecalho, am2.usuario, am2._creation AS min_creation
             FROM public.armazemmovimentacao am2
@@ -773,9 +779,9 @@ def api_pedidos_finalizados():
 
     sql = f"""
         SELECT
-            sc.saidacabecalho AS "Número do Pedido",
+            sc.saidacabecalho AS "N. do Pedido",
             pes.nome AS "Requisitante",
-            to_char(sc.data, 'DD/MM/YY') AS "Data da Requisição",
+            to_char(sc.data, 'DD/MM/YY') AS "Dt. da Requisição",
             tm.descricao AS "Tipo de Movimentação",
             CASE WHEN sc.status = 'E' THEN 'Cancelado' ELSE 'Concluído' END AS "Status"
         FROM public.saidacabecalho sc

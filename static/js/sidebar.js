@@ -107,6 +107,15 @@ function formatarMoeda(valor) {
   return numero.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+// formata quantidade com separador de milhar/milhao (1.234.567) - toLocaleString ja agrupa
+// corretamente em qualquer grandeza, sem limitar a milhar como uma formatacao manual faria
+function formatarQuantidade(valor) {
+  if (valor === null || valor === undefined || valor === "") return "";
+  const numero = Number(valor);
+  if (Number.isNaN(numero)) return valor;
+  return numero.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+}
+
 // mascara de cnpj: xx.xxx.xxx/xxxx-xx
 function formatarCnpj(cnpj) {
   if (!cnpj) return "";
