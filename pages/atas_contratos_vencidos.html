@@ -51,6 +51,16 @@
             <div class="sugestoes" id="sugestoesProduto"></div>
           </div>
 
+          <div class="campo-filtro">
+            <label for="filtroDataInicio">Data Início</label>
+            <input type="date" id="filtroDataInicio" />
+          </div>
+
+          <div class="campo-filtro">
+            <label for="filtroDataFim">Data Fim</label>
+            <input type="date" id="filtroDataFim" />
+          </div>
+
           <div class="campo-filtro campo-acao">
             <div class="grupo-botoes-filtro">
               <button type="submit" class="botao-filtrar">Filtrar</button>
@@ -108,12 +118,16 @@
       const cnpj = document.getElementById("filtroCnpj").value.trim();
       const fornecedor = document.getElementById("filtroFornecedor").value.trim();
       const produto = document.getElementById("filtroProduto").value.trim();
+      const dataInicio = document.getElementById("filtroDataInicio").value;
+      const dataFim = document.getElementById("filtroDataFim").value;
 
       if (numeroAta) params.set("numero_ata", numeroAta);
       if (numeroContrato) params.set("numero_contrato", numeroContrato);
       if (cnpj) params.set("cnpj", cnpj);
       if (fornecedor) params.set("fornecedor", fornecedor);
       if (produto) params.set("produto", produto);
+      if (dataInicio) params.set("data_inicio", dataInicio);
+      if (dataFim) params.set("data_fim", dataFim);
 
       return params;
     }
@@ -165,7 +179,7 @@
               <th>Núm. Ata</th>
               <th>Núm. Contrato</th>
               <th>Data Início</th>
-              <th>Data Fim</th>
+              <th>Data de Vencimento</th>
               <th>Prazo (dias)</th>
               <th></th>
             </tr>
@@ -205,6 +219,7 @@
         <div class="barra-saldo-linha">
           <span class="saldo-info"><strong>Saldo Total:</strong> ${formatarMoeda(linha.saldo_total)}</span>
           <span class="saldo-info"><strong>Saldo Utilizado:</strong> ${formatarMoeda(linha.saldo_utilizado)}</span>
+          <span class="saldo-info"><strong>Saldo Remanescente:</strong> ${formatarMoeda(linha.saldo_remanescente)}</span>
           <div class="barra-percentual">
             <div class="barra-percentual-preenchida ${cor}" style="width: ${percentualRemanescente}%"></div>
             <span class="barra-percentual-texto">${percentualRemanescente.toFixed(2)}% remanescente</span>

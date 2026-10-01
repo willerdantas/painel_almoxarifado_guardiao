@@ -1835,6 +1835,8 @@ def api_atas_contratos():
     cnpj = request.args.get("cnpj")
     fornecedor = request.args.get("fornecedor")
     produto = request.args.get("produto")
+    filtro_data_inicio = request.args.get("data_inicio")
+    filtro_data_fim = request.args.get("data_fim")
     situacao = request.args.get("situacao")  # "validos" ou "vencidos"
     tipo = request.args.get("tipo")  # "ata" (atapreco = 'S') ou "contrato" (atapreco = 'N')
     try:
@@ -1870,11 +1872,24 @@ def api_atas_contratos():
             )
         """)
         params.append(f"%{produto}%")
-    # prazo = data fim efetiva (maior aditivo) - hoje: positivo = ainda vigente, <=0 ou nulo = vencido
+    # filtro de periodo: traz contratos cuja data de inicio E data fim (efetiva, maior aditivo)
+    # caem dentro do intervalo informado - os dois extremos do contrato "cabem" no filtro
+    if filtro_data_inicio and filtro_data_fim:
+        condicoes.append("pc.datainicio BETWEEN %s AND %s")
+        condicoes.append("ult.efetivo BETWEEN %s AND %s")
+        params.extend([filtro_data_inicio, filtro_data_fim, filtro_data_inicio, filtro_data_fim])
+    elif filtro_data_inicio:
+        condicoes.append("pc.datainicio >= %s AND ult.efetivo >= %s")
+        params.extend([filtro_data_inicio, filtro_data_inicio])
+    elif filtro_data_fim:
+        condicoes.append("pc.datainicio <= %s AND ult.efetivo <= %s")
+        params.extend([filtro_data_fim, filtro_data_fim])
+    # prazo = data fim efetiva (maior aditivo) - hoje: validos cobre prazo >= 0 (ainda vigente hoje,
+    # inclusive quem vence hoje), vencido so quando prazo < 0 (data fim antes de hoje)
     if situacao == "validos":
-        condicoes.append("ult.efetivo > CURRENT_DATE")
+        condicoes.append("ult.efetivo >= CURRENT_DATE")
     elif situacao == "vencidos":
-        condicoes.append("(ult.efetivo IS NULL OR ult.efetivo <= CURRENT_DATE)")
+        condicoes.append("ult.efetivo < CURRENT_DATE")
     # atapreco = 'S' quer dizer que o pedido eh uma ata (de registro de preco) - uma ata pode gerar
     # contrato (atapreco = 'N') usando so parte do saldo dela, por isso os dois viram secoes separadas
     if tipo == "ata":
@@ -1913,6 +1928,15 @@ def api_atas_contratos():
     tamanho_pagina = 10
     offset = (pagina - 1) * tamanho_pagina
 
+    # validos: prazo do menor pro maior (vence antes primeiro). vencidos: data de vencimento do
+    # mais atual (venceu a pouco tempo) pro mais antigo. sem situacao: ordem antiga (datainicio)
+    if situacao == "validos":
+        ordenacao = "ult.efetivo ASC NULLS LAST"
+    elif situacao == "vencidos":
+        ordenacao = "ult.efetivo DESC NULLS LAST"
+    else:
+        ordenacao = "pc.datainicio DESC NULLS LAST"
+
     try:
         total = run_query(f"SELECT count(*) AS total {base_from}", params)[0]["total"]
 
@@ -1928,11 +1952,12 @@ def api_atas_contratos():
                 to_char(pc.datainicio, 'DD-MM-YY') AS data_inicio,
                 to_char(ult.efetivo, 'DD-MM-YY') AS data_fim,
                 CASE
-                    WHEN ult.efetivo > CURRENT_DATE THEN (ult.efetivo - CURRENT_DATE)::text
+                    WHEN ult.efetivo >= CURRENT_DATE THEN (ult.efetivo - CURRENT_DATE)::text
                     ELSE 'Vencido'
                 END AS prazo,
                 ult.valor_total AS saldo_total,
                 COALESCE(ult.saldo_utilizado, 0) AS saldo_utilizado,
+                GREATEST(0, ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) AS saldo_remanescente,
                 CASE
                     WHEN COALESCE(ult.saldo_utilizado, 0) = 0 THEN 100
                     ELSE ROUND((ult.valor_total / ult.saldo_utilizado) * 100, 2)
@@ -1943,7 +1968,7 @@ def api_atas_contratos():
                     ELSE 0
                 END AS percentual_remanescente
             {base_from}
-            ORDER BY pc.datainicio DESC NULLS LAST
+            ORDER BY {ordenacao}
             LIMIT %s OFFSET %s
         """
         dados = run_query(sql_dados, params + [tamanho_pagina, offset])
