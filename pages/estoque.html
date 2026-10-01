@@ -139,6 +139,8 @@
               <button type="button" class="botao-acao-produto botao-lotes">Lotes</button>
               <button type="button" class="botao-acao-produto botao-abastecimento">Abastecimento</button>
               <button type="button" class="botao-acao-produto botao-movimentacoes">Movimentações</button>
+              <button type="button" class="botao-acao-produto botao-unidades">Unidades</button>
+              <button type="button" class="botao-acao-produto botao-contratos">Ata/Contrato</button>
             </div>
           </td>
         </tr>`
@@ -183,6 +185,20 @@
         botao.addEventListener("click", (ev) => {
           const linhaAcoes = ev.currentTarget.closest("tr");
           alternarDetalhe(linhaAcoes, "movimentacoes");
+        });
+      });
+
+      container.querySelectorAll(".botao-unidades").forEach((botao) => {
+        botao.addEventListener("click", (ev) => {
+          const linhaAcoes = ev.currentTarget.closest("tr");
+          alternarDetalhe(linhaAcoes, "unidades");
+        });
+      });
+
+      container.querySelectorAll(".botao-contratos").forEach((botao) => {
+        botao.addEventListener("click", (ev) => {
+          const linhaAcoes = ev.currentTarget.closest("tr");
+          alternarDetalhe(linhaAcoes, "contratos");
         });
       });
     }
@@ -240,6 +256,30 @@
           trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}">${montarTabelaAbastecimento(abastecimento)}</td>`;
         } catch (erro) {
           trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}"><p class="msg-vazio">Erro ao carregar abastecimento: ${erro}</p></td>`;
+        }
+      } else if (tipo === "unidades") {
+        trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}"><p class="msg-vazio">Carregando unidades...</p></td>`;
+        linhaAcoes.after(trDetalhe);
+
+        try {
+          const params = new URLSearchParams({ produto: linhaProduto.dataset.produto });
+          const resp = await fetch(`/api/estoque_unidades?${params.toString()}`);
+          const unidades = await resp.json();
+          trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}">${montarTabelaUnidades(unidades)}</td>`;
+        } catch (erro) {
+          trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}"><p class="msg-vazio">Erro ao carregar unidades: ${erro}</p></td>`;
+        }
+      } else if (tipo === "contratos") {
+        trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}"><p class="msg-vazio">Carregando contratos...</p></td>`;
+        linhaAcoes.after(trDetalhe);
+
+        try {
+          const params = new URLSearchParams({ produto: linhaProduto.dataset.produto, situacao: "validos" });
+          const resp = await fetch(`/api/estoque_contratos?${params.toString()}`);
+          const contratos = await resp.json();
+          trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}">${montarTabelaContratos(contratos)}</td>`;
+        } catch (erro) {
+          trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}"><p class="msg-vazio">Erro ao carregar contratos: ${erro}</p></td>`;
         }
       } else {
         trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}">${montarFormularioMovimentacoes()}</td>`;
@@ -373,6 +413,90 @@
                 <th>Estoque de Segurança (90d)</th>
                 <th>Ponto de Ressuprimento (180d)</th>
                 <th>Autonomia de Estoque</th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // "unidades" mostra o produto em TODOS os armazens (sem filtro de armazem do usuario), com a
+    // data da ultima saida daquele lote naquele armazem especifico
+    function montarTabelaUnidades(dados) {
+      if (!Array.isArray(dados) || dados.length === 0) {
+        return '<p class="msg-vazio">Nenhuma unidade com estoque encontrada pra esse produto.</p>';
+      }
+
+      const linhas = dados
+        .map(
+          (item) => `
+        <tr>
+          <td>${item.nome_armazem ?? ""}</td>
+          <td>${item.lote ?? ""}</td>
+          <td>${item.validade ?? ""}</td>
+          <td>${formatarQuantidade(item.quantidade)}</td>
+          <td>${item.data_ultima_saida ?? "—"}</td>
+        </tr>`
+        )
+        .join("");
+
+      return `
+        <div class="bloco-hierarquia">
+          ${SETA_HIERARQUIA}
+          <table class="tabela-lotes">
+            <thead>
+              <tr>
+                <th>Armazém</th>
+                <th>Lote</th>
+                <th>Validade</th>
+                <th>Quantidade</th>
+                <th>Última Saída</th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // "contratos" traz todas as atas/contratos (validos e vencidos) que tem esse produto, usando
+    // o aditivo mais recente de cada familia (numeroidentificacao)
+    function montarTabelaContratos(dados) {
+      if (!Array.isArray(dados) || dados.length === 0) {
+        return '<p class="msg-vazio">Nenhum contrato ou ata encontrado pra esse produto.</p>';
+      }
+
+      const linhas = dados
+        .map(
+          (item) => `
+        <tr>
+          <td>${item.tipo ?? ""}</td>
+          <td>${item.numero ?? ""}</td>
+          <td>${item.aditivo ?? ""}</td>
+          <td>${formatarCnpj(item.cnpj)}</td>
+          <td class="celula-quebra">${item.fornecedor ?? ""}</td>
+          <td class="celula-quebra">${item.nome_fantasia ?? ""}</td>
+          <td>${formatarQuantidade(item.quantidade_total)}</td>
+          <td>${formatarMoeda(item.valor_unitario)}</td>
+          <td>${formatarQuantidade(item.saldo)}</td>
+        </tr>`
+        )
+        .join("");
+
+      return `
+        <div class="bloco-hierarquia">
+          ${SETA_HIERARQUIA}
+          <table class="tabela-lotes">
+            <thead>
+              <tr>
+                <th>Tipo</th>
+                <th>Número</th>
+                <th>Aditivo</th>
+                <th>CNPJ</th>
+                <th>Fornecedor</th>
+                <th>Nome Fantasia</th>
+                <th>Quantidade Total</th>
+                <th>Valor Unitário</th>
+                <th>Saldo</th>
               </tr>
             </thead>
             <tbody>${linhas}</tbody>

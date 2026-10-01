@@ -1331,6 +1331,93 @@ def api_estoque_lotes():
     return _consulta_generica(sql, params_completo)
 
 
+@app.route("/api/estoque_unidades")
+def api_estoque_unidades():
+    # lotes+quantidade de um produto em CADA armazem, sem filtro de tipo nem de armazem do usuario
+    # logado - "unidades" mostra o produto em TODOS os armazens, inclusive os que nao sao tipo C -
+    # com a data da ultima saida daquele lote naquele armazem especifico (si.estoque correlaciona
+    # pelo par lote+armazem)
+    produto = request.args.get("produto")
+    if not produto:
+        return jsonify([])
+
+    sql = """
+        SELECT
+            COALESCE(pes_arm.nome, arm.sigla) AS nome_armazem,
+            l.lotefornecedor AS lote,
+            to_char(l.validade, 'DD-MM-YY') AS validade,
+            e.quantidade AS quantidade,
+            ultima.data_ultima_saida
+        FROM public.estoque e
+        JOIN public.lote l ON l.lote = e.lote
+        JOIN public.armazem arm ON arm.armazem = e.armazem
+        LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
+        LEFT JOIN LATERAL (
+            SELECT to_char(MAX(sc.data), 'DD-MM-YY') AS data_ultima_saida
+            FROM public.saidaitem si
+            JOIN public.saidacabecalho sc ON sc.saidacabecalho = si.saidacabecalho
+            WHERE si.estoque = e.estoque
+        ) ultima ON TRUE
+        WHERE l.produto = %s AND e.quantidade > 0
+        ORDER BY nome_armazem, l.validade ASC
+    """
+    return _consulta_generica(sql, [produto])
+
+
+@app.route("/api/estoque_contratos")
+def api_estoque_contratos():
+    # atas/contratos que tem esse produto - uma linha por pedidoitem, incluindo cada aditivo
+    # separadamente (nao so o mais recente de cada familia), com o saldo (quantidade ainda nao
+    # entregue) de cada linha. situacao=validos restringe as familias cujo aditivo mais recente
+    # ainda esta vigente (datafim > hoje) - mesmo criterio de "valido" usado em /api/atas_contratos;
+    # sem o parametro, traz validos e vencidos (usado em aquisicoes.html)
+    produto = request.args.get("produto")
+    situacao = request.args.get("situacao")
+    if not produto:
+        return jsonify([])
+
+    condicoes = ["pi.produto = %s"]
+    params = [produto]
+
+    if situacao == "validos":
+        condicoes.append("""
+            EXISTS (
+                SELECT 1 FROM public.pedidocabecalho pc_latest
+                WHERE pc_latest.numeroidentificacao = pc.numeroidentificacao
+                AND pc_latest.numeroaditivo = (
+                    SELECT MAX(pc2.numeroaditivo) FROM public.pedidocabecalho pc2
+                    WHERE pc2.numeroidentificacao = pc.numeroidentificacao
+                )
+                AND pc_latest.datafim > CURRENT_DATE
+            )
+        """)
+
+    where = " AND ".join(condicoes)
+
+    sql = f"""
+        SELECT
+            COALESCE(pc.numerocontrato, pc.numeroata) AS numero,
+            CASE WHEN pc.atapreco = 'S' THEN 'Ata' ELSE 'Contrato' END AS tipo,
+            pc.numeroaditivo AS aditivo,
+            pj.cnpj AS cnpj,
+            pes.nome AS fornecedor,
+            pj.nomefantasia AS nome_fantasia,
+            pi.quantidade AS quantidade_total,
+            pi.valorunitario AS valor_unitario,
+            (pi.quantidade - COALESCE(pi.quantidadeentregue, 0)) AS saldo,
+            to_char(pc.datainicio, 'DD-MM-YY') AS data_inicio,
+            to_char(pc.datafim, 'DD-MM-YY') AS data_fim
+        FROM public.pedidoitem pi
+        JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = pi.pedidocabecalho
+        JOIN public.fornecedor forn ON forn.fornecedor = pc.fornecedor
+        JOIN public.pessoa pes ON pes.pessoa = forn.pessoa
+        LEFT JOIN public.pessoajuridica pj ON pj.pessoa = forn.pessoa
+        WHERE {where}
+        ORDER BY pes.nome, pc.numeroidentificacao, pc.numeroaditivo
+    """
+    return _consulta_generica(sql, params)
+
+
 @app.route("/api/estoque_movimentacoes")
 def api_estoque_movimentacoes():
     # relatorio de entradas (entradaitem) e saidas (saidaitem) de um produto - entrada usa o custo
@@ -1484,8 +1571,143 @@ def api_estoque_abastecimento():
 
 @app.route("/api/aquisicoes")
 def api_aquisicoes():
-    # TODO homem: cola consulta real aqui
-    return _consulta_generica("SELECT 1 AS placeholder LIMIT 0")
+    # igual a /api/estoque (mesmos filtros, mesma paginacao), mas so lista produto que tem pelo
+    # menos um armazem onde o ponto de ressuprimento ta configurado (> 0) e NAO esta sendo
+    # atendido (estoque daquele armazem + saldo em contrato do produto < ponto de ressuprimento) -
+    # mesma regra de "insuficiente" usada no sinalizador ⚠ de /api/estoque_abastecimento
+    cod_seplag = request.args.get("cod_seplag")
+    cod_almox = request.args.get("cod_almox")
+    cod_produto = request.args.get("cod_produto")
+    nome_produto = request.args.get("nome_produto")
+    lote = request.args.get("lote")
+    subgrupo = request.args.get("subgrupo")
+    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    try:
+        pagina = max(int(request.args.get("pagina", 1)), 1)
+    except ValueError:
+        pagina = 1
+
+    condicoes = []
+    params = []
+
+    if cod_seplag:
+        condicoes.append("p.codigoreferencia ILIKE %s")
+        params.append(f"%{cod_seplag}%")
+    if cod_almox:
+        condicoes.append("p.codigo ILIKE %s")
+        params.append(f"%{cod_almox}%")
+    if cod_produto:
+        condicoes.append("p.produto::text ILIKE %s")
+        params.append(f"%{cod_produto}%")
+    if nome_produto:
+        condicoes.append("p.nome ILIKE %s")
+        params.append(f"%{nome_produto}%")
+    if lote:
+        condicoes.append(
+            "EXISTS (SELECT 1 FROM public.lote lt WHERE lt.produto = p.produto AND lt.lotefornecedor ILIKE %s)"
+        )
+        params.append(f"%{lote}%")
+    if subgrupo:
+        condicoes.append("sg.descricao ILIKE %s")
+        params.append(f"%{subgrupo}%")
+
+    # ponto de ressuprimento insuficiente, restrito aos mesmos armazens que o usuario enxerga
+    filtro_armazem_ea = f"AND arm_ea.armazem IN ({SQL_ARMAZENS_DO_USUARIO})" if usuario_logado else ""
+    condicoes.append(f"""
+        EXISTS (
+            SELECT 1
+            FROM public.estoquearmazem ea
+            JOIN public.armazem arm_ea ON arm_ea.armazem = ea.armazem
+            LEFT JOIN saldo_por_produto sp ON sp.produto = ea.produto
+            WHERE ea.produto = p.produto
+            AND arm_ea.tipoarmazem = 'C'
+            {filtro_armazem_ea}
+            AND ea.pontoressuprimento > 0
+            AND (ea.quantidade + COALESCE(sp.saldo, 0)) < ea.pontoressuprimento
+        )
+    """)
+
+    where = f"WHERE {' AND '.join(condicoes)}"
+
+    # filtro de armazem do usuario logado vem antes na string SQL (dentro da subquery), entao o
+    # parametro dele precisa ir antes dos outros na lista - por isso um params_completo separado.
+    # o parametro do filtro de armazem da condicao de ressuprimento vem DEPOIS dos filtros comuns
+    # (ela fica por ultimo em condicoes), entao o parametro dela vai no final
+    filtro_armazem_usuario = f"AND e.armazem IN ({SQL_ARMAZENS_DO_USUARIO})" if usuario_logado else ""
+    params_completo = ([usuario_logado] if usuario_logado else []) + params + ([usuario_logado] if usuario_logado else [])
+
+    base_from = f"""
+        FROM public.produto p
+        JOIN (
+            SELECT lt.produto, SUM(e.quantidade) AS total
+            FROM public.lote lt
+            JOIN public.estoque e ON e.lote = lt.lote
+            JOIN public.armazem arm_e ON arm_e.armazem = e.armazem
+            WHERE arm_e.tipoarmazem = 'C'
+            {filtro_armazem_usuario}
+            GROUP BY lt.produto
+            HAVING SUM(e.quantidade) > 0
+        ) est ON est.produto = p.produto
+        LEFT JOIN public.classe c ON p.classe = c.classe
+        LEFT JOIN public.subgrupo sg ON c.subgrupo = sg.subgrupo
+        LEFT JOIN public.unidadeproduto up ON p.unidadeproduto = up.unidadeproduto
+        LEFT JOIN public.estoquetotal et ON et.produto = p.produto
+        {where}
+    """
+
+    tamanho_pagina = 10
+    offset = (pagina - 1) * tamanho_pagina
+
+    try:
+        sql_dados = f"""
+            WITH saldo_por_produto AS MATERIALIZED (
+                SELECT pi.produto, COALESCE(SUM(pi.quantidade - COALESCE(pi.quantidadeentregue, 0)), 0) AS saldo
+                FROM public.pedidoitem pi
+                JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = pi.pedidocabecalho
+                WHERE EXISTS (
+                    SELECT 1 FROM public.pedidocabecalho pc_latest
+                    WHERE pc_latest.numeroidentificacao = pc.numeroidentificacao
+                    AND pc_latest.numeroaditivo = (
+                        SELECT MAX(pc2.numeroaditivo) FROM public.pedidocabecalho pc2
+                        WHERE pc2.numeroidentificacao = pc.numeroidentificacao
+                    )
+                    AND pc_latest.datafim > CURRENT_DATE
+                )
+                GROUP BY pi.produto
+            ),
+            filtrado AS MATERIALIZED (
+                SELECT
+                    p.codigoreferencia AS cod_seplag,
+                    p.codigo AS cod_almox,
+                    p.produto AS cod_produto,
+                    p.nome AS nome_produto,
+                    c.descricao AS classe,
+                    sg.descricao AS sub_grupo,
+                    up.sigla AS apresentacao,
+                    p.referenciasus AS procedimento_sus,
+                    est.total AS total_estoque,
+                    et.customedio AS custo_medio,
+                    (est.total * et.customedio) AS valor_total
+                {base_from}
+            )
+            SELECT
+                (SELECT count(*) FROM filtrado) AS total_geral,
+                COALESCE((
+                    SELECT json_agg(pagina.* ORDER BY pagina.cod_produto)
+                    FROM (SELECT * FROM filtrado ORDER BY cod_produto LIMIT %s OFFSET %s) pagina
+                ), '[]'::json) AS dados_json
+        """
+        resultado = run_query(sql_dados, params_completo + [tamanho_pagina, offset])[0]
+        return jsonify(
+            {
+                "dados": resultado["dados_json"],
+                "total": resultado["total_geral"],
+                "pagina": pagina,
+                "tamanho_pagina": tamanho_pagina,
+            }
+        )
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
 
 
 def _contagem_em_andamento(tipomov, usuario_logado):
