@@ -9,7 +9,7 @@ import psycopg2.extras
 # pra voltar pro banco real, troca dbname de volta pra "isivitaedb_hm"
 _CONFIG_PADRAO = {
     "host": "localhost",
-    "port": 30433,
+    "port": 5432,
     "dbname": "isivitaedb_hm",
     "user": "postgres",
     "password": "grandeviagem",

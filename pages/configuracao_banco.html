@@ -24,6 +24,23 @@
 
       <section class="cartao secao-pedidos">
         <div class="secao-cabecalho">
+          <h2>Logo do Sistema</h2>
+        </div>
+        <div class="area-logo-atual">
+          <img src="/static/logo_insystem.png" alt="Logo atual" id="previewLogoAtual" class="logo-topo" />
+        </div>
+        <form id="formAlterarLogo" class="form-cadastro">
+          <div class="campo-filtro campo-largo">
+            <label for="arquivoLogo">Novo arquivo (PNG)</label>
+            <input type="file" id="arquivoLogo" accept="image/png" required />
+          </div>
+          <button type="submit" class="botao-filtrar">Alterar Logo</button>
+        </form>
+        <p class="erro-login" id="mensagemLogo"></p>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
           <h2>Conexão com o Banco</h2>
           <div class="grupo-botoes-filtro">
             <button type="button" class="botao-resetar" id="botaoEditarConexao">Editar</button>
@@ -63,6 +80,25 @@
           </div>
         </form>
         <p class="erro-login" id="mensagemConexao"></p>
+      </section>
+
+      <section class="cartao secao-pedidos oculto" id="secaoAdminInicial">
+        <div class="secao-cabecalho">
+          <h2>Acesso de Administrador</h2>
+        </div>
+        <p class="msg-vazio">
+          O schema está pronto, mas ainda não há nenhum usuário vinculado a um perfil - ninguém
+          consegue entrar no sistema. Informe o login (o mesmo usado no Guardião) que vai virar o
+          primeiro administrador.
+        </p>
+        <form id="formAdminInicial" class="form-cadastro">
+          <div class="campo-filtro campo-largo">
+            <label for="adminInicialIdentificacao">Usuário</label>
+            <input type="text" id="adminInicialIdentificacao" placeholder="Ex.: admin" required />
+          </div>
+          <button type="submit" class="botao-filtrar">Tornar Administrador</button>
+        </form>
+        <p class="erro-login" id="mensagemAdminInicial"></p>
       </section>
 
       <section class="cartao secao-pedidos">
@@ -133,6 +169,10 @@
 
         const faltaAlgumaTabela = !dado.schema_existe || dado.tabelas.some((tabela) => !tabela.existe);
         botaoCriar.classList.toggle("oculto", !faltaAlgumaTabela);
+
+        // schema/tabelas prontos mas sem ninguem vinculado a um perfil ainda = banco novo que
+        // acabou de ser criado, precisa do primeiro administrador antes de qualquer um conseguir logar
+        document.getElementById("secaoAdminInicial").classList.toggle("oculto", faltaAlgumaTabela || dado.tem_usuario);
       } catch (erro) {
         areaConexao.innerHTML = `<p class="msg-vazio">Erro ao buscar configuração: ${erro}</p>`;
         areaSchema.innerHTML = "";
@@ -212,6 +252,56 @@
         await carregarConfiguracaoBanco();
       } catch (e) {
         erro.textContent = "Sem sinal de fumaça com o servidor";
+      }
+    });
+
+    document.getElementById("formAdminInicial").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const mensagem = document.getElementById("mensagemAdminInicial");
+      mensagem.textContent = "";
+      const identificacao = document.getElementById("adminInicialIdentificacao").value.trim();
+
+      try {
+        const resp = await fetch("/api/configuracao_banco/criar_admin_inicial", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ identificacao }),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          mensagem.textContent = dado.msg || "Erro ao criar administrador";
+          return;
+        }
+        document.getElementById("adminInicialIdentificacao").value = "";
+        await carregarConfiguracaoBanco();
+      } catch (e) {
+        mensagem.textContent = "Sem sinal de fumaça com o servidor";
+      }
+    });
+
+    document.getElementById("formAlterarLogo").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const mensagem = document.getElementById("mensagemLogo");
+      mensagem.textContent = "";
+
+      const arquivo = document.getElementById("arquivoLogo").files[0];
+      if (!arquivo) return;
+
+      const dadosForm = new FormData();
+      dadosForm.append("logo", arquivo);
+
+      try {
+        const resp = await fetch("/api/configuracao_banco/logo", { method: "POST", body: dadosForm });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          mensagem.textContent = dado.msg || "Erro ao alterar logo";
+          return;
+        }
+        document.getElementById("arquivoLogo").value = "";
+        // cache-busting (?t=...) pra forçar o navegador a buscar o arquivo novo em vez do antigo
+        document.getElementById("previewLogoAtual").src = `/static/logo_insystem.png?t=${Date.now()}`;
+      } catch (e) {
+        mensagem.textContent = "Sem sinal de fumaça com o servidor";
       }
     });
 

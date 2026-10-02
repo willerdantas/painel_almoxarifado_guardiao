@@ -1,5 +1,6 @@
 """Homem grande serve paginas e API."""
 import datetime
+import os
 import re
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -519,6 +520,14 @@ def api_configuracao_banco():
             existe = False
         tabelas.append({"nome": nome, "existe": existe})
 
+    # schema/tabelas prontos mas ninguem vinculado a um perfil ainda = ninguem consegue logar -
+    # acontece logo depois de criar o schema num banco novo (sistemaperfil vem semeado, mas
+    # sistemausuario comeca vazio - ver /api/configuracao_banco/criar_admin_inicial)
+    tem_usuario = False
+    if schema_existe and all(tabela["existe"] for tabela in tabelas):
+        linhas = run_query("SELECT 1 FROM sist_logistica.sistemausuario LIMIT 1")
+        tem_usuario = bool(linhas)
+
     return jsonify({
         "conexao": {
             "host": DB_CONFIG["host"],
@@ -528,6 +537,7 @@ def api_configuracao_banco():
         },
         "schema_existe": schema_existe,
         "tabelas": tabelas,
+        "tem_usuario": tem_usuario,
     })
 
 
@@ -601,6 +611,63 @@ def api_criar_schema_sist_logistica():
         return jsonify({"ok": True})
     except Exception as erro:
         return jsonify({"ok": False, "msg": str(erro)}), 500
+
+
+@app.route("/api/configuracao_banco/criar_admin_inicial", methods=["POST"])
+def api_criar_admin_inicial():
+    # vincula o primeiro usuario administrador num banco novo - so deixa rodar enquanto
+    # sistemausuario estiver vazio, pra nao virar um jeito de qualquer um se promover a admin
+    # depois que o sistema ja esta em uso
+    em_uso = run_query("SELECT 1 FROM sist_logistica.sistemausuario LIMIT 1")
+    if em_uso:
+        return jsonify({"ok": False, "msg": "Já existe usuário cadastrado neste banco, use a tela de Cadastro."}), 400
+
+    dados = request.get_json(force=True)
+    identificacao = (dados.get("identificacao") or "").strip()
+    if not identificacao:
+        return jsonify({"ok": False, "msg": "Informe o usuário"}), 400
+
+    existe = run_query("SELECT 1 FROM public.usuario WHERE identificacao = %s", [identificacao])
+    if not existe:
+        return jsonify({"ok": False, "msg": "Usuário não encontrado em public.usuario"}), 404
+
+    perfil_admin = run_query("SELECT sistemaperfil FROM sist_logistica.sistemaperfil WHERE administrador = TRUE LIMIT 1")
+    if not perfil_admin:
+        return jsonify({"ok": False, "msg": "Nenhum perfil administrador cadastrado ainda"}), 400
+
+    run_query(
+        "INSERT INTO sist_logistica.sistemausuario (identificacao, sistemaperfil) VALUES (%s, %s)",
+        [identificacao, perfil_admin[0]["sistemaperfil"]],
+    )
+    return jsonify({"ok": True})
+
+
+# assinatura de arquivo PNG (primeiros 8 bytes) - confere que o conteudo enviado eh mesmo um PNG,
+# nao so que o nome do arquivo termina em .png
+ASSINATURA_PNG = b"\x89PNG\r\n\x1a\n"
+TAMANHO_MAXIMO_LOGO = 2 * 1024 * 1024
+
+
+@app.route("/api/configuracao_banco/logo", methods=["POST"])
+def api_alterar_logo():
+    # todas as paginas apontam pra /static/logo_insystem.png (nome fixo) - trocar o arquivo nesse
+    # caminho atualiza a logo em todo o sistema de uma vez, sem mexer em nenhuma pagina. so aceita
+    # PNG (mesmo formato do arquivo atual) pra nao ter descompasso entre extensao e conteudo real
+    arquivo = request.files.get("logo")
+    if not arquivo or not arquivo.filename:
+        return jsonify({"ok": False, "msg": "Selecione um arquivo"}), 400
+
+    conteudo = arquivo.read()
+    if len(conteudo) > TAMANHO_MAXIMO_LOGO:
+        return jsonify({"ok": False, "msg": "Arquivo muito grande (máximo 2MB)"}), 400
+    if not conteudo.startswith(ASSINATURA_PNG):
+        return jsonify({"ok": False, "msg": "Envie um arquivo PNG válido"}), 400
+
+    caminho_destino = os.path.join(app.static_folder, "logo_insystem.png")
+    with open(caminho_destino, "wb") as destino:
+        destino.write(conteudo)
+
+    return jsonify({"ok": True})
 
 
 def _consulta_generica(sql, params=None):
@@ -2974,4 +3041,4 @@ def api_dashboard_atas_contratos_validos():
 
 if __name__ == "__main__":
     # fogo aceso, sistema roda
-    app.run(host="0.0.0.0", debug=True, port=5000)
+    app.run(host="0.0.0.0", debug=True, port=5001)
