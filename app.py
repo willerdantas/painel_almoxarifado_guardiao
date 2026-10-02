@@ -2067,12 +2067,20 @@ def api_aquisicoes():
         return jsonify({"erro": str(erro)}), 500
 
 
-def _contagem_em_andamento(tipomov, usuario_logado):
+def _contagem_em_andamento(tipomov, usuario_logado, armazem=None):
     # quantos pedidos estao reivindicados e AINDA em andamento (_creation = _update) pra essa
     # etapa (separacao ou distribuicao) - conta em cima de armazemmovimentacao (tabela pequena),
     # so junta com saidacabecalho pra aplicar o filtro de armazem/status
     condicoes = ["sc.status <> 'E'", f"am.tipomovimentacao = {tipomov}", "am._creation = am._update"]
     params = []
+    join_armazem = ""
+    if armazem:
+        join_armazem = """
+            LEFT JOIN public.armazem arm ON arm.armazem = sc.armazem
+            LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
+        """
+        condicoes.append("pes_arm.nome = %s")
+        params.append(armazem)
     if usuario_logado:
         condicoes.append(f"sc.armazem IN ({SQL_ARMAZENS_DO_USUARIO})")
         params.append(usuario_logado)
@@ -2081,6 +2089,7 @@ def _contagem_em_andamento(tipomov, usuario_logado):
         SELECT count(DISTINCT am.saidacabecalho) AS total
         FROM sist_logistica.armazemmovimentacao am
         JOIN public.saidacabecalho sc ON sc.saidacabecalho = am.saidacabecalho
+        {join_armazem}
         {where}
     """
     return run_query(sql, params)[0]["total"]
@@ -2093,6 +2102,9 @@ def api_painel_contadores():
     data_inicio = request.args.get("data_inicio") or "2026-09-01"
     usuario_logado_raw = request.args.get("usuario_logado")
     usuario_logado = _usuario_para_filtro_armazem(usuario_logado_raw)
+    # selecao manual de armazem (dropdown do painel, so aparece pra admin/sem-login) - prevalece
+    # sobre o armazem implicito do usuario logado
+    armazem = request.args.get("armazem")
 
     # novos pedidos: requisicao ainda nao tocada por nenhuma saida (mesma condicao de
     # /api/pedidos_novos, incluindo o SET LOCAL que forca nested loop - ver comentario la)
@@ -2105,25 +2117,34 @@ def api_painel_contadores():
         )""",
     ]
     params_novos = [data_inicio]
+    join_novos = ""
+    if armazem:
+        join_novos = """
+            LEFT JOIN public.armazem arm ON arm.armazem = rq.armazem
+            LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
+        """
+        condicoes_novos.append("pes_arm.nome = %s")
+        params_novos.append(armazem)
     if usuario_logado:
         condicoes_novos.append(f"rq.armazem IN ({SQL_ARMAZENS_DO_USUARIO})")
         params_novos.append(usuario_logado)
     sql_novos = f"""
         SET LOCAL enable_hashjoin = off;
         SET LOCAL enable_mergejoin = off;
-        SELECT count(*) AS total FROM public.requisicao rq WHERE {' AND '.join(condicoes_novos)}
+        SELECT count(*) AS total FROM public.requisicao rq {join_novos} WHERE {' AND '.join(condicoes_novos)}
     """
     novos = run_query(sql_novos, params_novos)[0]["total"]
 
-    a_separar = _consulta_pedidos(data_inicio=data_inicio, usuario_logado=usuario_logado_raw, apenas_contagem=True)
+    a_separar = _consulta_pedidos(data_inicio=data_inicio, armazem=armazem, usuario_logado=usuario_logado_raw, apenas_contagem=True)
     para_distribuicao = _consulta_pedidos(
         data_inicio=data_inicio,
+        armazem=armazem,
         usuario_logado=usuario_logado_raw,
         condicoes_base=["sc.status <> 'E'", SQL_SEPARACAO_CONCLUIDA, f"NOT {SQL_DISTRIBUICAO_RECLAMADA}"],
         apenas_contagem=True,
     )
-    em_separacao = _contagem_em_andamento(TIPOMOV_SEPARACAO, usuario_logado)
-    em_distribuicao = _contagem_em_andamento(TIPOMOV_DISTRIBUICAO, usuario_logado)
+    em_separacao = _contagem_em_andamento(TIPOMOV_SEPARACAO, usuario_logado, armazem)
+    em_distribuicao = _contagem_em_andamento(TIPOMOV_DISTRIBUICAO, usuario_logado, armazem)
 
     return jsonify({
         "novos": novos,
@@ -2140,13 +2161,27 @@ def api_painel_chamados():
     # separacao e de distribuicao) - novos pedidos e pedidos a separar ainda nao tem linha nessa
     # tabela, entao so entram no painel de chamada quando alguem reivindica pra separacao
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    armazem = request.args.get("armazem")
     try:
         limite = max(int(request.args.get("limite", 5)), 1)
     except ValueError:
         limite = 5
 
-    filtro_armazem = f"AND sc.armazem IN ({SQL_ARMAZENS_DO_USUARIO})" if usuario_logado else ""
-    params = ([usuario_logado] if usuario_logado else []) + [limite]
+    join_armazem = ""
+    condicoes_extra = []
+    params = []
+    if armazem:
+        join_armazem = """
+            LEFT JOIN public.armazem arm ON arm.armazem = sc.armazem
+            LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
+        """
+        condicoes_extra.append("pes_arm.nome = %s")
+        params.append(armazem)
+    if usuario_logado:
+        condicoes_extra.append(f"sc.armazem IN ({SQL_ARMAZENS_DO_USUARIO})")
+        params.append(usuario_logado)
+    filtro_armazem = ("AND " + " AND ".join(condicoes_extra)) if condicoes_extra else ""
+    params.append(limite)
 
     sql = f"""
         SELECT sc.saidacabecalho AS numero_pedido, pes.nome AS requisitante, eventos.momento, eventos.etapa
@@ -2165,6 +2200,7 @@ def api_painel_chamados():
         ) eventos
         JOIN public.saidacabecalho sc ON sc.saidacabecalho = eventos.saidacabecalho
         LEFT JOIN public.pessoa pes ON pes.pessoa = sc.pessoa
+        {join_armazem}
         WHERE sc.status <> 'E' {filtro_armazem}
         ORDER BY eventos.momento DESC
         LIMIT %s

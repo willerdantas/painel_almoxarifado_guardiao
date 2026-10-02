@@ -16,6 +16,13 @@
         <div class="topo-direita" id="topoDireita"></div>
       </div>
 
+      <div class="campo-filtro campo-curto oculto" id="blocoFiltroArmazemPainel">
+        <label for="filtroArmazemPainel">Armazém</label>
+        <select id="filtroArmazemPainel">
+          <option value="">Todos os armazéns</option>
+        </select>
+      </div>
+
       <div class="linha-cards-painel">
         <div class="cartao card-painel">
           <span class="contagem-numero" id="cardNovos">0</span>
@@ -81,11 +88,30 @@
       });
     }
 
+    // sem login ou como administrador nao ha um armazem implicito (usuario comum ja fica restrito
+    // ao proprio armazem via usuario_logado) - nesses dois casos libera a selecao manual, que fica
+    // guardada no localStorage pra sobreviver a um refresh (uso comum: painel fixo numa tela)
+    const administrador = localStorage.getItem("administrador") === "true";
+    if (!logado || administrador) {
+      const blocoFiltro = document.getElementById("blocoFiltroArmazemPainel");
+      blocoFiltro.classList.remove("oculto");
+      preencherSelect("/api/armazens", "filtroArmazemPainel").then(() => {
+        const salvo = localStorage.getItem("painel_armazem_selecionado");
+        if (salvo) document.getElementById("filtroArmazemPainel").value = salvo;
+      });
+      document.getElementById("filtroArmazemPainel").addEventListener("change", (ev) => {
+        localStorage.setItem("painel_armazem_selecionado", ev.target.value);
+        atualizarPainel();
+      });
+    }
+
     const INTERVALO_ATUALIZACAO_MS = 5000;
 
     function montarQuery(extra) {
       const params = new URLSearchParams(extra || {});
       if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
+      const armazemSelecionado = document.getElementById("filtroArmazemPainel")?.value;
+      if (armazemSelecionado) params.set("armazem", armazemSelecionado);
       return params.toString();
     }
 
