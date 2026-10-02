@@ -792,9 +792,9 @@ def api_unidades():
 @app.route("/api/pedidos_novos")
 def api_pedidos_novos():
     # requisicoes puras, do mais antigo pro mais novo (contrario da leitura padrao das outras
-    # secoes) - se ninguem filtrar data, comeca em 01-09-2026 (janela util de dado real de teste)
+    # secoes) - se ninguem filtrar data, comeca em 01-10-2026 (janela util de dado real de teste)
     numero = request.args.get("numero")
-    data_inicio = request.args.get("data_inicio") or "2026-09-01"
+    data_inicio = request.args.get("data_inicio") or "2026-10-01"
     data_fim = request.args.get("data_fim")
     armazem = request.args.get("armazem")
     setor = request.args.get("setor")
@@ -1381,7 +1381,7 @@ def api_pedidos_finalizados():
     # cancelados (saidacabecalho.status = 'E', estornado) + pedidos que ja concluiram a
     # distribuicao (_creation <> _update na linha de distribuicao)
     numero = request.args.get("numero")
-    data_inicio = request.args.get("data_inicio") or "2026-09-01"
+    data_inicio = request.args.get("data_inicio") or "2026-10-01"
     data_fim = request.args.get("data_fim")
     armazem = request.args.get("armazem")
     setor = request.args.get("setor")
@@ -2374,7 +2374,7 @@ def _contagem_em_andamento(tipomov, usuario_logado, armazem=None):
 def api_painel_contadores():
     # os 5 numeros dos cards do painel de chamada - mesmo filtro de data/armazem que cada tela de
     # origem usa, so trocando a lista inteira por um count(*) (fica leve pro painel dar poll)
-    data_inicio = request.args.get("data_inicio") or "2026-09-01"
+    data_inicio = request.args.get("data_inicio") or "2026-10-01"
     usuario_logado_raw = request.args.get("usuario_logado")
     usuario_logado = _usuario_para_filtro_armazem(usuario_logado_raw)
     # selecao manual de armazem (dropdown do painel, so aparece pra admin/sem-login) - prevalece
