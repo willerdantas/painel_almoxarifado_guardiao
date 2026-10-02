@@ -329,7 +329,7 @@
       const linhas = lista
         .map(
           (linha) => `
-        <tr>
+        <tr class="linha-produto" data-pedido="${linha.numero_pedido}">
           <td>${linha.numero_pedido ?? ""}</td>
           <td>${linha.requisitante ?? ""}</td>
           <td>${linha.data_requisicao ?? ""}</td>
@@ -350,6 +350,10 @@
           </thead>
           <tbody>${linhas}</tbody>
         </table>`;
+
+      container.querySelectorAll(".linha-produto").forEach((linha) => {
+        linha.addEventListener("click", () => alternarItensSaida(linha, "areaASeparar"));
+      });
     }
 
     // responsavel/data/hora vem do registro feito na tela de separacao - aqui eh so leitura
