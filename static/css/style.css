@@ -616,6 +616,68 @@ body {
   overflow-y: auto;
 }
 
+/* pagina de cadastro (cadastro.html) - form de novo perfil, grade de paginas e botao de excluir */
+.oculto {
+  display: none !important;
+}
+
+.form-cadastro {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  margin-bottom: 16px;
+  background: var(--cinza-claro);
+  border-radius: 8px;
+}
+
+.opcao-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--azul-escuro);
+  cursor: pointer;
+}
+
+.opcao-administrador {
+  font-weight: 600;
+}
+
+.rotulo-paginas {
+  font-size: 12px;
+  font-weight: 600;
+  color: #556;
+  margin-bottom: 8px;
+}
+
+.grade-checkboxes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px 16px;
+}
+
+.campo-busca-usuario {
+  margin-bottom: 14px;
+}
+
+.botao-excluir {
+  padding: 6px 14px;
+  background: transparent;
+  border: 1px solid var(--vermelho);
+  color: var(--vermelho);
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.botao-excluir:hover {
+  background: var(--vermelho);
+  color: var(--branco);
+}
+
 /* barra do "distribuir selecionados" - fica entre o cabecalho da secao e a tabela */
 .acoes-selecao-lote {
   display: flex;
@@ -660,6 +722,18 @@ body {
 }
 
 .area-rolavel table.tabela-dados thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+/* calendario de distribuicao (cadastro.html) - mostra uns 10 armazens, resto rola com cabecalho fixo */
+.area-rolavel-calendario {
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.area-rolavel-calendario table.tabela-dados thead th {
   position: sticky;
   top: 0;
   z-index: 1;

@@ -3,6 +3,7 @@ import datetime
 import re
 
 from flask import Flask, jsonify, request, send_from_directory
+from werkzeug.security import check_password_hash, generate_password_hash
 from db import run_query
 
 app = Flask(__name__, static_folder="static")
@@ -23,7 +24,27 @@ PAGES = [
     "pagamentos.html",
     "atas_contratos.html",
     "atas_contratos_vencidos.html",
+    "cadastro.html",
 ]
+
+# paginas que aparecem no menu lateral e que um perfil de acesso pode liberar/esconder - mesma
+# chave usada em ITENS_MENU (static/js/sidebar.js) pra bater o que o perfil libera com o que o
+# menu desenha
+PAGINAS_SISTEMA = [
+    {"chave": "dashboard", "rotulo": "Dashboard"},
+    {"chave": "painel_pedidos", "rotulo": "Painel de Pedidos"},
+    {"chave": "pedidos", "rotulo": "Controle de Pedidos"},
+    {"chave": "separacao_pedidos", "rotulo": "Separação de Pedidos"},
+    {"chave": "distribuicao_pedidos", "rotulo": "Distribuição de Pedidos"},
+    {"chave": "produtos", "rotulo": "Produtos"},
+    {"chave": "estoque", "rotulo": "Controle de Estoque"},
+    {"chave": "vencidos", "rotulo": "Produtos Vencidos"},
+    {"chave": "aquisicoes", "rotulo": "Aquisições"},
+    {"chave": "atas_contratos", "rotulo": "Atas e Contratos"},
+    {"chave": "pagamentos", "rotulo": "Processos de Pagamento"},
+    {"chave": "cadastro", "rotulo": "Cadastro"},
+]
+PAGINAS_SISTEMA_CHAVES = [pagina["chave"] for pagina in PAGINAS_SISTEMA]
 
 
 @app.route("/")
@@ -46,14 +67,34 @@ def estatico(caminho):
     return send_from_directory("static", caminho)
 
 
+def _buscar_sistemausuario(identificacao):
+    linhas = run_query("""
+        SELECT su.sistemausuario, su.senha_hash, sp.sistemaperfil, sp.nome AS perfil_nome, sp.administrador
+        FROM sist_logistica.sistemausuario su
+        LEFT JOIN sist_logistica.sistemaperfil sp ON sp.sistemaperfil = su.sistemaperfil
+        WHERE su.identificacao = %s
+    """, [identificacao])
+    return linhas[0] if linhas else None
+
+
+def _paginas_do_perfil(sistemaperfil):
+    if not sistemaperfil:
+        return []
+    linhas = run_query(
+        "SELECT pagina FROM sist_logistica.sistemaperfilpagina WHERE sistemaperfil = %s ORDER BY pagina",
+        [sistemaperfil],
+    )
+    return [linha["pagina"] for linha in linhas]
+
+
 @app.route("/api/login", methods=["POST"])
 def login():
-    # confere se cacador eh da tribo
-    # MODO TESTE: loga qualquer usuario que exista na tabela usuario, so pela identificacao,
-    # sem checar senha (a senha real fica em sha e nao conseguimos descobrir o algoritmo ainda) -
-    # mas so quem tem acesso a algum armazem (armazemfunc) entra; admin eh excecao pra testar tudo
+    # confere se cacador eh da tribo: identificacao tem que existir em public.usuario (dado do
+    # Guardiao) E ter um perfil atribuido em sist_logistica.sistemausuario (cadastro.html) - sem
+    # perfil, sem entrada, mesmo que o Guardiao reconheca o usuario
     dados = request.get_json(force=True)
     usuario = dados.get("usuario", "").strip()
+    senha = dados.get("senha", "")
 
     sql = """
         SELECT
@@ -73,13 +114,277 @@ def login():
         return jsonify({"ok": False, "msg": "usuario não encontrado"}), 401
 
     linha = linhas[0]
-    eh_admin = usuario.lower() == "admin"
+    sistemausuario = _buscar_sistemausuario(linha["identificacao"])
+    if not sistemausuario or not sistemausuario["sistemaperfil"]:
+        return jsonify({"ok": False, "msg": "Usuário sem perfil de acesso cadastrado. Procure o administrador."}), 403
+
+    eh_admin = bool(sistemausuario["administrador"])
     if not eh_admin and not linha["tem_acesso"]:
         return jsonify({"ok": False, "msg": "Usuário sem acesso"}), 403
 
+    # primeiro acesso: ainda nao tem senha definida em sistemausuario - pede pra criar antes de
+    # deixar entrar (POST /api/definir_senha)
+    if not sistemausuario["senha_hash"]:
+        return jsonify({"ok": False, "precisa_criar_senha": True, "identificacao": linha["identificacao"]})
+
+    if not senha or not check_password_hash(sistemausuario["senha_hash"], senha):
+        return jsonify({"ok": False, "msg": "Senha incorreta"}), 401
+
+    paginas = PAGINAS_SISTEMA_CHAVES if eh_admin else _paginas_do_perfil(sistemausuario["sistemaperfil"])
+
     # "usuario" eh o nome do funcionario pra exibir nas paginas, "identificacao" eh o login
     # (usado pra filtrar por armazem)
-    return jsonify({"ok": True, "usuario": linha["nome"], "identificacao": linha["identificacao"]})
+    return jsonify({
+        "ok": True,
+        "usuario": linha["nome"],
+        "identificacao": linha["identificacao"],
+        "administrador": eh_admin,
+        "paginas": paginas,
+    })
+
+
+@app.route("/api/definir_senha", methods=["POST"])
+def api_definir_senha():
+    # usada no primeiro acesso (sistemausuario.senha_hash ainda nulo) - so deixa definir se o
+    # usuario ja tem uma linha em sistemausuario (ou seja, se um perfil ja foi atribuido a ele
+    # em cadastro.html); nao cria usuario novo aqui
+    dados = request.get_json(force=True)
+    identificacao = (dados.get("identificacao") or "").strip()
+    senha = dados.get("senha") or ""
+
+    if not identificacao or len(senha) < 6:
+        return jsonify({"ok": False, "msg": "Senha deve ter pelo menos 6 caracteres"}), 400
+
+    sistemausuario = _buscar_sistemausuario(identificacao)
+    if not sistemausuario:
+        return jsonify({"ok": False, "msg": "Usuário sem perfil de acesso cadastrado. Procure o administrador."}), 403
+
+    run_query("""
+        UPDATE sist_logistica.sistemausuario
+        SET senha_hash = %s, _update = now()
+        WHERE identificacao = %s
+    """, [generate_password_hash(senha), identificacao])
+
+    return jsonify({"ok": True})
+
+
+@app.route("/api/paginas_sistema")
+def api_paginas_sistema():
+    return jsonify(PAGINAS_SISTEMA)
+
+
+@app.route("/api/perfis")
+def api_perfis():
+    perfis = run_query("""
+        SELECT sistemaperfil, nome, administrador
+        FROM sist_logistica.sistemaperfil
+        ORDER BY nome
+    """)
+    for perfil in perfis:
+        perfil["paginas"] = [] if perfil["administrador"] else _paginas_do_perfil(perfil["sistemaperfil"])
+    return jsonify(perfis)
+
+
+@app.route("/api/perfis", methods=["POST"])
+def api_criar_perfil():
+    dados = request.get_json(force=True)
+    nome = (dados.get("nome") or "").strip()
+    administrador = bool(dados.get("administrador"))
+    paginas = dados.get("paginas") or []
+
+    if not nome:
+        return jsonify({"ok": False, "msg": "Informe o nome do perfil"}), 400
+    if not administrador and not paginas:
+        return jsonify({"ok": False, "msg": "Selecione ao menos uma página ou marque como administrador"}), 400
+
+    try:
+        linhas = run_query("""
+            INSERT INTO sist_logistica.sistemaperfil (nome, administrador)
+            VALUES (%s, %s)
+            RETURNING sistemaperfil
+        """, [nome, administrador])
+        sistemaperfil = linhas[0]["sistemaperfil"]
+
+        if not administrador:
+            chaves_validas = {pagina["chave"] for pagina in PAGINAS_SISTEMA}
+            for pagina in paginas:
+                if pagina in chaves_validas:
+                    run_query("""
+                        INSERT INTO sist_logistica.sistemaperfilpagina (sistemaperfil, pagina)
+                        VALUES (%s, %s)
+                    """, [sistemaperfil, pagina])
+
+        return jsonify({"ok": True, "sistemaperfil": sistemaperfil})
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+
+
+@app.route("/api/perfis/<int:sistemaperfil>", methods=["PUT"])
+def api_editar_perfil(sistemaperfil):
+    dados = request.get_json(force=True)
+    nome = (dados.get("nome") or "").strip()
+    administrador = bool(dados.get("administrador"))
+    paginas = dados.get("paginas") or []
+
+    if not nome:
+        return jsonify({"ok": False, "msg": "Informe o nome do perfil"}), 400
+    if not administrador and not paginas:
+        return jsonify({"ok": False, "msg": "Selecione ao menos uma página ou marque como administrador"}), 400
+
+    try:
+        atualizado = run_query("""
+            UPDATE sist_logistica.sistemaperfil
+            SET nome = %s, administrador = %s, _update = now()
+            WHERE sistemaperfil = %s
+            RETURNING sistemaperfil
+        """, [nome, administrador, sistemaperfil])
+        if not atualizado:
+            return jsonify({"ok": False, "msg": "Perfil não encontrado"}), 404
+
+        # refaz a lista de paginas do zero - mais simples que calcular diff de add/remove
+        run_query("DELETE FROM sist_logistica.sistemaperfilpagina WHERE sistemaperfil = %s", [sistemaperfil])
+        if not administrador:
+            chaves_validas = {pagina["chave"] for pagina in PAGINAS_SISTEMA}
+            for pagina in paginas:
+                if pagina in chaves_validas:
+                    run_query("""
+                        INSERT INTO sist_logistica.sistemaperfilpagina (sistemaperfil, pagina)
+                        VALUES (%s, %s)
+                    """, [sistemaperfil, pagina])
+
+        return jsonify({"ok": True})
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+
+
+@app.route("/api/perfis/<int:sistemaperfil>", methods=["DELETE"])
+def api_excluir_perfil(sistemaperfil):
+    em_uso = run_query(
+        "SELECT count(*) AS total FROM sist_logistica.sistemausuario WHERE sistemaperfil = %s",
+        [sistemaperfil],
+    )[0]["total"]
+    if em_uso:
+        return jsonify({"ok": False, "msg": f"Perfil em uso por {em_uso} usuário(s), não pode ser excluído"}), 400
+
+    run_query("DELETE FROM sist_logistica.sistemaperfil WHERE sistemaperfil = %s", [sistemaperfil])
+    return jsonify({"ok": True})
+
+
+@app.route("/api/usuarios_sistema")
+def api_usuarios_sistema():
+    # lista usuarios do Guardiao (public.usuario) buscando por identificacao ou nome, trazendo
+    # junto o perfil ja atribuido (se houver) - so busca com termo pra nao devolver as 2500+ linhas
+    termo = request.args.get("termo", "").strip()
+    if not termo:
+        return jsonify([])
+
+    sql = """
+        SELECT
+            u.identificacao,
+            COALESCE(pes.nome, u.nome) AS nome,
+            su.sistemaperfil
+        FROM public.usuario u
+        LEFT JOIN public.funcionario f ON f.funcionario = u.funcionario
+        LEFT JOIN public.pessoafisica pf ON pf.pessoafisica = f.pessoafisica
+        LEFT JOIN public.pessoa pes ON pes.pessoa = pf.pessoa
+        LEFT JOIN sist_logistica.sistemausuario su ON su.identificacao = u.identificacao
+        WHERE u.identificacao ILIKE %s OR COALESCE(pes.nome, u.nome) ILIKE %s
+        ORDER BY nome
+        LIMIT 20
+    """
+    termo_like = f"%{termo}%"
+    return _consulta_generica(sql, [termo_like, termo_like])
+
+
+@app.route("/api/usuarios_sistema", methods=["POST"])
+def api_atribuir_perfil_usuario():
+    # upsert: cria a linha em sistemausuario (sem senha - entra no fluxo de "primeiro acesso")
+    # ou so troca o perfil de quem ja tinha uma
+    dados = request.get_json(force=True)
+    identificacao = (dados.get("identificacao") or "").strip()
+    sistemaperfil = dados.get("sistemaperfil")
+
+    if not identificacao or not sistemaperfil:
+        return jsonify({"ok": False, "msg": "Informe o usuário e o perfil"}), 400
+
+    try:
+        run_query("""
+            INSERT INTO sist_logistica.sistemausuario (identificacao, sistemaperfil)
+            VALUES (%s, %s)
+            ON CONFLICT (identificacao)
+            DO UPDATE SET sistemaperfil = EXCLUDED.sistemaperfil, _update = now()
+        """, [identificacao, sistemaperfil])
+        return jsonify({"ok": True})
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+
+
+@app.route("/api/usuarios_sistema/resetar_senha", methods=["POST"])
+def api_resetar_senha_usuario():
+    # limpa a senha (fica NULL de novo) - proximo login do usuario cai no fluxo de "primeiro
+    # acesso" e pede pra ele criar uma senha nova
+    dados = request.get_json(force=True)
+    identificacao = (dados.get("identificacao") or "").strip()
+    if not identificacao:
+        return jsonify({"ok": False, "msg": "Informe o usuário"}), 400
+
+    atualizado = run_query("""
+        UPDATE sist_logistica.sistemausuario
+        SET senha_hash = NULL, _update = now()
+        WHERE identificacao = %s
+        RETURNING sistemausuario
+    """, [identificacao])
+    if not atualizado:
+        return jsonify({"ok": False, "msg": "Usuário sem perfil cadastrado"}), 404
+
+    return jsonify({"ok": True})
+
+
+DIAS_SEMANA_CALENDARIO = ["seg", "ter", "qua", "qui", "sex", "sab", "dom"]
+
+
+@app.route("/api/calendario_distribuicao")
+def api_calendario_distribuicao():
+    # todo armazem da tabela aparece na lista, mesmo sem configuracao ainda (LEFT JOIN - os dias
+    # saem tudo falso ate alguem marcar e salvar)
+    sql = """
+        SELECT
+            arm.armazem,
+            pes_arm.nome,
+            COALESCE(cd.seg, FALSE) AS seg,
+            COALESCE(cd.ter, FALSE) AS ter,
+            COALESCE(cd.qua, FALSE) AS qua,
+            COALESCE(cd.qui, FALSE) AS qui,
+            COALESCE(cd.sex, FALSE) AS sex,
+            COALESCE(cd.sab, FALSE) AS sab,
+            COALESCE(cd.dom, FALSE) AS dom
+        FROM public.armazem arm
+        JOIN public.pessoa pes_arm ON arm.pessoa = pes_arm.pessoa
+        LEFT JOIN sist_logistica.calendariodistribuicao cd ON cd.armazem = arm.armazem
+        ORDER BY pes_arm.nome
+    """
+    return _consulta_generica(sql)
+
+
+@app.route("/api/calendario_distribuicao", methods=["POST"])
+def api_salvar_calendario_distribuicao():
+    dados = request.get_json(force=True)
+    armazem = dados.get("armazem")
+    if not armazem:
+        return jsonify({"ok": False, "msg": "Informe o armazém"}), 400
+
+    valores = [bool(dados.get(dia)) for dia in DIAS_SEMANA_CALENDARIO]
+
+    try:
+        run_query(f"""
+            INSERT INTO sist_logistica.calendariodistribuicao (armazem, {", ".join(DIAS_SEMANA_CALENDARIO)})
+            VALUES (%s, {", ".join(["%s"] * len(DIAS_SEMANA_CALENDARIO))})
+            ON CONFLICT (armazem)
+            DO UPDATE SET {", ".join(f"{dia} = EXCLUDED.{dia}" for dia in DIAS_SEMANA_CALENDARIO)}, _update = now()
+        """, [armazem, *valores])
+        return jsonify({"ok": True})
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
 
 
 def _consulta_generica(sql, params=None):
@@ -101,9 +406,21 @@ SQL_ARMAZENS_DO_USUARIO = """
 """
 
 
+def _usuario_eh_administrador(usuario_logado):
+    if not usuario_logado:
+        return False
+    linhas = run_query("""
+        SELECT sp.administrador
+        FROM sist_logistica.sistemausuario su
+        JOIN sist_logistica.sistemaperfil sp ON sp.sistemaperfil = su.sistemaperfil
+        WHERE su.identificacao = %s
+    """, [usuario_logado])
+    return bool(linhas and linhas[0]["administrador"])
+
+
 def _usuario_para_filtro_armazem(usuario_logado):
-    # admin eh excecao: enxerga tudo sem restricao de armazem, pra testar o sistema inteiro
-    if not usuario_logado or usuario_logado.lower() == "admin":
+    # quem tem perfil administrador enxerga tudo, sem restricao de armazem
+    if not usuario_logado or _usuario_eh_administrador(usuario_logado):
         return None
     return usuario_logado
 

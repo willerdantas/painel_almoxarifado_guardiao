@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSYSTEM | Cadastro</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <div id="menuContainer"></div>
+
+    <main class="conteudo">
+      <div class="topo-pagina">
+        <h1>Cadastro</h1>
+        <div class="topo-direita">
+          <div class="area-usuario">
+            <span class="usuario-logado" id="usuarioLogado"></span>
+            <button class="botao-sair" id="botaoSairTopo">Sair</button>
+          </div>
+          <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+        </div>
+      </div>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Perfis de Acesso</h2>
+          <button type="button" class="botao-filtrar" id="botaoNovoPerfil">+ Novo Perfil</button>
+        </div>
+
+        <form id="formNovoPerfil" class="form-cadastro oculto">
+          <div class="campo-filtro campo-largo">
+            <label for="perfilNome">Nome do perfil</label>
+            <input type="text" id="perfilNome" placeholder="Ex.: Estoquista" required />
+          </div>
+
+          <label class="opcao-checkbox opcao-administrador">
+            <input type="checkbox" id="perfilAdministrador" />
+            Perfil administrador (acesso a todas as páginas, sem precisar selecionar)
+          </label>
+
+          <div id="areaPaginasPerfil">
+            <p class="rotulo-paginas">Páginas liberadas para este perfil</p>
+            <div class="grade-checkboxes" id="gradeCheckboxesPaginas"></div>
+          </div>
+
+          <div class="grupo-botoes-filtro">
+            <button type="submit" class="botao-filtrar" id="botaoSalvarPerfil">Salvar Perfil</button>
+            <button type="button" class="botao-resetar" id="botaoCancelarPerfil">Cancelar</button>
+          </div>
+          <p class="erro-login" id="erroPerfil"></p>
+        </form>
+
+        <div id="areaPerfis">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Usuários</h2>
+        </div>
+
+        <div class="campo-filtro campo-largo campo-busca-usuario">
+          <label for="buscaUsuario">Buscar usuário (login ou nome)</label>
+          <input type="text" id="buscaUsuario" placeholder="Ex.: roseliapaiva" autocomplete="off" />
+        </div>
+
+        <div id="areaUsuarios">
+          <p class="msg-vazio">Digite acima para buscar um usuário.</p>
+        </div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Calendário de Distribuição</h2>
+        </div>
+
+        <div id="areaCalendarioDistribuicao">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script>
+    protegerPagina();
+    iniciarMenu("cadastro");
+
+    let listaPerfis = [];
+    let perfilEmEdicao = null;
+
+    async function carregarPaginasCheckbox() {
+      const resp = await fetch("/api/paginas_sistema");
+      const paginas = await resp.json();
+      const grade = document.getElementById("gradeCheckboxesPaginas");
+      grade.innerHTML = paginas
+        .map(
+          (pagina) => `
+            <label class="opcao-checkbox">
+              <input type="checkbox" class="checkbox-pagina" value="${pagina.chave}" />
+              ${pagina.rotulo}
+            </label>`
+        )
+        .join("");
+    }
+
+    function alternarAreaPaginas() {
+      const administrador = document.getElementById("perfilAdministrador").checked;
+      document.getElementById("areaPaginasPerfil").classList.toggle("oculto", administrador);
+    }
+
+    function limparFormPerfil() {
+      perfilEmEdicao = null;
+      document.getElementById("perfilNome").value = "";
+      document.getElementById("perfilAdministrador").checked = false;
+      document.querySelectorAll(".checkbox-pagina").forEach((caixa) => (caixa.checked = false));
+      document.getElementById("erroPerfil").textContent = "";
+      document.getElementById("botaoSalvarPerfil").textContent = "Salvar Perfil";
+      alternarAreaPaginas();
+    }
+
+    function editarPerfil(sistemaperfil) {
+      const perfil = listaPerfis.find((item) => item.sistemaperfil === Number(sistemaperfil));
+      if (!perfil) return;
+
+      perfilEmEdicao = perfil.sistemaperfil;
+      document.getElementById("perfilNome").value = perfil.nome;
+      document.getElementById("perfilAdministrador").checked = perfil.administrador;
+      document.querySelectorAll(".checkbox-pagina").forEach((caixa) => {
+        caixa.checked = perfil.paginas.includes(caixa.value);
+      });
+      document.getElementById("erroPerfil").textContent = "";
+      document.getElementById("botaoSalvarPerfil").textContent = "Salvar Alterações";
+      alternarAreaPaginas();
+      document.getElementById("formNovoPerfil").classList.remove("oculto");
+    }
+
+    document.getElementById("botaoNovoPerfil").addEventListener("click", () => {
+      limparFormPerfil();
+      document.getElementById("formNovoPerfil").classList.toggle("oculto");
+    });
+    document.getElementById("botaoCancelarPerfil").addEventListener("click", () => {
+      document.getElementById("formNovoPerfil").classList.add("oculto");
+      limparFormPerfil();
+    });
+    document.getElementById("perfilAdministrador").addEventListener("change", alternarAreaPaginas);
+
+    document.getElementById("formNovoPerfil").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const erro = document.getElementById("erroPerfil");
+      erro.textContent = "";
+
+      const nome = document.getElementById("perfilNome").value.trim();
+      const administrador = document.getElementById("perfilAdministrador").checked;
+      const paginas = Array.from(document.querySelectorAll(".checkbox-pagina:checked")).map((caixa) => caixa.value);
+
+      try {
+        const url = perfilEmEdicao ? `/api/perfis/${perfilEmEdicao}` : "/api/perfis";
+        const metodo = perfilEmEdicao ? "PUT" : "POST";
+        const resp = await fetch(url, {
+          method: metodo,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nome, administrador, paginas }),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          erro.textContent = dado.msg || "Erro ao salvar perfil";
+          return;
+        }
+        document.getElementById("formNovoPerfil").classList.add("oculto");
+        limparFormPerfil();
+        await carregarPerfis();
+      } catch (e) {
+        erro.textContent = "Sem sinal de fumaça com o servidor";
+      }
+    });
+
+    async function excluirPerfil(sistemaperfil) {
+      if (!confirm("Excluir este perfil?")) return;
+      try {
+        const resp = await fetch(`/api/perfis/${sistemaperfil}`, { method: "DELETE" });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          alert(dado.msg || "Erro ao excluir perfil");
+          return;
+        }
+        await carregarPerfis();
+      } catch (e) {
+        alert("Sem sinal de fumaça com o servidor");
+      }
+    }
+
+    async function carregarPerfis() {
+      const area = document.getElementById("areaPerfis");
+      try {
+        const resp = await fetch("/api/perfis");
+        listaPerfis = await resp.json();
+
+        if (listaPerfis.length === 0) {
+          area.innerHTML = '<p class="msg-vazio">Nenhum perfil cadastrado.</p>';
+          return;
+        }
+
+        const linhas = listaPerfis
+          .map((perfil) => {
+            const paginas = perfil.administrador ? "Todas" : perfil.paginas.join(", ") || "Nenhuma";
+            return `
+              <tr>
+                <td>${perfil.nome}</td>
+                <td>${perfil.administrador ? "Sim" : "Não"}</td>
+                <td>${paginas}</td>
+                <td>
+                  <button type="button" class="botao-resetar botao-editar" data-id="${perfil.sistemaperfil}">Editar</button>
+                  <button type="button" class="botao-excluir" data-id="${perfil.sistemaperfil}">Excluir</button>
+                </td>
+              </tr>`;
+          })
+          .join("");
+
+        area.innerHTML = `
+          <table class="tabela-dados">
+            <thead><tr><th>Nome</th><th>Administrador</th><th>Páginas</th><th>Ações</th></tr></thead>
+            <tbody>${linhas}</tbody>
+          </table>`;
+
+        area.querySelectorAll(".botao-editar").forEach((botao) => {
+          botao.addEventListener("click", () => editarPerfil(botao.dataset.id));
+        });
+        area.querySelectorAll(".botao-excluir").forEach((botao) => {
+          botao.addEventListener("click", () => excluirPerfil(botao.dataset.id));
+        });
+
+        preencherSelectPerfis();
+      } catch (erro) {
+        area.innerHTML = `<p class="msg-vazio">Erro ao buscar perfis: ${erro}</p>`;
+      }
+    }
+
+    function preencherSelectPerfis() {
+      document.querySelectorAll(".select-perfil-usuario").forEach((select) => {
+        const atual = select.dataset.atual ? Number(select.dataset.atual) : null;
+        select.innerHTML =
+          '<option value="">Sem perfil</option>' +
+          listaPerfis
+            .map(
+              (perfil) =>
+                `<option value="${perfil.sistemaperfil}" ${perfil.sistemaperfil === atual ? "selected" : ""}>${perfil.nome}</option>`
+            )
+            .join("");
+      });
+    }
+
+    async function atribuirPerfil(identificacao, sistemaperfil, selecao) {
+      if (!sistemaperfil) return;
+      try {
+        const resp = await fetch("/api/usuarios_sistema", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ identificacao, sistemaperfil: Number(sistemaperfil) }),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          alert(dado.msg || "Erro ao atribuir perfil");
+          return;
+        }
+        selecao.dataset.atual = sistemaperfil;
+      } catch (e) {
+        alert("Sem sinal de fumaça com o servidor");
+      }
+    }
+
+    async function resetarSenha(identificacao) {
+      if (!confirm(`Resetar a senha de "${identificacao}"? No próximo acesso será pedido pra criar uma senha nova.`)) return;
+      try {
+        const resp = await fetch("/api/usuarios_sistema/resetar_senha", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ identificacao }),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          alert(dado.msg || "Erro ao resetar senha");
+          return;
+        }
+        alert("Senha resetada. No próximo acesso o usuário vai criar uma senha nova.");
+      } catch (e) {
+        alert("Sem sinal de fumaça com o servidor");
+      }
+    }
+
+    async function buscarUsuarios(termo) {
+      const area = document.getElementById("areaUsuarios");
+      if (!termo) {
+        area.innerHTML = '<p class="msg-vazio">Digite acima para buscar um usuário.</p>';
+        return;
+      }
+
+      try {
+        const resp = await fetch(`/api/usuarios_sistema?termo=${encodeURIComponent(termo)}`);
+        const usuarios = await resp.json();
+
+        if (usuarios.length === 0) {
+          area.innerHTML = '<p class="msg-vazio">Nenhum usuário encontrado.</p>';
+          return;
+        }
+
+        const linhas = usuarios
+          .map(
+            (usuario) => `
+              <tr>
+                <td>${usuario.identificacao}</td>
+                <td>${usuario.nome}</td>
+                <td><select class="select-perfil-usuario" data-identificacao="${usuario.identificacao}" data-atual="${usuario.sistemaperfil ?? ""}"></select></td>
+                <td><button type="button" class="botao-resetar botao-resetar-senha" data-identificacao="${usuario.identificacao}" ${usuario.sistemaperfil ? "" : "disabled"}>Resetar Senha</button></td>
+              </tr>`
+          )
+          .join("");
+
+        area.innerHTML = `
+          <table class="tabela-dados">
+            <thead><tr><th>Usuário</th><th>Nome</th><th>Perfil</th><th>Ações</th></tr></thead>
+            <tbody>${linhas}</tbody>
+          </table>`;
+
+        preencherSelectPerfis();
+
+        area.querySelectorAll(".select-perfil-usuario").forEach((select) => {
+          select.addEventListener("change", () => atribuirPerfil(select.dataset.identificacao, select.value, select));
+        });
+        area.querySelectorAll(".botao-resetar-senha").forEach((botao) => {
+          botao.addEventListener("click", () => resetarSenha(botao.dataset.identificacao));
+        });
+      } catch (erro) {
+        area.innerHTML = `<p class="msg-vazio">Erro ao buscar usuários: ${erro}</p>`;
+      }
+    }
+
+    const DIAS_SEMANA = [
+      { chave: "seg", rotulo: "Seg" },
+      { chave: "ter", rotulo: "Ter" },
+      { chave: "qua", rotulo: "Qua" },
+      { chave: "qui", rotulo: "Qui" },
+      { chave: "sex", rotulo: "Sex" },
+      { chave: "sab", rotulo: "Sáb" },
+      { chave: "dom", rotulo: "Dom" },
+    ];
+
+    async function salvarCalendarioArmazem(armazem, linhaEl) {
+      const valores = { armazem: Number(armazem) };
+      DIAS_SEMANA.forEach((dia) => {
+        valores[dia.chave] = linhaEl.querySelector(`.checkbox-dia-${dia.chave}`).checked;
+      });
+
+      try {
+        const resp = await fetch("/api/calendario_distribuicao", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(valores),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) alert(dado.msg || "Erro ao salvar calendário");
+      } catch (e) {
+        alert("Sem sinal de fumaça com o servidor");
+      }
+    }
+
+    async function carregarCalendarioDistribuicao() {
+      const area = document.getElementById("areaCalendarioDistribuicao");
+      try {
+        const resp = await fetch("/api/calendario_distribuicao");
+        const armazens = await resp.json();
+
+        if (armazens.length === 0) {
+          area.innerHTML = '<p class="msg-vazio">Nenhum armazém encontrado.</p>';
+          return;
+        }
+
+        const colunasDias = DIAS_SEMANA.map((dia) => `<th>${dia.rotulo}</th>`).join("");
+        const linhas = armazens
+          .map((armazem) => {
+            const celulasDias = DIAS_SEMANA.map(
+              (dia) =>
+                `<td><input type="checkbox" class="checkbox-dia-${dia.chave}" ${armazem[dia.chave] ? "checked" : ""} /></td>`
+            ).join("");
+            return `<tr data-armazem="${armazem.armazem}"><td>${armazem.nome}</td>${celulasDias}</tr>`;
+          })
+          .join("");
+
+        area.innerHTML = `
+          <div class="area-rolavel-calendario">
+            <table class="tabela-dados">
+              <thead><tr><th>Armazém</th>${colunasDias}</tr></thead>
+              <tbody>${linhas}</tbody>
+            </table>
+          </div>`;
+
+        area.querySelectorAll("tbody tr").forEach((linhaEl) => {
+          linhaEl.querySelectorAll('input[type="checkbox"]').forEach((caixa) => {
+            caixa.addEventListener("change", () => salvarCalendarioArmazem(linhaEl.dataset.armazem, linhaEl));
+          });
+        });
+      } catch (erro) {
+        area.innerHTML = `<p class="msg-vazio">Erro ao buscar calendário: ${erro}</p>`;
+      }
+    }
+
+    let temporizadorBusca;
+    document.getElementById("buscaUsuario").addEventListener("input", (ev) => {
+      clearTimeout(temporizadorBusca);
+      const termo = ev.target.value.trim();
+      temporizadorBusca = setTimeout(() => buscarUsuarios(termo), 300);
+    });
+
+    carregarPaginasCheckbox();
+    carregarPerfis();
+    carregarCalendarioDistribuicao();
+  </script>
+</body>
+</html>

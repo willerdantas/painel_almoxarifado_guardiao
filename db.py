@@ -24,8 +24,13 @@ def run_query(sql, params=None):
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(sql, params or ())
+            # description vem preenchido tanto em SELECT quanto em INSERT/UPDATE ... RETURNING -
+            # nos dois casos tem linha pra buscar, mas so no segundo precisa comitar (senao a
+            # conexao fecha e desfaz a escrita antes de alguem ler o commit)
             if cur.description:
-                return cur.fetchall()
+                resultado = cur.fetchall()
+                conn.commit()
+                return resultado
             conn.commit()
             return []
     finally:

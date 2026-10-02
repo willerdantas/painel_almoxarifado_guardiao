@@ -14,6 +14,7 @@ const ICONES = {
   aquisicoes: SVG_ABRE('<circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>'),
   atas_contratos: SVG_ABRE('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/>'),
   pagamentos: SVG_ABRE('<rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>'),
+  cadastro: SVG_ABRE('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'),
   menu: SVG_ABRE('<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>'),
   sair: SVG_ABRE('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>'),
 };
@@ -31,11 +32,29 @@ const ITENS_MENU = [
   { href: "/pages/aquisicoes.html", icone: ICONES.aquisicoes, texto: "Aquisições", chave: "aquisicoes" },
   { href: "/pages/atas_contratos.html", icone: ICONES.atas_contratos, texto: "Atas e Contratos", chave: "atas_contratos" },
   { href: "/pages/pagamentos.html", icone: ICONES.pagamentos, texto: "Processos de Pagamento", chave: "pagamentos" },
+  { href: "/pages/cadastro.html", icone: ICONES.cadastro, texto: "Cadastro", chave: "cadastro" },
 ];
 
+// perfil de acesso (gravado no login) diz quais chaves de ITENS_MENU o usuario pode ver -
+// administrador enxerga tudo; sem perfil gravado (login antigo) tambem libera tudo, pra nao
+// quebrar sessao de quem logou antes dessa funcionalidade existir
+function paginasPermitidas() {
+  if (localStorage.getItem("administrador") === "true") return null;
+  const bruto = localStorage.getItem("paginas");
+  if (!bruto) return null;
+  try {
+    return JSON.parse(bruto);
+  } catch (e) {
+    return null;
+  }
+}
+
 function montarMenu(paginaAtual) {
-  // desenha esqueleto do menu
-  const links = ITENS_MENU.map((item) => {
+  // desenha esqueleto do menu - permitidas null = sem restricao (admin ou sessao antiga)
+  const permitidas = paginasPermitidas();
+  const itensVisiveis = permitidas ? ITENS_MENU.filter((item) => permitidas.includes(item.chave)) : ITENS_MENU;
+
+  const links = itensVisiveis.map((item) => {
     const ativo = item.chave === paginaAtual ? "ativo" : "";
     return `<a href="${item.href}" class="${ativo}">
       <span class="icone">${item.icone}</span><span class="texto">${item.texto}</span>
@@ -61,6 +80,13 @@ function montarMenu(paginaAtual) {
 }
 
 function iniciarMenu(paginaAtual) {
+  // se o perfil do usuario nao libera essa pagina, manda pra primeira que ele pode ver
+  const permitidas = paginasPermitidas();
+  if (permitidas && !permitidas.includes(paginaAtual)) {
+    window.location.href = permitidas.length ? ITENS_MENU.find((item) => item.chave === permitidas[0]).href : "/";
+    return;
+  }
+
   // planta menu na tela
   document.getElementById("menuContainer").innerHTML = montarMenu(paginaAtual);
   document.getElementById("toggleMenu").addEventListener("click", () => {
@@ -91,6 +117,8 @@ function protegerPagina() {
 function sair() {
   localStorage.removeItem("usuario");
   localStorage.removeItem("identificacao");
+  localStorage.removeItem("administrador");
+  localStorage.removeItem("paginas");
   window.location.href = "/";
 }
 

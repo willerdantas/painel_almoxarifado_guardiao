@@ -16,9 +16,17 @@
 
       <form id="formLogin">
         <input type="text" id="usuario" placeholder="Usuário" autocomplete="username" required />
-        <input type="password" id="senha" placeholder="Senha (modo teste: não é conferida)" autocomplete="current-password" />
+        <input type="password" id="senha" placeholder="Senha" autocomplete="current-password" />
         <button type="submit">Entrar</button>
       </form>
+
+      <form id="formNovaSenha" class="oculto">
+        <p class="aviso">Primeiro acesso: crie sua senha para continuar.</p>
+        <input type="password" id="novaSenha" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password" required />
+        <input type="password" id="confirmarSenha" placeholder="Confirme a nova senha" autocomplete="new-password" required />
+        <button type="submit">Criar senha e entrar</button>
+      </form>
+
       <p class="erro-login" id="erroLogin"></p>
       <a href="/pages/dashboard.html" class="link-dashboard">Ver painel de indicadores</a>
       <a href="/pages/painel_pedidos.html" class="link-dashboard">Ver painel de pedidos</a>
@@ -26,7 +34,17 @@
   </div>
 
   <script>
-    // homem digita, homem entra
+    const PRIMEIRA_PAGINA_PADRAO = "/pages/dashboard.html";
+    let identificacaoPrimeiroAcesso = "";
+
+    function entrarComSucesso(dado) {
+      localStorage.setItem("usuario", dado.usuario);
+      localStorage.setItem("identificacao", dado.identificacao);
+      localStorage.setItem("administrador", dado.administrador ? "true" : "false");
+      if (Array.isArray(dado.paginas)) localStorage.setItem("paginas", JSON.stringify(dado.paginas));
+      window.location.href = PRIMEIRA_PAGINA_PADRAO;
+    }
+
     document.getElementById("formLogin").addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const usuario = document.getElementById("usuario").value.trim();
@@ -43,11 +61,53 @@
         const dado = await resp.json();
 
         if (dado.ok) {
-          localStorage.setItem("usuario", dado.usuario);
-          localStorage.setItem("identificacao", dado.identificacao);
-          window.location.href = "/pages/estoque.html";
+          entrarComSucesso(dado);
+        } else if (dado.precisa_criar_senha) {
+          identificacaoPrimeiroAcesso = dado.identificacao;
+          document.getElementById("formLogin").classList.add("oculto");
+          document.getElementById("formNovaSenha").classList.remove("oculto");
         } else {
           erro.textContent = dado.msg || "Falha no login";
+        }
+      } catch (e) {
+        erro.textContent = "Sem sinal de fumaça com o servidor";
+      }
+    });
+
+    document.getElementById("formNovaSenha").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const novaSenha = document.getElementById("novaSenha").value;
+      const confirmarSenha = document.getElementById("confirmarSenha").value;
+      const erro = document.getElementById("erroLogin");
+      erro.textContent = "";
+
+      if (novaSenha !== confirmarSenha) {
+        erro.textContent = "As senhas não conferem";
+        return;
+      }
+
+      try {
+        const respDefinir = await fetch("/api/definir_senha", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ identificacao: identificacaoPrimeiroAcesso, senha: novaSenha }),
+        });
+        const dadoDefinir = await respDefinir.json();
+        if (!dadoDefinir.ok) {
+          erro.textContent = dadoDefinir.msg || "Erro ao criar senha";
+          return;
+        }
+
+        const respLogin = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ usuario: identificacaoPrimeiroAcesso, senha: novaSenha }),
+        });
+        const dadoLogin = await respLogin.json();
+        if (dadoLogin.ok) {
+          entrarComSucesso(dadoLogin);
+        } else {
+          erro.textContent = dadoLogin.msg || "Senha criada, mas não foi possível entrar. Tente novamente.";
         }
       } catch (e) {
         erro.textContent = "Sem sinal de fumaça com o servidor";
