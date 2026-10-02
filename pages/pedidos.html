@@ -206,6 +206,15 @@
       }
     }
 
+    // true = pedido caiu no dia que o armazem do requisitante libera (calendario de distribuicao,
+    // cadastro.html) - check verde; false = caiu em dia nao liberado - atencao; null = nao achou
+    // armazem com o mesmo nome do requisitante, nao tem o que comparar
+    function iconeConfereCalendario(confere) {
+      if (confere === true) return '<span class="icone-confere-ok" title="Pedido no dia liberado pelo calendário de distribuição">✅</span>';
+      if (confere === false) return '<span class="icone-confere-atencao" title="Pedido fora do dia liberado pelo calendário de distribuição">⚠️</span>';
+      return "";
+    }
+
     function renderizarNovos(dados) {
       const container = document.getElementById("areaNovos");
 
@@ -221,6 +230,7 @@
           <td>${linha["N. do Pedido"] ?? ""}</td>
           <td>${linha["Requisitante"] ?? ""}</td>
           <td>${linha["Dt. da Requisição"] ?? ""}</td>
+          <td class="celula-calendario">${iconeConfereCalendario(linha.confere_calendario)}</td>
         </tr>`
         )
         .join("");
@@ -232,6 +242,7 @@
               <th>N. do Pedido</th>
               <th>Requisitante</th>
               <th>Dt. da Requisição</th>
+              <th title="Confere se o pedido caiu no dia que o armazém do requisitante libera distribuição">Calendário</th>
             </tr>
           </thead>
           <tbody>${linhas}</tbody>

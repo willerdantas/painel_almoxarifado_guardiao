@@ -563,12 +563,44 @@ def api_pedidos_novos():
         SELECT
             rq.requisicao AS "N. do Pedido",
             pes_rqt.nome AS "Requisitante",
-            to_char(rq.data, 'DD/MM/YY') AS "Dt. da Requisição"
+            (CASE EXTRACT(DOW FROM rq.data)
+                WHEN 0 THEN 'Dom'
+                WHEN 1 THEN 'Seg'
+                WHEN 2 THEN 'Ter'
+                WHEN 3 THEN 'Qua'
+                WHEN 4 THEN 'Qui'
+                WHEN 5 THEN 'Sex'
+                WHEN 6 THEN 'Sáb'
+            END || ', ' || to_char(rq.data, 'DD/MM/YY HH24:MI')) AS "Dt. da Requisição",
+            CASE
+                WHEN arm_rqt.armazem IS NULL THEN NULL
+                ELSE COALESCE(
+                    CASE EXTRACT(DOW FROM rq.data)
+                        WHEN 0 THEN arm_rqt.dom
+                        WHEN 1 THEN arm_rqt.seg
+                        WHEN 2 THEN arm_rqt.ter
+                        WHEN 3 THEN arm_rqt.qua
+                        WHEN 4 THEN arm_rqt.qui
+                        WHEN 5 THEN arm_rqt.sex
+                        WHEN 6 THEN arm_rqt.sab
+                    END, FALSE)
+            END AS confere_calendario
         FROM public.requisicao rq
         JOIN public.requisitante rqt ON rq.requisitante = rqt.requisitante
         JOIN public.pessoa pes_rqt ON rqt.pessoa = pes_rqt.pessoa
         LEFT JOIN public.armazem arm ON rq.armazem = arm.armazem
         LEFT JOIN public.pessoa pes_arm ON arm.pessoa = pes_arm.pessoa
+        -- conferencia requisitante x armazem: mesma pessoa.nome liga o requisitante a um
+        -- armazem homonimo (ex.: requisitante "BRONCOSCOPIA" e armazem "BRONCOSCOPIA") - dai
+        -- da pra checar se o calendario de distribuicao daquele armazem libera o dia do pedido.
+        -- nome por si so nao eh unico na tabela pessoa inteira, entao o cruzamento parte so dos
+        -- nomes de armazem (esses sim sao unicos, ja conferido) pra nao duplicar linha de pedido
+        LEFT JOIN (
+            SELECT pes_a.nome, arm_a.armazem, cd_a.seg, cd_a.ter, cd_a.qua, cd_a.qui, cd_a.sex, cd_a.sab, cd_a.dom
+            FROM public.armazem arm_a
+            JOIN public.pessoa pes_a ON pes_a.pessoa = arm_a.pessoa
+            LEFT JOIN sist_logistica.calendariodistribuicao cd_a ON cd_a.armazem = arm_a.armazem
+        ) arm_rqt ON arm_rqt.nome = pes_rqt.nome
         {where}
         ORDER BY rq.data ASC
     """
@@ -625,13 +657,13 @@ def _consulta_pedidos(numero=None, data_inicio=None, data_fim=None, armazem=None
         SELECT
             sc.saidacabecalho AS numero_pedido,
             pes.nome AS requisitante,
-            to_char(sc.data, 'DD/MM/YY') AS data_requisicao,
+            to_char(sc.data, 'DD/MM/YY HH24:MI') AS data_requisicao,
             tm.descricao AS tipo_movimentacao,
             (SELECT count(*) FROM public.saidaitem si WHERE si.saidacabecalho = sc.saidacabecalho) AS quantidade_itens,
             (SELECT COALESCE(SUM(si.quantidade), 0) FROM public.saidaitem si WHERE si.saidacabecalho = sc.saidacabecalho) AS quantidade_total
         {base_from}
         {where}
-        ORDER BY sc.data DESC
+        ORDER BY sc.data ASC
     """
     return _consulta_generica(sql, params)
 
@@ -745,7 +777,7 @@ def api_pedidos_em_separacao():
         SELECT
             sc.saidacabecalho AS numero_pedido,
             pes.nome AS requisitante,
-            to_char(sc.data, 'DD/MM/YY') AS data_requisicao,
+            to_char(sc.data, 'DD/MM/YY HH24:MI') AS data_requisicao,
             tm.descricao AS tipo_movimentacao,
             COALESCE(pes_resp.nome, u.nome) AS responsavel,
             am.usuario AS responsavel_usuario_id,
@@ -767,7 +799,7 @@ def api_pedidos_em_separacao():
         LEFT JOIN public.pessoafisica pf_resp ON pf_resp.pessoafisica = f_resp.pessoafisica
         LEFT JOIN public.pessoa pes_resp ON pes_resp.pessoa = pf_resp.pessoa
         {where}
-        ORDER BY am.min_creation DESC
+        ORDER BY sc.data ASC
     """
     return _consulta_generica(sql, params)
 
@@ -901,7 +933,7 @@ def api_pedidos_em_distribuicao():
         SELECT
             sc.saidacabecalho AS numero_pedido,
             pes.nome AS requisitante,
-            to_char(sc.data, 'DD/MM/YY') AS data_requisicao,
+            to_char(sc.data, 'DD/MM/YY HH24:MI') AS data_requisicao,
             tm.descricao AS tipo_movimentacao,
             COALESCE(pes_resp.nome, u.nome) AS responsavel,
             am.usuario AS responsavel_usuario_id,
@@ -923,7 +955,7 @@ def api_pedidos_em_distribuicao():
         LEFT JOIN public.pessoafisica pf_resp ON pf_resp.pessoafisica = f_resp.pessoafisica
         LEFT JOIN public.pessoa pes_resp ON pes_resp.pessoa = pf_resp.pessoa
         {where}
-        ORDER BY am.min_creation DESC
+        ORDER BY sc.data ASC
     """
     return _consulta_generica(sql, params)
 
@@ -1098,7 +1130,7 @@ def api_pedidos_finalizados():
         SELECT
             sc.saidacabecalho AS "N. do Pedido",
             pes.nome AS "Requisitante",
-            to_char(sc.data, 'DD/MM/YY') AS "Dt. da Requisição",
+            to_char(sc.data, 'DD/MM/YY HH24:MI') AS "Dt. da Requisição",
             tm.descricao AS "Tipo de Movimentação",
             CASE WHEN sc.status = 'E' THEN 'Cancelado' ELSE 'Concluído' END AS "Status"
         FROM public.saidacabecalho sc
@@ -1107,7 +1139,7 @@ def api_pedidos_finalizados():
         LEFT JOIN public.armazem arm ON arm.armazem = sc.armazem
         LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
         {where}
-        ORDER BY sc.data DESC
+        ORDER BY sc.data ASC
     """
     return _consulta_generica(sql, params)
 
