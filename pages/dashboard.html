@@ -59,34 +59,40 @@
               </div>
               <div class="duas-tabelas">
                 <div>
-                  <h3>Top 5 Contratos por Valor</h3>
-                  <table class="tabela-dados">
-                    <thead>
-                      <tr>
-                        <th>Fornecedor</th>
-                        <th>Núm. Contrato</th>
-                        <th>Data Fim</th>
-                        <th>Saldo Total</th>
-                        <th>% Remanescente</th>
-                      </tr>
-                    </thead>
-                    <tbody id="tabelaContratosVencidos"></tbody>
-                  </table>
+                  <h3>Top 10 Contratos por Valor</h3>
+                  <div class="tabela-rolagem-auto" id="rolagemContratosVencidos">
+                    <table class="tabela-dados">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Fornecedor</th>
+                          <th>Núm. Contrato</th>
+                          <th>Data Fim</th>
+                          <th>Saldo Remanescente</th>
+                          <th>% Remanescente</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tabelaContratosVencidos"></tbody>
+                    </table>
+                  </div>
                 </div>
                 <div>
-                  <h3>Top 5 Atas por Valor</h3>
-                  <table class="tabela-dados">
-                    <thead>
-                      <tr>
-                        <th>Fornecedor</th>
-                        <th>Núm. Ata</th>
-                        <th>Data Fim</th>
-                        <th>Saldo Total</th>
-                        <th>% Remanescente</th>
-                      </tr>
-                    </thead>
-                    <tbody id="tabelaAtasVencidas"></tbody>
-                  </table>
+                  <h3>Top 10 Atas por Valor</h3>
+                  <div class="tabela-rolagem-auto" id="rolagemAtasVencidas">
+                    <table class="tabela-dados">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Fornecedor</th>
+                          <th>Núm. Ata</th>
+                          <th>Data Fim</th>
+                          <th>Saldo Remanescente</th>
+                          <th>% Remanescente</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tabelaAtasVencidas"></tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             </div>
@@ -113,34 +119,40 @@
               </div>
               <div class="duas-tabelas">
                 <div>
-                  <h3>Top 5 Contratos com Saldo Zerado</h3>
-                  <table class="tabela-dados">
-                    <thead>
-                      <tr>
-                        <th>Fornecedor</th>
-                        <th>Núm. Contrato</th>
-                        <th>Data Fim</th>
-                        <th>Saldo Total</th>
-                        <th>% Remanescente</th>
-                      </tr>
-                    </thead>
-                    <tbody id="tabelaContratosValidos"></tbody>
-                  </table>
+                  <h3>Top 10 Contratos com Saldo Zerado</h3>
+                  <div class="tabela-rolagem-auto" id="rolagemContratosValidos">
+                    <table class="tabela-dados">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Fornecedor</th>
+                          <th>Núm. Contrato</th>
+                          <th>Data Fim</th>
+                          <th>Saldo Total</th>
+                          <th>% Remanescente</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tabelaContratosValidos"></tbody>
+                    </table>
+                  </div>
                 </div>
                 <div>
-                  <h3>Top 5 Atas com Saldo Zerado</h3>
-                  <table class="tabela-dados">
-                    <thead>
-                      <tr>
-                        <th>Fornecedor</th>
-                        <th>Núm. Ata</th>
-                        <th>Data Fim</th>
-                        <th>Saldo Total</th>
-                        <th>% Remanescente</th>
-                      </tr>
-                    </thead>
-                    <tbody id="tabelaAtasValidas"></tbody>
-                  </table>
+                  <h3>Top 10 Atas com Saldo Zerado</h3>
+                  <div class="tabela-rolagem-auto" id="rolagemAtasValidas">
+                    <table class="tabela-dados">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Fornecedor</th>
+                          <th>Núm. Ata</th>
+                          <th>Data Fim</th>
+                          <th>Saldo Total</th>
+                          <th>% Remanescente</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tabelaAtasValidas"></tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             </div>
@@ -154,18 +166,47 @@
                 </div>
                 <div class="legenda-tabela-caixa legenda-tabela-caixa-ressuprimento">
                   <h4>Últimos Itens que Atingiram o Ponto de Ressuprimento</h4>
-                  <table class="tabela-dados">
-                    <thead>
-                      <tr>
-                        <th>Produto</th>
-                        <th>Armazém</th>
-                        <th>Estoque Atual</th>
-                        <th>Ponto de Ressuprimento</th>
-                        <th>Data</th>
-                      </tr>
-                    </thead>
-                    <tbody id="listaItensPontoRessuprimento"></tbody>
-                  </table>
+                  <div class="tabela-rolagem-auto tabela-rolagem-auto-grande" id="rolagemItensPontoRessuprimento">
+                    <table class="tabela-dados">
+                      <thead>
+                        <tr>
+                          <th>Produto</th>
+                          <th>Armazém</th>
+                          <th>Estoque Atual</th>
+                          <th>Ponto de Ressuprimento</th>
+                          <th>Data</th>
+                        </tr>
+                      </thead>
+                      <tbody id="listaItensPontoRessuprimento"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="slide-dashboard">
+              <h2>Meta de Cobertura de Ponto de Ressuprimento - Almoxarifado Central</h2>
+              <div class="grafico-dashboard-area grafico-dashboard-area-unico grafico-dashboard-area-esquerda">
+                <div class="grafico-gauge-caixa">
+                  <div class="grafico-barra-principal"><canvas id="graficoGaugePontoRessuprimento"></canvas></div>
+                  <p class="gauge-resumo" id="resumoGaugePontoRessuprimento"></p>
+                </div>
+                <div class="legenda-tabela-caixa legenda-tabela-caixa-ressuprimento">
+                  <h4>Itens que Atingiram o Ponto de Ressuprimento - Almoxarifado Central</h4>
+                  <div class="tabela-rolagem-auto tabela-rolagem-auto-grande" id="rolagemItensGaugeRessuprimento">
+                    <table class="tabela-dados">
+                      <thead>
+                        <tr>
+                          <th>Produto</th>
+                          <th>Armazém</th>
+                          <th>Estoque Atual</th>
+                          <th>Ponto de Ressuprimento</th>
+                          <th>Data</th>
+                        </tr>
+                      </thead>
+                      <tbody id="listaItensGaugeRessuprimento"></tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             </div>
@@ -411,24 +452,46 @@
       return linhas;
     }
 
-    function montarTabelaSaldo(containerId, dados) {
+    // campoSaldo: "saldo_total" (padrao, usado nos validos com saldo zerado) ou "saldo_remanescente"
+    // (vencidos) - a mesma funcao serve pras duas tabelas, so troca qual valor aparece na coluna
+    function montarTabelaSaldo(containerId, dados, campoSaldo = "saldo_total") {
       const corpo = document.getElementById(containerId);
       if (!Array.isArray(dados) || dados.length === 0) {
-        corpo.innerHTML = linhaVazia(5);
+        corpo.innerHTML = linhaVazia(6);
         return;
       }
       corpo.innerHTML = dados
         .map(
-          (item) => `
+          (item, indice) => `
         <tr>
+          <td>${indice + 1}</td>
           <td class="celula-quebra">${item.fornecedor ?? ""}</td>
           <td>${item.num_ata ?? item.num_contrato ?? ""}</td>
           <td>${item.data_fim ?? ""}</td>
-          <td>${formatarMoeda(item.saldo_total)}</td>
+          <td>${formatarMoeda(item[campoSaldo])}</td>
           <td>${Number(item.percentual_remanescente ?? 0).toFixed(2)}%</td>
         </tr>`
         )
         .join("");
+    }
+
+    // rola o container sozinho (1px a cada 40ms), voltando pro topo quando chega no fim - usado
+    // nas tabelas "Top 10" de vencidos, que mostram so uns 5 registros de cada vez por altura fixa
+    function iniciarRolagemAutomatica(containerId) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+
+      if (container.dataset.timerRolagem) {
+        clearInterval(Number(container.dataset.timerRolagem));
+      }
+
+      const timer = setInterval(() => {
+        const maximo = container.scrollHeight - container.clientHeight;
+        if (maximo <= 0) return;
+        container.scrollTop = container.scrollTop >= maximo - 1 ? 0 : container.scrollTop + 1;
+      }, 40);
+
+      container.dataset.timerRolagem = String(timer);
     }
 
     // slide 1: valor em estoque por armazem (so tipoarmazem C)
@@ -559,20 +622,28 @@
           })
         );
 
-        montarTabelaSaldo(idTabelaContratos, resultado.contratos);
-        montarTabelaSaldo(idTabelaAtas, resultado.atas);
+        // idsBarras so vem preenchido na chamada de vencidos (ver final do arquivo) - usa esse
+        // mesmo sinal pra saber se mostra saldo remanescente (em vez de saldo total) e se liga a
+        // rolagem automatica das tabelas Top 10
+        const campoSaldo = idsBarras ? "saldo_remanescente" : "saldo_total";
+        montarTabelaSaldo(idTabelaContratos, resultado.contratos, campoSaldo);
+        montarTabelaSaldo(idTabelaAtas, resultado.atas, campoSaldo);
 
         if (idsBarras) {
           montarBarraEmpilhada(idsBarras.atas, resultado.por_mes, "atas");
           montarBarraEmpilhada(idsBarras.contratos, resultado.por_mes, "contratos");
+          iniciarRolagemAutomatica("rolagemContratosVencidos");
+          iniciarRolagemAutomatica("rolagemAtasVencidas");
         }
 
         if (idMatrizDias) {
           montarMatrizDias(idMatrizDias, resultado.matriz_dias);
+          iniciarRolagemAutomatica("rolagemContratosValidos");
+          iniciarRolagemAutomatica("rolagemAtasValidas");
         }
       } catch (erro) {
-        document.getElementById(idTabelaContratos).innerHTML = linhaVazia(5);
-        document.getElementById(idTabelaAtas).innerHTML = linhaVazia(5);
+        document.getElementById(idTabelaContratos).innerHTML = linhaVazia(6);
+        document.getElementById(idTabelaAtas).innerHTML = linhaVazia(6);
       }
     }
 
@@ -645,12 +716,14 @@
       }
     }
 
-    // lista ao lado do grafico: ultimos 10 itens que atingiram o ponto de ressuprimento
-    // (estoque atual <= ponto), do mais recente pro mais antigo
-    async function carregarItensPontoRessuprimento() {
-      const corpo = document.getElementById("listaItensPontoRessuprimento");
+    // lista ao lado do grafico: ultimos 20 itens que atingiram o ponto de ressuprimento
+    // (estoque atual <= ponto), do mais recente pro mais antigo. armazem (opcional) restringe a
+    // um unico armazem - usada tanto na cobertura geral quanto no gauge do almoxarifado central
+    async function carregarItensPontoRessuprimento(corpoId, scrollId, armazem) {
+      const corpo = document.getElementById(corpoId);
       try {
-        const resp = await fetch("/api/dashboard_itens_ponto_ressuprimento");
+        const query = armazem ? `?armazem=${encodeURIComponent(armazem)}` : "";
+        const resp = await fetch(`/api/dashboard_itens_ponto_ressuprimento${query}`);
         const dados = await resp.json();
         const lista = Array.isArray(dados) ? dados : [];
         corpo.innerHTML = lista.length
@@ -667,8 +740,175 @@
               )
               .join("")
           : linhaVazia(5);
+        iniciarRolagemAutomatica(scrollId);
       } catch (erro) {
         corpo.innerHTML = linhaVazia(5);
+      }
+    }
+
+    // gauge de cobertura: dos itens com ponto de ressuprimento configurado, quantos tem estoque
+    // suficiente - zonas fixas (vermelho 0-meta/2, amarelo ate a meta, verde da meta em diante)
+    function criarPluginGauge(percentual, meta) {
+      return {
+        id: "gaugePontoRessuprimento",
+        afterDatasetsDraw(chart) {
+          try {
+            const { ctx } = chart;
+            const meta0 = chart.getDatasetMeta(0);
+            if (!meta0 || !meta0.data.length) return;
+
+            const primeiro = meta0.data[0].getProps(["startAngle", "x", "y", "innerRadius", "outerRadius"], true);
+            const ultimo = meta0.data[meta0.data.length - 1].getProps(["endAngle"], true);
+            const anguloInicial = primeiro.startAngle;
+            const anguloFinal = ultimo.endAngle;
+            const { x: cx, y: cy, innerRadius, outerRadius } = primeiro;
+            const paraAngulo = (valor) => anguloInicial + (Math.min(Math.max(valor, 0), 100) / 100) * (anguloFinal - anguloInicial);
+            const anguloValor = paraAngulo(percentual);
+            const anguloMeta = paraAngulo(meta);
+
+            ctx.save();
+
+            // agulha preta (triangulo fino) + pivo redondo no centro
+            const comprimentoAgulha = innerRadius * 0.92;
+            const larguraBase = 7;
+            ctx.fillStyle = "#1c2b3a";
+            ctx.beginPath();
+            ctx.moveTo(cx + Math.cos(anguloValor + Math.PI / 2) * larguraBase, cy + Math.sin(anguloValor + Math.PI / 2) * larguraBase);
+            ctx.lineTo(cx + Math.cos(anguloValor) * comprimentoAgulha, cy + Math.sin(anguloValor) * comprimentoAgulha);
+            ctx.lineTo(cx + Math.cos(anguloValor - Math.PI / 2) * larguraBase, cy + Math.sin(anguloValor - Math.PI / 2) * larguraBase);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(cx, cy, larguraBase + 3, 0, Math.PI * 2);
+            ctx.fill();
+
+            // tracinho vermelho cruzando o arco na posicao da meta
+            ctx.strokeStyle = "#d0271d";
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(cx + Math.cos(anguloMeta) * (innerRadius - 4), cy + Math.sin(anguloMeta) * (innerRadius - 4));
+            ctx.lineTo(cx + Math.cos(anguloMeta) * (outerRadius + 8), cy + Math.sin(anguloMeta) * (outerRadius + 8));
+            ctx.stroke();
+
+            ctx.font = "bold 11px 'Segoe UI', Arial, sans-serif";
+            ctx.fillStyle = "#d0271d";
+            ctx.textAlign = Math.cos(anguloMeta) >= 0 ? "left" : "right";
+            ctx.textBaseline = "middle";
+            ctx.fillText(`Meta ${meta}%`, cx + Math.cos(anguloMeta) * (outerRadius + 24), cy + Math.sin(anguloMeta) * (outerRadius + 24));
+
+            // numero grande embaixo do pivo
+            ctx.fillStyle = "#1c2b3a";
+            ctx.font = "bold 28px 'Segoe UI', Arial, sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(`${percentual.toFixed(1)}%`, cx, cy + 34);
+
+            // rotulos 0%/100% nas pontas do arco
+            ctx.font = "11px 'Segoe UI', Arial, sans-serif";
+            ctx.fillStyle = "#556";
+            ctx.textAlign = "right";
+            ctx.fillText("0%", cx + Math.cos(anguloInicial) * (outerRadius + 16), cy + Math.sin(anguloInicial) * (outerRadius + 16));
+            ctx.textAlign = "left";
+            ctx.fillText("100%", cx + Math.cos(anguloFinal) * (outerRadius + 16), cy + Math.sin(anguloFinal) * (outerRadius + 16));
+
+            ctx.restore();
+          } catch (erro) {
+            console.error("gaugePontoRessuprimento:", erro);
+          }
+        },
+      };
+    }
+
+    async function carregarGaugePontoRessuprimento(canvasId, resumoId, armazem) {
+      try {
+        const resp = await fetch(`/api/dashboard_gauge_ponto_ressuprimento?armazem=${encodeURIComponent(armazem)}`);
+        const dados = await resp.json();
+        const percentual = Number(dados.percentual) || 0;
+        const meta = Number(dados.meta) || 80;
+
+        new Chart(document.getElementById(canvasId), {
+          type: "doughnut",
+          data: {
+            labels: ["Insuficiente", "Atenção", "Suficiente"],
+            datasets: [{ data: [meta / 2, meta / 2, 100 - meta], backgroundColor: ["#d0271d", "#e0b400", "#2e9e44"], borderWidth: 0 }],
+          },
+          options: {
+            circumference: 180,
+            rotation: -90,
+            cutout: "65%",
+            events: [],
+            maintainAspectRatio: false,
+            layout: { padding: { top: 10, bottom: 44, left: 34, right: 34 } },
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+          },
+          plugins: [criarPluginGauge(percentual, meta)],
+        });
+
+        document.getElementById(resumoId).textContent =
+          `${dados.suficientes} de ${dados.total_com_ponto} itens com estoque suficiente (meta: ${meta}%)`;
+      } catch (erro) {
+        console.error(`Erro ao carregar gauge de ponto de ressuprimento (${armazem}):`, erro);
+      }
+    }
+
+    // monta uma copia do slide de gauge do almoxarifado central pra qualquer outro armazem -
+    // mesma estrutura, ids unicos derivados do indice pra nao colidir com os elementos fixos
+    function montarSlideGaugeArmazem(nomeArmazem, indice) {
+      const sufixo = `Armazem${indice}`;
+      const slide = document.createElement("div");
+      slide.className = "slide-dashboard";
+      slide.innerHTML = `
+        <h2>Meta de Cobertura de Ponto de Ressuprimento - ${nomeArmazem}</h2>
+        <div class="grafico-dashboard-area grafico-dashboard-area-unico grafico-dashboard-area-esquerda">
+          <div class="grafico-gauge-caixa">
+            <div class="grafico-barra-principal"><canvas id="graficoGauge${sufixo}"></canvas></div>
+            <p class="gauge-resumo" id="resumoGauge${sufixo}"></p>
+          </div>
+          <div class="legenda-tabela-caixa legenda-tabela-caixa-ressuprimento">
+            <h4>Itens que Atingiram o Ponto de Ressuprimento - ${nomeArmazem}</h4>
+            <div class="tabela-rolagem-auto tabela-rolagem-auto-grande" id="rolagemItens${sufixo}">
+              <table class="tabela-dados">
+                <thead>
+                  <tr>
+                    <th>Produto</th>
+                    <th>Armazém</th>
+                    <th>Estoque Atual</th>
+                    <th>Ponto de Ressuprimento</th>
+                    <th>Data</th>
+                  </tr>
+                </thead>
+                <tbody id="listaItens${sufixo}"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>`;
+      return { slide, sufixo };
+    }
+
+    // um gauge pra cada armazem tipo C alem do almoxarifado central (que ja tem slide fixo) -
+    // insere os slides gerados logo depois do slide fixo, na mesma ordem da lista de armazens
+    async function gerarSlidesOutrosArmazens() {
+      try {
+        const resp = await fetch("/api/armazens");
+        const armazens = await resp.json();
+        // compara ignorando espacos duplicados (alguns nomes vem com espaco extra, tipo "MMH  ESTOQUE")
+        const ARMAZENS_SEM_GAUGE = ["ALMOXARIFADO CENTRAL", "MMH ESTOQUE", "MANUTENCAO", "ALMOXARIFADO SETIC", "AALMEST", "LABORATORIO", "ALMOXARIFADO NUTRICAO GERAL"];
+        const normalizar = (nome) => String(nome ?? "").replace(/\s+/g, " ").trim().toUpperCase();
+        const nomes = (Array.isArray(armazens) ? armazens : [])
+          .map((item) => item.nome)
+          .filter((nome) => nome && !ARMAZENS_SEM_GAUGE.includes(normalizar(nome)));
+
+        let referencia = document.getElementById("graficoGaugePontoRessuprimento").closest(".slide-dashboard");
+
+        nomes.forEach((nomeArmazem, indice) => {
+          const { slide, sufixo } = montarSlideGaugeArmazem(nomeArmazem, indice);
+          referencia.after(slide);
+          referencia = slide;
+
+          carregarGaugePontoRessuprimento(`graficoGauge${sufixo}`, `resumoGauge${sufixo}`, nomeArmazem);
+          carregarItensPontoRessuprimento(`listaItens${sufixo}`, `rolagemItens${sufixo}`, nomeArmazem);
+        });
+      } catch (erro) {
+        console.error("Erro ao gerar slides dos outros armazens:", erro);
       }
     }
 
@@ -679,42 +919,52 @@
     });
     carregarAtasContratos("/api/dashboard_atas_contratos_validos", "graficoValidos", "legendaValidos", "tabelaContratosValidos", "tabelaAtasValidas", null, "matrizDiasValidos");
     carregarPontoRessuprimento();
-    carregarItensPontoRessuprimento();
+    carregarItensPontoRessuprimento("listaItensPontoRessuprimento", "rolagemItensPontoRessuprimento");
+    carregarGaugePontoRessuprimento("graficoGaugePontoRessuprimento", "resumoGaugePontoRessuprimento", "ALMOXARIFADO CENTRAL");
+    carregarItensPontoRessuprimento("listaItensGaugeRessuprimento", "rolagemItensGaugeRessuprimento", "ALMOXARIFADO CENTRAL");
 
-    // carrossel: troca de slide sozinho a cada 30s, com pontinhos clicaveis pra pular na hora
-    const trilha = document.getElementById("trilhaDashboard");
-    const totalSlides = document.querySelectorAll(".slide-dashboard").length;
-    const areaPontos = document.getElementById("pontosDashboard");
-    let slideAtual = 0;
-    let temporizadorCarrossel = null;
+    // carrossel: troca de slide sozinho a cada 30s, com pontinhos clicaveis pra pular na hora.
+    // os slides dos outros armazens sao gerados em tempo de execucao (um gauge por armazem tipo C
+    // alem do central) - precisa esperar eles existirem no DOM antes de contar os pontinhos
+    async function iniciarCarrossel() {
+      await gerarSlidesOutrosArmazens();
 
-    areaPontos.innerHTML = Array.from({ length: totalSlides })
-      .map((_, indice) => `<button type="button" class="ponto-dashboard" data-slide="${indice}"></button>`)
-      .join("");
-    const pontos = areaPontos.querySelectorAll(".ponto-dashboard");
+      const trilha = document.getElementById("trilhaDashboard");
+      const totalSlides = document.querySelectorAll(".slide-dashboard").length;
+      const areaPontos = document.getElementById("pontosDashboard");
+      let slideAtual = 0;
+      let temporizadorCarrossel = null;
 
-    function irParaSlide(indice) {
-      slideAtual = indice;
-      trilha.style.transform = `translateX(-${slideAtual * 100}%)`;
-      pontos.forEach((ponto, i) => ponto.classList.toggle("ativo", i === slideAtual));
-    }
+      areaPontos.innerHTML = Array.from({ length: totalSlides })
+        .map((_, indice) => `<button type="button" class="ponto-dashboard" data-slide="${indice}"></button>`)
+        .join("");
+      const pontos = areaPontos.querySelectorAll(".ponto-dashboard");
 
-    function iniciarRotacaoAutomatica() {
-      clearInterval(temporizadorCarrossel);
-      temporizadorCarrossel = setInterval(() => {
-        irParaSlide((slideAtual + 1) % totalSlides);
-      }, 30000);
-    }
+      function irParaSlide(indice) {
+        slideAtual = indice;
+        trilha.style.transform = `translateX(-${slideAtual * 100}%)`;
+        pontos.forEach((ponto, i) => ponto.classList.toggle("ativo", i === slideAtual));
+      }
 
-    pontos.forEach((ponto) => {
-      ponto.addEventListener("click", () => {
-        irParaSlide(Number(ponto.dataset.slide));
-        iniciarRotacaoAutomatica();
+      function iniciarRotacaoAutomatica() {
+        clearInterval(temporizadorCarrossel);
+        temporizadorCarrossel = setInterval(() => {
+          irParaSlide((slideAtual + 1) % totalSlides);
+        }, 30000);
+      }
+
+      pontos.forEach((ponto) => {
+        ponto.addEventListener("click", () => {
+          irParaSlide(Number(ponto.dataset.slide));
+          iniciarRotacaoAutomatica();
+        });
       });
-    });
 
-    irParaSlide(0);
-    iniciarRotacaoAutomatica();
+      irParaSlide(0);
+      iniciarRotacaoAutomatica();
+    }
+
+    iniciarCarrossel();
   </script>
 </body>
 </html>

@@ -1160,6 +1160,32 @@ body.pagina-dashboard .cartao {
   position: relative;
 }
 
+/* caixa do gauge (meio-circulo) - mesmo tamanho do grafico de barras do dash de ponto de
+   ressuprimento (.grafico-barra-principal cuida da altura/position:relative do canvas), com o
+   resumo em texto embaixo. canvas sem CSS proprio direto - precisa ficar por conta do wrapper
+   com position:relative + altura fixa, senao o chart.js entra num loop de redimensionamento e a
+   pagina fica gigante/em branco */
+.grafico-gauge-caixa {
+  flex: 1.2;
+  min-width: 320px;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.grafico-gauge-caixa .grafico-barra-principal {
+  width: 100%;
+}
+
+.gauge-resumo {
+  font-size: clamp(11px, 0.55vw + 4px, 14px);
+  color: var(--azul-escuro);
+  font-weight: 600;
+  text-align: center;
+}
+
 /* legenda embaixo do grafico (em vez do lado, que e o uso padrao de .legenda-pizza) - vira uma
    linha horizontal em vez de coluna, os itens nao precisam da largura minima pensada pro lado */
 .legenda-pizza-horizontal {
@@ -1343,6 +1369,25 @@ body.pagina-dashboard .duas-tabelas table.tabela-dados {
 body.pagina-dashboard .duas-tabelas table.tabela-dados th,
 body.pagina-dashboard .duas-tabelas table.tabela-dados td {
   padding: clamp(6px, 0.45vw, 12px) clamp(8px, 0.55vw, 13px);
+}
+
+/* mostra so uns 5 registros por vez (cabecalho + 5 linhas) - o resto (ate 10) rola sozinho via JS,
+   voltando pro topo quando chega no fim (ver iniciarRolagemAutomatica) */
+.tabela-rolagem-auto {
+  max-height: clamp(170px, 19vw, 230px);
+  overflow-y: auto;
+}
+
+.tabela-rolagem-auto table.tabela-dados thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+/* variante maior: mostra uns 10 registros por vez em vez de 5 (itens de ponto de ressuprimento) -
+   altura 30% maior que o clamp original (320/36vw/440) */
+.tabela-rolagem-auto-grande {
+  max-height: clamp(416px, 46.8vw, 572px);
 }
 
 .pontos-dashboard {

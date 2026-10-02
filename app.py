@@ -2071,7 +2071,7 @@ _DASHBOARD_PERCENTUAL_REMANESCENTE = """
 """
 
 
-def _dashboard_top5(situacao_cond, atapreco, filtro_saldo, ordenacao):
+def _dashboard_top5(situacao_cond, atapreco, filtro_saldo, ordenacao, limite=5):
     percentual = _DASHBOARD_PERCENTUAL_REMANESCENTE
     sql = f"""
         SELECT
@@ -2082,13 +2082,14 @@ def _dashboard_top5(situacao_cond, atapreco, filtro_saldo, ordenacao):
             to_char(ult.efetivo, 'DD-MM-YY') AS data_fim,
             ult.valor_total AS saldo_total,
             COALESCE(ult.saldo_utilizado, 0) AS saldo_utilizado,
+            GREATEST(0, ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) AS saldo_remanescente,
             {percentual} AS percentual_remanescente
         {_DASHBOARD_BASE_FROM}
         AND {situacao_cond}
         AND pc.atapreco = %s
         {filtro_saldo}
         ORDER BY {ordenacao}
-        LIMIT 5
+        LIMIT {int(limite)}
     """
     return run_query(sql, [atapreco])
 
@@ -2202,16 +2203,21 @@ def _dashboard_atas_contratos(situacao):
     matriz_dias = _dashboard_validos_matriz_dias() if situacao == "validos" else None
 
     if situacao == "vencidos":
-        # maior valor primeiro
+        # maior saldo remanescente primeiro (nao saldo total) - top 10 em vez de top 5, a tela
+        # mostra so 5 de cada vez e rola sozinha pelo resto
         filtro_saldo = ""
-        ordenacao = "saldo_total DESC NULLS LAST"
+        ordenacao = "saldo_remanescente DESC NULLS LAST"
+        limite = 10
     else:
-        # valido com saldo zerado = ja gastou tudo mas ainda ta na validade - risco de faltar produto
+        # valido com saldo zerado = ja gastou tudo mas ainda ta na validade - risco de faltar
+        # produto. maior prazo pra vencer primeiro (mais tempo rodando sem saldo = mais urgente
+        # resolver) - top 10 em vez de top 5, a tela mostra so 5 de cada vez e rola sozinha
         filtro_saldo = f"AND {percentual} <= 0"
-        ordenacao = "saldo_total DESC NULLS LAST"
+        ordenacao = "ult.efetivo DESC NULLS LAST"
+        limite = 10
 
-    contratos = _dashboard_top5(situacao_cond, "N", filtro_saldo, ordenacao)
-    atas = _dashboard_top5(situacao_cond, "S", filtro_saldo, ordenacao)
+    contratos = _dashboard_top5(situacao_cond, "N", filtro_saldo, ordenacao, limite)
+    atas = _dashboard_top5(situacao_cond, "S", filtro_saldo, ordenacao, limite)
 
     return {
         "buckets": buckets,
@@ -2252,31 +2258,34 @@ def api_dashboard_estoque_armazem():
         return jsonify({"erro": str(erro)}), 500
 
 
+ARMAZENS_COBERTURA_PONTO_RESSUPRIMENTO = [74714, 194597, 49083881, 228756, 74712]
+
+
 @app.route("/api/dashboard_ponto_ressuprimento")
 def api_dashboard_ponto_ressuprimento():
-    # por armazem (so tipoarmazem C): dos itens que tem estoque (quantidade > 0), quantos tem
-    # ponto de ressuprimento configurado (> 0) e quantos nao tem (= 0 ou nulo) - parametro vem de
-    # estoquearmazem, a mesma tabela usada em /api/estoque_abastecimento
+    # por armazem (lista fixa definida em ARMAZENS_COBERTURA_PONTO_RESSUPRIMENTO): dos itens
+    # que tem estoque (quantidade > 0), quantos tem ponto de ressuprimento configurado (> 0)
+    # e quantos nao tem (= 0 ou nulo) - parametro vem de estoquearmazem, a mesma tabela usada
+    # em /api/estoque_abastecimento
     sql = """
         SELECT
             COALESCE(pes.nome, arm.sigla) AS nome_armazem,
             count(*) FILTER (WHERE ea.quantidade > 0) AS total_itens,
             count(*) FILTER (WHERE ea.quantidade > 0 AND COALESCE(ea.pontoressuprimento, 0) = 0) AS sem_ponto,
             count(*) FILTER (WHERE ea.quantidade > 0 AND COALESCE(ea.pontoressuprimento, 0) > 0) AS com_ponto
-        FROM public.estoquearmazem ea
-        JOIN public.armazem arm ON arm.armazem = ea.armazem
+        FROM public.armazem arm
+        LEFT JOIN public.estoquearmazem ea ON ea.armazem = arm.armazem
         LEFT JOIN public.pessoa pes ON pes.pessoa = arm.pessoa
-        WHERE arm.tipoarmazem = 'C'
+        WHERE arm.armazem = ANY(%s)
         GROUP BY arm.armazem, COALESCE(pes.nome, arm.sigla)
-        HAVING count(*) FILTER (WHERE ea.quantidade > 0) > 0
         ORDER BY nome_armazem
     """
     try:
-        dados = run_query(sql)
+        dados = run_query(sql, [ARMAZENS_COBERTURA_PONTO_RESSUPRIMENTO])
         for linha in dados:
-            total = int(linha["total_itens"]) or 1
-            linha["percentual_sem"] = round(int(linha["sem_ponto"]) / total * 100, 1)
-            linha["percentual_com"] = round(int(linha["com_ponto"]) / total * 100, 1)
+            total = int(linha["total_itens"] or 0) or 1
+            linha["percentual_sem"] = round(int(linha["sem_ponto"] or 0) / total * 100, 1)
+            linha["percentual_com"] = round(int(linha["com_ponto"] or 0) / total * 100, 1)
         return jsonify(dados)
     except Exception as erro:
         return jsonify({"erro": str(erro)}), 500
@@ -2284,10 +2293,20 @@ def api_dashboard_ponto_ressuprimento():
 
 @app.route("/api/dashboard_itens_ponto_ressuprimento")
 def api_dashboard_itens_ponto_ressuprimento():
-    # ultimos 10 itens que atingiram o ponto de ressuprimento (estoque atual <= ponto), do mais
+    # ultimos 20 itens que atingiram o ponto de ressuprimento (estoque atual <= ponto), do mais
     # recente pro mais antigo - "data" vem de estoquearmazem._update, que muda toda vez que a
-    # quantidade/parametro daquele produto+armazem e recalculado (ou seja, a cada movimentacao)
-    sql = """
+    # quantidade/parametro daquele produto+armazem e recalculado (ou seja, a cada movimentacao).
+    # a tela mostra so 10 de cada vez e rola sozinha pelo resto. armazem (opcional) restringe a um
+    # unico armazem pelo nome - usado no gauge do almoxarifado central
+    armazem = request.args.get("armazem")
+    condicoes = ["arm.tipoarmazem = 'C'", "ea.pontoressuprimento > 0", "ea.quantidade <= ea.pontoressuprimento"]
+    params = []
+    if armazem:
+        condicoes.append("pes_arm.nome = %s")
+        params.append(armazem)
+    where = " AND ".join(condicoes)
+
+    sql = f"""
         SELECT
             p.nome AS nome_produto,
             COALESCE(pes_arm.nome, arm.sigla) AS nome_armazem,
@@ -2298,13 +2317,42 @@ def api_dashboard_itens_ponto_ressuprimento():
         JOIN public.armazem arm ON arm.armazem = ea.armazem
         LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
         JOIN public.produto p ON p.produto = ea.produto
-        WHERE arm.tipoarmazem = 'C'
-        AND ea.pontoressuprimento > 0
-        AND ea.quantidade <= ea.pontoressuprimento
+        WHERE {where}
         ORDER BY ea._update DESC
-        LIMIT 10
+        LIMIT 20
     """
-    return _consulta_generica(sql)
+    return _consulta_generica(sql, params)
+
+
+@app.route("/api/dashboard_gauge_ponto_ressuprimento")
+def api_dashboard_gauge_ponto_ressuprimento():
+    # gauge por armazem: dos itens com ponto de ressuprimento configurado, quantos estao com
+    # estoque suficiente (acima do ponto) - meta fixa de 80%. um gauge por armazem tipo C (ver
+    # /api/armazens pra lista completa), armazem default fica o almoxarifado central
+    nome_armazem = request.args.get("armazem") or "ALMOXARIFADO CENTRAL"
+    sql = """
+        SELECT
+            count(*) FILTER (WHERE ea.pontoressuprimento > 0) AS total_com_ponto,
+            count(*) FILTER (WHERE ea.pontoressuprimento > 0 AND ea.quantidade > ea.pontoressuprimento) AS suficientes
+        FROM public.estoquearmazem ea
+        JOIN public.armazem arm ON arm.armazem = ea.armazem
+        LEFT JOIN public.pessoa pes ON pes.pessoa = arm.pessoa
+        WHERE arm.tipoarmazem = 'C' AND pes.nome = %s AND ea.quantidade > 0
+    """
+    try:
+        linha = run_query(sql, [nome_armazem])[0]
+        total = int(linha["total_com_ponto"])
+        suficientes = int(linha["suficientes"])
+        percentual = round(suficientes / total * 100, 1) if total else 0
+        return jsonify({
+            "nome_armazem": nome_armazem,
+            "total_com_ponto": total,
+            "suficientes": suficientes,
+            "percentual": percentual,
+            "meta": 80,
+        })
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
 
 
 @app.route("/api/dashboard_atas_contratos_vencidos")
