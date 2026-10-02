@@ -345,43 +345,51 @@ DIAS_SEMANA_CALENDARIO = ["seg", "ter", "qua", "qui", "sex", "sab", "dom"]
 
 @app.route("/api/calendario_distribuicao")
 def api_calendario_distribuicao():
-    # todo armazem da tabela aparece na lista, mesmo sem configuracao ainda (LEFT JOIN - os dias
-    # saem tudo falso ate alguem marcar e salvar)
+    # pro armazem central escolhido, traz TODOS os armazens que constam na tabela armazem - cada
+    # um com o calendario que ja esta salvo pra esse central (tudo falso se o armazem ainda nao
+    # foi configurado aqui, mesmo que esteja vinculado a outro central - cada armazem so pertence
+    # a um central por vez, marcar um dia aqui transfere ele pra este central)
+    armazem_central = request.args.get("armazem_central")
+    if not armazem_central:
+        return jsonify([])
+
     sql = """
         SELECT
             arm.armazem,
             pes_arm.nome,
-            COALESCE(cd.seg, FALSE) AS seg,
-            COALESCE(cd.ter, FALSE) AS ter,
-            COALESCE(cd.qua, FALSE) AS qua,
-            COALESCE(cd.qui, FALSE) AS qui,
-            COALESCE(cd.sex, FALSE) AS sex,
-            COALESCE(cd.sab, FALSE) AS sab,
-            COALESCE(cd.dom, FALSE) AS dom
+            CASE WHEN cd.armazem_central = %s THEN COALESCE(cd.seg, FALSE) ELSE FALSE END AS seg,
+            CASE WHEN cd.armazem_central = %s THEN COALESCE(cd.ter, FALSE) ELSE FALSE END AS ter,
+            CASE WHEN cd.armazem_central = %s THEN COALESCE(cd.qua, FALSE) ELSE FALSE END AS qua,
+            CASE WHEN cd.armazem_central = %s THEN COALESCE(cd.qui, FALSE) ELSE FALSE END AS qui,
+            CASE WHEN cd.armazem_central = %s THEN COALESCE(cd.sex, FALSE) ELSE FALSE END AS sex,
+            CASE WHEN cd.armazem_central = %s THEN COALESCE(cd.sab, FALSE) ELSE FALSE END AS sab,
+            CASE WHEN cd.armazem_central = %s THEN COALESCE(cd.dom, FALSE) ELSE FALSE END AS dom
         FROM public.armazem arm
         JOIN public.pessoa pes_arm ON arm.pessoa = pes_arm.pessoa
         LEFT JOIN sist_logistica.calendariodistribuicao cd ON cd.armazem = arm.armazem
         ORDER BY pes_arm.nome
     """
-    return _consulta_generica(sql)
+    return _consulta_generica(sql, [armazem_central] * 7)
 
 
 @app.route("/api/calendario_distribuicao", methods=["POST"])
 def api_salvar_calendario_distribuicao():
     dados = request.get_json(force=True)
     armazem = dados.get("armazem")
-    if not armazem:
-        return jsonify({"ok": False, "msg": "Informe o armazém"}), 400
+    armazem_central = dados.get("armazem_central")
+    if not armazem or not armazem_central:
+        return jsonify({"ok": False, "msg": "Informe o armazém e o armazém central"}), 400
 
     valores = [bool(dados.get(dia)) for dia in DIAS_SEMANA_CALENDARIO]
 
     try:
         run_query(f"""
-            INSERT INTO sist_logistica.calendariodistribuicao (armazem, {", ".join(DIAS_SEMANA_CALENDARIO)})
-            VALUES (%s, {", ".join(["%s"] * len(DIAS_SEMANA_CALENDARIO))})
+            INSERT INTO sist_logistica.calendariodistribuicao (armazem, armazem_central, {", ".join(DIAS_SEMANA_CALENDARIO)})
+            VALUES (%s, %s, {", ".join(["%s"] * len(DIAS_SEMANA_CALENDARIO))})
             ON CONFLICT (armazem)
-            DO UPDATE SET {", ".join(f"{dia} = EXCLUDED.{dia}" for dia in DIAS_SEMANA_CALENDARIO)}, _update = now()
-        """, [armazem, *valores])
+            DO UPDATE SET armazem_central = EXCLUDED.armazem_central,
+                {", ".join(f"{dia} = EXCLUDED.{dia}" for dia in DIAS_SEMANA_CALENDARIO)}, _update = now()
+        """, [armazem, armazem_central, *valores])
         return jsonify({"ok": True})
     except Exception as erro:
         return jsonify({"ok": False, "msg": str(erro)}), 500
@@ -486,7 +494,7 @@ SQL_DISTRIBUICAO_CONCLUIDA = """
 @app.route("/api/armazens")
 def api_armazens():
     sql = """
-        SELECT pes_arm.nome
+        SELECT arm.armazem, pes_arm.nome
         FROM public.armazem arm
         JOIN public.pessoa pes_arm ON arm.pessoa = pes_arm.pessoa
         WHERE arm.tipoarmazem = 'C'

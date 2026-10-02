@@ -76,8 +76,17 @@
           <h2>Calendário de Distribuição</h2>
         </div>
 
-        <div id="areaCalendarioDistribuicao">
-          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        <div class="campo-filtro campo-largo">
+          <label for="selectArmazemCentral">Armazém central</label>
+          <select id="selectArmazemCentral">
+            <option value="">Selecione um armazém central</option>
+          </select>
+        </div>
+
+        <div id="blocoSatelites" class="oculto">
+          <div id="areaCalendarioDistribuicao">
+            <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+          </div>
         </div>
       </section>
     </main>
@@ -347,8 +356,32 @@
       { chave: "dom", rotulo: "Dom" },
     ];
 
+    let armazemCentralSelecionado = null;
+
+    async function carregarArmazensCentrais() {
+      const select = document.getElementById("selectArmazemCentral");
+      try {
+        const resp = await fetch("/api/armazens");
+        const armazens = await resp.json();
+        armazens.forEach((armazem) => {
+          const opcao = document.createElement("option");
+          opcao.value = armazem.armazem;
+          opcao.textContent = armazem.nome;
+          select.appendChild(opcao);
+        });
+      } catch (erro) {
+        console.error("Erro ao carregar armazéns centrais:", erro);
+      }
+    }
+
+    document.getElementById("selectArmazemCentral").addEventListener("change", (ev) => {
+      armazemCentralSelecionado = ev.target.value || null;
+      document.getElementById("blocoSatelites").classList.toggle("oculto", !armazemCentralSelecionado);
+      if (armazemCentralSelecionado) carregarCalendarioDistribuicao();
+    });
+
     async function salvarCalendarioArmazem(armazem, linhaEl) {
-      const valores = { armazem: Number(armazem) };
+      const valores = { armazem: Number(armazem), armazem_central: Number(armazemCentralSelecionado) };
       DIAS_SEMANA.forEach((dia) => {
         valores[dia.chave] = linhaEl.querySelector(`.checkbox-dia-${dia.chave}`).checked;
       });
@@ -368,8 +401,10 @@
 
     async function carregarCalendarioDistribuicao() {
       const area = document.getElementById("areaCalendarioDistribuicao");
+      if (!armazemCentralSelecionado) return;
+
       try {
-        const resp = await fetch("/api/calendario_distribuicao");
+        const resp = await fetch(`/api/calendario_distribuicao?armazem_central=${armazemCentralSelecionado}`);
         const armazens = await resp.json();
 
         if (armazens.length === 0) {
@@ -415,7 +450,7 @@
 
     carregarPaginasCheckbox();
     carregarPerfis();
-    carregarCalendarioDistribuicao();
+    carregarArmazensCentrais();
   </script>
 </body>
 </html>
