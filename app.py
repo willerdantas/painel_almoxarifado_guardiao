@@ -131,7 +131,7 @@ LIMITE_DISTRIBUICAO_USUARIO = 10
 # "_creation = _update" quer dizer "ainda em andamento" e "_creation <> _update" quer dizer "ja concluido"
 SQL_PEDIDO_RECLAMADO = """
     EXISTS (
-        SELECT 1 FROM public.armazemmovimentacao am
+        SELECT 1 FROM sist_logistica.armazemmovimentacao am
         WHERE am.saidacabecalho = sc.saidacabecalho
         AND am.tipomovimentacao = {tipomov}
     )
@@ -141,7 +141,7 @@ SQL_PEDIDO_RECLAMADO = """
 # para distribuicao" - nao precisa mais de uma linha marcadora separada pra isso
 SQL_SEPARACAO_CONCLUIDA = """
     EXISTS (
-        SELECT 1 FROM public.armazemmovimentacao am
+        SELECT 1 FROM sist_logistica.armazemmovimentacao am
         WHERE am.saidacabecalho = sc.saidacabecalho
         AND am.tipomovimentacao = {tipomov}
         AND am._creation <> am._update
@@ -150,7 +150,7 @@ SQL_SEPARACAO_CONCLUIDA = """
 
 SQL_DISTRIBUICAO_RECLAMADA = """
     EXISTS (
-        SELECT 1 FROM public.armazemmovimentacao am
+        SELECT 1 FROM sist_logistica.armazemmovimentacao am
         WHERE am.saidacabecalho = sc.saidacabecalho
         AND am.tipomovimentacao = {tipomov}
     )
@@ -158,7 +158,7 @@ SQL_DISTRIBUICAO_RECLAMADA = """
 
 SQL_DISTRIBUICAO_CONCLUIDA = """
     EXISTS (
-        SELECT 1 FROM public.armazemmovimentacao am
+        SELECT 1 FROM sist_logistica.armazemmovimentacao am
         WHERE am.saidacabecalho = sc.saidacabecalho
         AND am.tipomovimentacao = {tipomov}
         AND am._creation <> am._update
@@ -354,7 +354,7 @@ def api_separacao_ativa():
     linhas = run_query(
         """
         SELECT DISTINCT am.saidacabecalho AS numero_pedido
-        FROM public.armazemmovimentacao am
+        FROM sist_logistica.armazemmovimentacao am
         WHERE am.usuario = %s AND am.tipomovimentacao = %s AND am._creation = am._update
         LIMIT 1
         """,
@@ -377,7 +377,7 @@ def api_separar_pedido():
 
     ja_reivindicado = run_query(
         """
-        SELECT 1 FROM public.armazemmovimentacao
+        SELECT 1 FROM sist_logistica.armazemmovimentacao
         WHERE usuario = %s AND tipomovimentacao = %s AND _creation = _update
         LIMIT 1
         """,
@@ -395,7 +395,7 @@ def api_separar_pedido():
     # gravados juntos, todos com _creation = o momento exato da selecao
     run_query(
         """
-        INSERT INTO public.armazemmovimentacao
+        INSERT INTO sist_logistica.armazemmovimentacao
             (requisicao, requisicaoitem, saidacabecalho, saidaitem, tipomovimentacao, usuario, unidade, status)
         SELECT ri.requisicao, ri.requisicaoitem, si.saidacabecalho, si.saidaitem, %s, %s, %s, 'C'
         FROM public.saidaitem si
@@ -438,7 +438,7 @@ def api_pedidos_em_separacao():
             (SELECT COALESCE(SUM(si.quantidade), 0) FROM public.saidaitem si WHERE si.saidacabecalho = sc.saidacabecalho) AS quantidade_total
         FROM (
             SELECT DISTINCT ON (am2.saidacabecalho) am2.saidacabecalho, am2.usuario, am2._creation AS min_creation
-            FROM public.armazemmovimentacao am2
+            FROM sist_logistica.armazemmovimentacao am2
             WHERE am2.tipomovimentacao = {TIPOMOV_SEPARACAO} AND am2._creation = am2._update
             ORDER BY am2.saidacabecalho, am2._creation DESC
         ) am
@@ -494,7 +494,7 @@ def api_separacao_concluir():
 
     dono = run_query(
         """
-        SELECT 1 FROM public.armazemmovimentacao
+        SELECT 1 FROM sist_logistica.armazemmovimentacao
         WHERE saidacabecalho = %s AND tipomovimentacao = %s AND usuario = %s AND _creation = _update
         LIMIT 1
         """,
@@ -505,7 +505,7 @@ def api_separacao_concluir():
 
     run_query(
         """
-        UPDATE public.armazemmovimentacao
+        UPDATE sist_logistica.armazemmovimentacao
         SET _update = now()
         WHERE saidacabecalho = %s AND tipomovimentacao = %s AND usuario = %s AND _creation = _update
         """,
@@ -594,7 +594,7 @@ def api_pedidos_em_distribuicao():
             (SELECT COALESCE(SUM(si.quantidade), 0) FROM public.saidaitem si WHERE si.saidacabecalho = sc.saidacabecalho) AS quantidade_total
         FROM (
             SELECT DISTINCT ON (am2.saidacabecalho) am2.saidacabecalho, am2.usuario, am2._creation AS min_creation
-            FROM public.armazemmovimentacao am2
+            FROM sist_logistica.armazemmovimentacao am2
             WHERE am2.tipomovimentacao = {TIPOMOV_DISTRIBUICAO} AND am2._creation = am2._update
             ORDER BY am2.saidacabecalho, am2._creation DESC
         ) am
@@ -622,7 +622,7 @@ def api_distribuicao_ativos():
     linhas = run_query(
         """
         SELECT DISTINCT am.saidacabecalho AS numero_pedido
-        FROM public.armazemmovimentacao am
+        FROM sist_logistica.armazemmovimentacao am
         WHERE am.usuario = %s AND am.tipomovimentacao = %s AND am._creation = am._update
         """,
         [usuario_id, TIPOMOV_DISTRIBUICAO],
@@ -648,7 +648,7 @@ def api_distribuir_pedidos():
 
     ja_ativos = run_query(
         """
-        SELECT DISTINCT saidacabecalho FROM public.armazemmovimentacao
+        SELECT DISTINCT saidacabecalho FROM sist_logistica.armazemmovimentacao
         WHERE usuario = %s AND tipomovimentacao = %s AND _creation = _update
         """,
         [usuario_id, TIPOMOV_DISTRIBUICAO],
@@ -662,7 +662,7 @@ def api_distribuir_pedidos():
 
     ja_reivindicados = run_query(
         """
-        SELECT DISTINCT saidacabecalho FROM public.armazemmovimentacao
+        SELECT DISTINCT saidacabecalho FROM sist_logistica.armazemmovimentacao
         WHERE tipomovimentacao = %s AND saidacabecalho = ANY(%s)
         """,
         [TIPOMOV_DISTRIBUICAO, saidacabecalhos],
@@ -674,7 +674,7 @@ def api_distribuir_pedidos():
     # mesma logica da separacao: uma linha por item de cada pedido, todas de uma vez (mesmo now())
     run_query(
         """
-        INSERT INTO public.armazemmovimentacao
+        INSERT INTO sist_logistica.armazemmovimentacao
             (requisicao, requisicaoitem, saidacabecalho, saidaitem, tipomovimentacao, usuario, unidade, status)
         SELECT ri.requisicao, ri.requisicaoitem, si.saidacabecalho, si.saidaitem, %s, %s, %s, 'C'
         FROM public.saidaitem si
@@ -724,7 +724,7 @@ def api_distribuicao_concluir():
 
     dono = run_query(
         """
-        SELECT 1 FROM public.armazemmovimentacao
+        SELECT 1 FROM sist_logistica.armazemmovimentacao
         WHERE saidacabecalho = %s AND tipomovimentacao = %s AND usuario = %s AND _creation = _update
         LIMIT 1
         """,
@@ -735,7 +735,7 @@ def api_distribuicao_concluir():
 
     run_query(
         """
-        UPDATE public.armazemmovimentacao
+        UPDATE sist_logistica.armazemmovimentacao
         SET _update = now()
         WHERE saidacabecalho = %s AND tipomovimentacao = %s AND usuario = %s AND _creation = _update
         """,
@@ -1722,7 +1722,7 @@ def _contagem_em_andamento(tipomov, usuario_logado):
     where = f"WHERE {' AND '.join(condicoes)}"
     sql = f"""
         SELECT count(DISTINCT am.saidacabecalho) AS total
-        FROM public.armazemmovimentacao am
+        FROM sist_logistica.armazemmovimentacao am
         JOIN public.saidacabecalho sc ON sc.saidacabecalho = am.saidacabecalho
         {where}
     """
@@ -1795,16 +1795,16 @@ def api_painel_chamados():
         SELECT sc.saidacabecalho AS numero_pedido, pes.nome AS requisitante, eventos.momento, eventos.etapa
         FROM (
             SELECT DISTINCT saidacabecalho, _creation AS momento, 'Separação Iniciada' AS etapa
-            FROM public.armazemmovimentacao WHERE tipomovimentacao = {TIPOMOV_SEPARACAO}
+            FROM sist_logistica.armazemmovimentacao WHERE tipomovimentacao = {TIPOMOV_SEPARACAO}
             UNION ALL
             SELECT DISTINCT saidacabecalho, _update AS momento, 'Separação Concluída' AS etapa
-            FROM public.armazemmovimentacao WHERE tipomovimentacao = {TIPOMOV_SEPARACAO} AND _creation <> _update
+            FROM sist_logistica.armazemmovimentacao WHERE tipomovimentacao = {TIPOMOV_SEPARACAO} AND _creation <> _update
             UNION ALL
             SELECT DISTINCT saidacabecalho, _creation AS momento, 'Distribuição Iniciada' AS etapa
-            FROM public.armazemmovimentacao WHERE tipomovimentacao = {TIPOMOV_DISTRIBUICAO}
+            FROM sist_logistica.armazemmovimentacao WHERE tipomovimentacao = {TIPOMOV_DISTRIBUICAO}
             UNION ALL
             SELECT DISTINCT saidacabecalho, _update AS momento, 'Distribuição Concluída' AS etapa
-            FROM public.armazemmovimentacao WHERE tipomovimentacao = {TIPOMOV_DISTRIBUICAO} AND _creation <> _update
+            FROM sist_logistica.armazemmovimentacao WHERE tipomovimentacao = {TIPOMOV_DISTRIBUICAO} AND _creation <> _update
         ) eventos
         JOIN public.saidacabecalho sc ON sc.saidacabecalho = eventos.saidacabecalho
         LEFT JOIN public.pessoa pes ON pes.pessoa = sc.pessoa
