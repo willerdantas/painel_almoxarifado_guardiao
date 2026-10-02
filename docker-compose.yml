@@ -1,0 +1,10 @@
+services:
+  web:
+    build: .
+    # db.py conecta em "localhost:30433" (banco Postgres que já existe fora deste compose,
+    # isivitaedb_hm) - network_mode: host deixa o container enxergar esse Postgres do jeito
+    # que o código já espera, sem precisar mexer em db.py nem subir um banco aqui dentro.
+    # Só funciona em Linux; no Mac/Windows isso precisaria trocar pra host.docker.internal.
+    network_mode: host
+    volumes:
+      - .:/app

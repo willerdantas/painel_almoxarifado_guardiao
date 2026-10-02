@@ -34,7 +34,6 @@
   </div>
 
   <script>
-    const PRIMEIRA_PAGINA_PADRAO = "/pages/dashboard.html";
     let identificacaoPrimeiroAcesso = "";
 
     function entrarComSucesso(dado) {
@@ -42,7 +41,10 @@
       localStorage.setItem("identificacao", dado.identificacao);
       localStorage.setItem("administrador", dado.administrador ? "true" : "false");
       if (Array.isArray(dado.paginas)) localStorage.setItem("paginas", JSON.stringify(dado.paginas));
-      window.location.href = PRIMEIRA_PAGINA_PADRAO;
+      // tela padrao escolhida em cadastro.html (secao Usuários) - cai no dashboard se o usuario
+      // nao tiver uma configurada
+      const telaPadrao = dado.tela_padrao || "dashboard";
+      window.location.href = `/pages/${telaPadrao}.html`;
     }
 
     document.getElementById("formLogin").addEventListener("submit", async (ev) => {

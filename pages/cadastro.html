@@ -98,11 +98,13 @@
     iniciarMenu("cadastro");
 
     let listaPerfis = [];
+    let listaPaginasSistema = [];
     let perfilEmEdicao = null;
 
     async function carregarPaginasCheckbox() {
       const resp = await fetch("/api/paginas_sistema");
       const paginas = await resp.json();
+      listaPaginasSistema = paginas;
       const grade = document.getElementById("gradeCheckboxesPaginas");
       grade.innerHTML = paginas
         .map(
@@ -261,20 +263,47 @@
       });
     }
 
-    async function atribuirPerfil(identificacao, sistemaperfil, selecao) {
+    // paginas que um perfil libera, pra montar as opcoes de "tela padrao" - administrador libera
+    // tudo, os outros so o que foi marcado na criacao/edicao do perfil (cadastro de Perfis acima)
+    function paginasDoPerfil(sistemaperfilId) {
+      const perfil = listaPerfis.find((item) => item.sistemaperfil === Number(sistemaperfilId));
+      if (!perfil) return [];
+      if (perfil.administrador) return listaPaginasSistema;
+      return listaPaginasSistema.filter((pagina) => perfil.paginas.includes(pagina.chave));
+    }
+
+    function preencherSelectTelaPadrao(select) {
+      const linhaTr = select.closest("tr");
+      const sistemaperfilId = linhaTr.querySelector(".select-perfil-usuario").value;
+      const atual = select.dataset.atual || "";
+      const opcoes = paginasDoPerfil(sistemaperfilId);
+
+      select.innerHTML =
+        '<option value="">Nenhuma (vai pro Dashboard)</option>' +
+        opcoes.map((pagina) => `<option value="${pagina.chave}" ${pagina.chave === atual ? "selected" : ""}>${pagina.rotulo}</option>`).join("");
+      select.disabled = opcoes.length === 0;
+    }
+
+    async function salvarPerfilETelaPadrao(linhaTr) {
+      const selectPerfil = linhaTr.querySelector(".select-perfil-usuario");
+      const selectTela = linhaTr.querySelector(".select-tela-padrao-usuario");
+      const identificacao = selectPerfil.dataset.identificacao;
+      const sistemaperfil = selectPerfil.value;
       if (!sistemaperfil) return;
+
       try {
         const resp = await fetch("/api/usuarios_sistema", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ identificacao, sistemaperfil: Number(sistemaperfil) }),
+          body: JSON.stringify({ identificacao, sistemaperfil: Number(sistemaperfil), tela_padrao: selectTela.value || null }),
         });
         const dado = await resp.json();
         if (!dado.ok) {
-          alert(dado.msg || "Erro ao atribuir perfil");
+          alert(dado.msg || "Erro ao salvar usuário");
           return;
         }
-        selecao.dataset.atual = sistemaperfil;
+        selectPerfil.dataset.atual = sistemaperfil;
+        selectTela.dataset.atual = selectTela.value;
       } catch (e) {
         alert("Sem sinal de fumaça com o servidor");
       }
@@ -322,6 +351,7 @@
                 <td>${usuario.identificacao}</td>
                 <td>${usuario.nome}</td>
                 <td><select class="select-perfil-usuario" data-identificacao="${usuario.identificacao}" data-atual="${usuario.sistemaperfil ?? ""}"></select></td>
+                <td><select class="select-tela-padrao-usuario" data-atual="${usuario.tela_padrao ?? ""}"></select></td>
                 <td><button type="button" class="botao-resetar botao-resetar-senha" data-identificacao="${usuario.identificacao}" ${usuario.sistemaperfil ? "" : "disabled"}>Resetar Senha</button></td>
               </tr>`
           )
@@ -329,14 +359,22 @@
 
         area.innerHTML = `
           <table class="tabela-dados">
-            <thead><tr><th>Usuário</th><th>Nome</th><th>Perfil</th><th>Ações</th></tr></thead>
+            <thead><tr><th>Usuário</th><th>Nome</th><th>Perfil</th><th>Tela Padrão</th><th>Ações</th></tr></thead>
             <tbody>${linhas}</tbody>
           </table>`;
 
         preencherSelectPerfis();
+        area.querySelectorAll(".select-tela-padrao-usuario").forEach((select) => preencherSelectTelaPadrao(select));
 
         area.querySelectorAll(".select-perfil-usuario").forEach((select) => {
-          select.addEventListener("change", () => atribuirPerfil(select.dataset.identificacao, select.value, select));
+          select.addEventListener("change", () => {
+            const linhaTr = select.closest("tr");
+            preencherSelectTelaPadrao(linhaTr.querySelector(".select-tela-padrao-usuario"));
+            salvarPerfilETelaPadrao(linhaTr);
+          });
+        });
+        area.querySelectorAll(".select-tela-padrao-usuario").forEach((select) => {
+          select.addEventListener("change", () => salvarPerfilETelaPadrao(select.closest("tr")));
         });
         area.querySelectorAll(".botao-resetar-senha").forEach((botao) => {
           botao.addEventListener("click", () => resetarSenha(botao.dataset.identificacao));

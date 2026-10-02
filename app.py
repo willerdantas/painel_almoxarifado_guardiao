@@ -69,7 +69,7 @@ def estatico(caminho):
 
 def _buscar_sistemausuario(identificacao):
     linhas = run_query("""
-        SELECT su.sistemausuario, su.senha_hash, sp.sistemaperfil, sp.nome AS perfil_nome, sp.administrador
+        SELECT su.sistemausuario, su.senha_hash, su.tela_padrao, sp.sistemaperfil, sp.nome AS perfil_nome, sp.administrador
         FROM sist_logistica.sistemausuario su
         LEFT JOIN sist_logistica.sistemaperfil sp ON sp.sistemaperfil = su.sistemaperfil
         WHERE su.identificacao = %s
@@ -132,6 +132,12 @@ def login():
 
     paginas = PAGINAS_SISTEMA_CHAVES if eh_admin else _paginas_do_perfil(sistemausuario["sistemaperfil"])
 
+    # tela padrao (cadastro.html) decide pra onde o login manda o usuario - so vale se ainda
+    # estiver dentro do que o perfil atual libera (perfil pode ter mudado desde que foi escolhida)
+    tela_padrao = sistemausuario["tela_padrao"]
+    if tela_padrao not in paginas:
+        tela_padrao = "dashboard" if "dashboard" in paginas else (paginas[0] if paginas else None)
+
     # "usuario" eh o nome do funcionario pra exibir nas paginas, "identificacao" eh o login
     # (usado pra filtrar por armazem)
     return jsonify({
@@ -140,6 +146,7 @@ def login():
         "identificacao": linha["identificacao"],
         "administrador": eh_admin,
         "paginas": paginas,
+        "tela_padrao": tela_padrao,
     })
 
 
@@ -282,12 +289,15 @@ def api_usuarios_sistema():
         SELECT
             u.identificacao,
             COALESCE(pes.nome, u.nome) AS nome,
-            su.sistemaperfil
+            su.sistemaperfil,
+            su.tela_padrao,
+            sp.administrador
         FROM public.usuario u
         LEFT JOIN public.funcionario f ON f.funcionario = u.funcionario
         LEFT JOIN public.pessoafisica pf ON pf.pessoafisica = f.pessoafisica
         LEFT JOIN public.pessoa pes ON pes.pessoa = pf.pessoa
         LEFT JOIN sist_logistica.sistemausuario su ON su.identificacao = u.identificacao
+        LEFT JOIN sist_logistica.sistemaperfil sp ON sp.sistemaperfil = su.sistemaperfil
         WHERE u.identificacao ILIKE %s OR COALESCE(pes.nome, u.nome) ILIKE %s
         ORDER BY nome
         LIMIT 20
@@ -299,21 +309,23 @@ def api_usuarios_sistema():
 @app.route("/api/usuarios_sistema", methods=["POST"])
 def api_atribuir_perfil_usuario():
     # upsert: cria a linha em sistemausuario (sem senha - entra no fluxo de "primeiro acesso")
-    # ou so troca o perfil de quem ja tinha uma
+    # ou troca o perfil/tela padrao de quem ja tinha uma - cadastro.html sempre manda os dois
+    # juntos (mesmo que so um tenha mudado), pra um nao pisar no outro
     dados = request.get_json(force=True)
     identificacao = (dados.get("identificacao") or "").strip()
     sistemaperfil = dados.get("sistemaperfil")
+    tela_padrao = dados.get("tela_padrao") or None
 
     if not identificacao or not sistemaperfil:
         return jsonify({"ok": False, "msg": "Informe o usuário e o perfil"}), 400
 
     try:
         run_query("""
-            INSERT INTO sist_logistica.sistemausuario (identificacao, sistemaperfil)
-            VALUES (%s, %s)
+            INSERT INTO sist_logistica.sistemausuario (identificacao, sistemaperfil, tela_padrao)
+            VALUES (%s, %s, %s)
             ON CONFLICT (identificacao)
-            DO UPDATE SET sistemaperfil = EXCLUDED.sistemaperfil, _update = now()
-        """, [identificacao, sistemaperfil])
+            DO UPDATE SET sistemaperfil = EXCLUDED.sistemaperfil, tela_padrao = EXCLUDED.tela_padrao, _update = now()
+        """, [identificacao, sistemaperfil, tela_padrao])
         return jsonify({"ok": True})
     except Exception as erro:
         return jsonify({"ok": False, "msg": str(erro)}), 500
