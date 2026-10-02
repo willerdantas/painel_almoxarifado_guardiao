@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSYSTEM | Configuração do Banco</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <div id="menuContainer"></div>
+
+    <main class="conteudo">
+      <div class="topo-pagina">
+        <h1>Configuração do Banco</h1>
+        <div class="topo-direita">
+          <div class="area-usuario">
+            <span class="usuario-logado" id="usuarioLogado"></span>
+            <button class="botao-sair" id="botaoSairTopo">Sair</button>
+          </div>
+          <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+        </div>
+      </div>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Conexão com o Banco</h2>
+          <div class="grupo-botoes-filtro">
+            <button type="button" class="botao-resetar" id="botaoEditarConexao">Editar</button>
+            <button type="button" class="botao-resetar" id="botaoTestarConexao">Testar Conexão</button>
+          </div>
+        </div>
+        <div id="areaConexao">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+
+        <form id="formEditarConexao" class="form-cadastro oculto">
+          <div class="grade-filtros">
+            <div class="campo-filtro">
+              <label for="conexaoHost">Host</label>
+              <input type="text" id="conexaoHost" required />
+            </div>
+            <div class="campo-filtro campo-curto">
+              <label for="conexaoPorta">Porta</label>
+              <input type="number" id="conexaoPorta" required />
+            </div>
+            <div class="campo-filtro">
+              <label for="conexaoBanco">Banco</label>
+              <input type="text" id="conexaoBanco" required />
+            </div>
+            <div class="campo-filtro">
+              <label for="conexaoUsuario">Usuário</label>
+              <input type="text" id="conexaoUsuario" required />
+            </div>
+            <div class="campo-filtro">
+              <label for="conexaoSenha">Senha</label>
+              <input type="password" id="conexaoSenha" placeholder="Deixe em branco pra manter a atual" autocomplete="new-password" />
+            </div>
+          </div>
+          <div class="grupo-botoes-filtro">
+            <button type="submit" class="botao-filtrar">Salvar Conexão</button>
+            <button type="button" class="botao-resetar" id="botaoCancelarConexao">Cancelar</button>
+          </div>
+        </form>
+        <p class="erro-login" id="mensagemConexao"></p>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Schema sist_logistica</h2>
+        </div>
+        <div id="areaSchema">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+        <button type="button" class="botao-filtrar oculto" id="botaoCriarSchema">Criar schema e tabelas</button>
+        <p class="erro-login" id="erroSchema"></p>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script>
+    protegerPagina();
+
+    // pagina so pode ser acessada por administrador - o filtro de menu (paginasPermitidas) ja
+    // bloqueia o acesso direto de quem nao e admin (essa chave nunca entra na lista de paginas
+    // de um perfil comum, so fica visivel/liberada quando administrador === "true"), mas confere
+    // de novo aqui por clareza/defesa, ja que a pagina mexe em estrutura do banco
+    if (localStorage.getItem("administrador") !== "true") {
+      window.location.href = "/pages/dashboard.html";
+    }
+
+    iniciarMenu("configuracao_banco");
+
+    let conexaoAtual = null;
+
+    async function carregarConfiguracaoBanco() {
+      const areaConexao = document.getElementById("areaConexao");
+      const areaSchema = document.getElementById("areaSchema");
+      const botaoCriar = document.getElementById("botaoCriarSchema");
+
+      try {
+        const resp = await fetch("/api/configuracao_banco");
+        const dado = await resp.json();
+        conexaoAtual = dado.conexao;
+
+        areaConexao.innerHTML = `
+          <table class="tabela-dados">
+            <tbody>
+              <tr><td>Host</td><td>${dado.conexao.host}</td></tr>
+              <tr><td>Porta</td><td>${dado.conexao.port}</td></tr>
+              <tr><td>Banco</td><td>${dado.conexao.dbname}</td></tr>
+              <tr><td>Usuário</td><td>${dado.conexao.user}</td></tr>
+            </tbody>
+          </table>`;
+
+        const linhasTabelas = dado.tabelas
+          .map(
+            (tabela) => `
+              <tr>
+                <td>${tabela.nome}</td>
+                <td>${tabela.existe ? "✅ Existe" : "⚠️ Não encontrada"}</td>
+              </tr>`
+          )
+          .join("");
+
+        areaSchema.innerHTML = `
+          <p>Schema sist_logistica: ${dado.schema_existe ? "✅ Existe" : "⚠️ Não encontrado"}</p>
+          <table class="tabela-dados">
+            <thead><tr><th>Tabela</th><th>Status</th></tr></thead>
+            <tbody>${linhasTabelas}</tbody>
+          </table>`;
+
+        const faltaAlgumaTabela = !dado.schema_existe || dado.tabelas.some((tabela) => !tabela.existe);
+        botaoCriar.classList.toggle("oculto", !faltaAlgumaTabela);
+      } catch (erro) {
+        areaConexao.innerHTML = `<p class="msg-vazio">Erro ao buscar configuração: ${erro}</p>`;
+        areaSchema.innerHTML = "";
+      }
+    }
+
+    document.getElementById("botaoEditarConexao").addEventListener("click", () => {
+      document.getElementById("conexaoHost").value = conexaoAtual.host;
+      document.getElementById("conexaoPorta").value = conexaoAtual.port;
+      document.getElementById("conexaoBanco").value = conexaoAtual.dbname;
+      document.getElementById("conexaoUsuario").value = conexaoAtual.user;
+      document.getElementById("conexaoSenha").value = "";
+      document.getElementById("mensagemConexao").textContent = "";
+      document.getElementById("formEditarConexao").classList.remove("oculto");
+    });
+
+    document.getElementById("botaoCancelarConexao").addEventListener("click", () => {
+      document.getElementById("formEditarConexao").classList.add("oculto");
+    });
+
+    document.getElementById("formEditarConexao").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const mensagem = document.getElementById("mensagemConexao");
+      mensagem.textContent = "";
+
+      const valores = {
+        host: document.getElementById("conexaoHost").value.trim(),
+        port: Number(document.getElementById("conexaoPorta").value),
+        dbname: document.getElementById("conexaoBanco").value.trim(),
+        user: document.getElementById("conexaoUsuario").value.trim(),
+        password: document.getElementById("conexaoSenha").value,
+      };
+
+      try {
+        const resp = await fetch("/api/configuracao_banco", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(valores),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          mensagem.textContent = dado.msg || "Erro ao salvar conexão";
+          return;
+        }
+        document.getElementById("formEditarConexao").classList.add("oculto");
+        mensagem.style.color = "";
+        await carregarConfiguracaoBanco();
+      } catch (e) {
+        mensagem.textContent = "Sem sinal de fumaça com o servidor";
+      }
+    });
+
+    document.getElementById("botaoTestarConexao").addEventListener("click", async () => {
+      const mensagem = document.getElementById("mensagemConexao");
+      mensagem.textContent = "Testando...";
+      mensagem.style.color = "";
+      try {
+        const resp = await fetch("/api/configuracao_banco/testar_conexao", { method: "POST" });
+        const dado = await resp.json();
+        mensagem.textContent = dado.ok ? "✅ " + dado.msg : "⚠️ " + dado.msg;
+        mensagem.style.color = dado.ok ? "var(--azul-escuro)" : "";
+      } catch (e) {
+        mensagem.textContent = "Sem sinal de fumaça com o servidor";
+      }
+    });
+
+    document.getElementById("botaoCriarSchema").addEventListener("click", async () => {
+      const erro = document.getElementById("erroSchema");
+      erro.textContent = "";
+      try {
+        const resp = await fetch("/api/configuracao_banco/criar_schema", { method: "POST" });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          erro.textContent = dado.msg || "Erro ao criar schema";
+          return;
+        }
+        await carregarConfiguracaoBanco();
+      } catch (e) {
+        erro.textContent = "Sem sinal de fumaça com o servidor";
+      }
+    });
+
+    carregarConfiguracaoBanco();
+  </script>
+</body>
+</html>

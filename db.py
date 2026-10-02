@@ -1,16 +1,37 @@
 """Homem cava buraco ate o banco postgres."""
+import json
+import os
+
 import psycopg2
 import psycopg2.extras
 
 # banco de TESTE com dado ficticio (scripts/seed_dev.py cria e povoa)
 # pra voltar pro banco real, troca dbname de volta pra "isivitaedb_hm"
-DB_CONFIG = {
+_CONFIG_PADRAO = {
     "host": "localhost",
     "port": 30433,
     "dbname": "isivitaedb_hm",
     "user": "postgres",
     "password": "grandeviagem",
 }
+
+# se existir db_config.json (criado pela tela Configuração do Banco ao editar a conexao), usa ele
+# no lugar do padrao acima - fica fora do db.py pra dar pra editar sem reescrever codigo python
+_CAMINHO_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db_config.json")
+
+if os.path.exists(_CAMINHO_CONFIG):
+    with open(_CAMINHO_CONFIG) as _arquivo:
+        DB_CONFIG = json.load(_arquivo)
+else:
+    DB_CONFIG = dict(_CONFIG_PADRAO)
+
+
+def salvar_config(novo_config):
+    # atualiza o dict EXISTENTE (em vez de trocar por um objeto novo) pra quem importou
+    # "DB_CONFIG" de outro modulo (ex.: app.py) enxergar a mudanca sem precisar reimportar
+    DB_CONFIG.update(novo_config)
+    with open(_CAMINHO_CONFIG, "w") as arquivo:
+        json.dump(DB_CONFIG, arquivo, indent=2)
 
 
 def get_conn():

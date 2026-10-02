@@ -4,7 +4,9 @@ import re
 
 from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.security import check_password_hash, generate_password_hash
-from db import run_query
+import psycopg2
+
+from db import run_query, DB_CONFIG, salvar_config
 
 app = Flask(__name__, static_folder="static")
 
@@ -25,6 +27,7 @@ PAGES = [
     "atas_contratos.html",
     "atas_contratos_vencidos.html",
     "cadastro.html",
+    "configuracao_banco.html",
 ]
 
 # paginas que aparecem no menu lateral e que um perfil de acesso pode liberar/esconder - mesma
@@ -402,6 +405,199 @@ def api_salvar_calendario_distribuicao():
             DO UPDATE SET armazem_central = EXCLUDED.armazem_central,
                 {", ".join(f"{dia} = EXCLUDED.{dia}" for dia in DIAS_SEMANA_CALENDARIO)}, _update = now()
         """, [armazem, armazem_central, *valores])
+        return jsonify({"ok": True})
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+
+
+# DDL de cada tabela do schema sist_logistica (tudo CREATE ... IF NOT EXISTS - rodar de novo num
+# schema que ja existe nao faz nada, so completa o que faltar numa instalacao nova). Ordem importa:
+# sistemaperfil antes de quem tem FK pra ela.
+TABELAS_SIST_LOGISTICA = {
+    "sistemaperfil": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.sistemaperfil (
+            sistemaperfil SERIAL PRIMARY KEY,
+            nome VARCHAR(80) NOT NULL UNIQUE,
+            administrador BOOLEAN NOT NULL DEFAULT FALSE,
+            _creation TIMESTAMP NOT NULL DEFAULT now(),
+            _update TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
+    "sistemaperfilpagina": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.sistemaperfilpagina (
+            sistemaperfil INTEGER NOT NULL REFERENCES sist_logistica.sistemaperfil(sistemaperfil) ON DELETE CASCADE,
+            pagina VARCHAR(80) NOT NULL,
+            PRIMARY KEY (sistemaperfil, pagina)
+        )
+    """,
+    "sistemausuario": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.sistemausuario (
+            sistemausuario SERIAL PRIMARY KEY,
+            identificacao VARCHAR(60) NOT NULL UNIQUE,
+            sistemaperfil INTEGER REFERENCES sist_logistica.sistemaperfil(sistemaperfil),
+            senha_hash VARCHAR(255),
+            tela_padrao VARCHAR(40),
+            _creation TIMESTAMP NOT NULL DEFAULT now(),
+            _update TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
+    "calendariodistribuicao": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.calendariodistribuicao (
+            armazem NUMERIC PRIMARY KEY,
+            armazem_central NUMERIC,
+            seg BOOLEAN NOT NULL DEFAULT FALSE,
+            ter BOOLEAN NOT NULL DEFAULT FALSE,
+            qua BOOLEAN NOT NULL DEFAULT FALSE,
+            qui BOOLEAN NOT NULL DEFAULT FALSE,
+            sex BOOLEAN NOT NULL DEFAULT FALSE,
+            sab BOOLEAN NOT NULL DEFAULT FALSE,
+            dom BOOLEAN NOT NULL DEFAULT FALSE,
+            _creation TIMESTAMP NOT NULL DEFAULT now(),
+            _update TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
+    "armazemmovimentacao": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.armazemmovimentacao (
+            armazemmovimentacao BIGSERIAL PRIMARY KEY,
+            requisicao NUMERIC,
+            requisicaoitem NUMERIC,
+            saidacabecalho NUMERIC NOT NULL,
+            saidaitem NUMERIC,
+            tipomovimentacao NUMERIC NOT NULL,
+            usuario NUMERIC NOT NULL,
+            unidade NUMERIC NOT NULL DEFAULT 62438,
+            status CHAR(1) NOT NULL DEFAULT 'C',
+            _creation TIMESTAMP NOT NULL DEFAULT now(),
+            _update TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
+}
+
+# indices extras (fora das PK/UNIQUE que ja saem junto com o CREATE TABLE acima)
+INDICES_SIST_LOGISTICA = [
+    "CREATE INDEX IF NOT EXISTS idx_armazemmov_saidacabecalho ON sist_logistica.armazemmovimentacao (saidacabecalho)",
+    "CREATE INDEX IF NOT EXISTS idx_armazemmov_saidaitem ON sist_logistica.armazemmovimentacao (saidaitem)",
+    "CREATE INDEX IF NOT EXISTS idx_armazemmov_usuario ON sist_logistica.armazemmovimentacao (usuario)",
+]
+
+# perfis de acesso de hoje (cadastro.html) - vira a carga inicial de um banco novo, pra nao
+# comecar do zero toda vez que o schema sist_logistica eh criado numa instalacao nova
+PERFIS_PADRAO = [
+    {"nome": "Administrador", "administrador": True, "paginas": []},
+    {"nome": "Estoquista", "administrador": False, "paginas": ["dashboard", "estoque", "produtos", "vencidos"]},
+    {"nome": "Separador", "administrador": False, "paginas": ["separacao_pedidos"]},
+    {"nome": "Distribuidor", "administrador": False, "paginas": ["distribuicao_pedidos"]},
+    {"nome": "Administrativo", "administrador": False, "paginas": ["atas_contratos", "estoque", "pedidos", "produtos", "vencidos"]},
+    {
+        "nome": "Supervisor",
+        "administrador": False,
+        "paginas": [
+            "aquisicoes", "atas_contratos", "dashboard", "distribuicao_pedidos", "estoque",
+            "pagamentos", "painel_pedidos", "pedidos", "produtos", "separacao_pedidos", "vencidos",
+        ],
+    },
+]
+
+
+def _schema_sist_logistica_existe():
+    linhas = run_query("SELECT 1 FROM information_schema.schemata WHERE schema_name = 'sist_logistica'")
+    return bool(linhas)
+
+
+@app.route("/api/configuracao_banco")
+def api_configuracao_banco():
+    schema_existe = _schema_sist_logistica_existe()
+    tabelas = []
+    for nome in TABELAS_SIST_LOGISTICA:
+        if schema_existe:
+            linhas = run_query(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema = 'sist_logistica' AND table_name = %s",
+                [nome],
+            )
+            existe = bool(linhas)
+        else:
+            existe = False
+        tabelas.append({"nome": nome, "existe": existe})
+
+    return jsonify({
+        "conexao": {
+            "host": DB_CONFIG["host"],
+            "port": DB_CONFIG["port"],
+            "dbname": DB_CONFIG["dbname"],
+            "user": DB_CONFIG["user"],
+        },
+        "schema_existe": schema_existe,
+        "tabelas": tabelas,
+    })
+
+
+@app.route("/api/configuracao_banco", methods=["PUT"])
+def api_editar_configuracao_banco():
+    dados = request.get_json(force=True)
+    host = (dados.get("host") or "").strip()
+    porta = dados.get("port")
+    dbname = (dados.get("dbname") or "").strip()
+    usuario = (dados.get("user") or "").strip()
+    senha = dados.get("password") or ""
+
+    if not host or not porta or not dbname or not usuario:
+        return jsonify({"ok": False, "msg": "Preencha host, porta, banco e usuário"}), 400
+
+    try:
+        porta = int(porta)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "msg": "Porta inválida"}), 400
+
+    novo_config = {"host": host, "port": porta, "dbname": dbname, "user": usuario}
+    # senha em branco mantem a senha atual - evita ter que redigitar so pra trocar o host, por ex.
+    novo_config["password"] = senha if senha else DB_CONFIG["password"]
+
+    salvar_config(novo_config)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/configuracao_banco/testar_conexao", methods=["POST"])
+def api_testar_conexao_banco():
+    # testa a config JA SALVA (DB_CONFIG) - pra testar valores novos, salva primeiro (editar e so
+    # escrever num arquivo local, nao tem nada de destrutivo em testar antes de ter certeza)
+    try:
+        conexao = psycopg2.connect(connect_timeout=5, **DB_CONFIG)
+        conexao.close()
+        return jsonify({"ok": True, "msg": "Conexão bem-sucedida"})
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 200
+
+
+def _seed_perfis_padrao():
+    # so semeia num banco novo (sistemaperfil vazio) - se ja tem perfil cadastrado nao mexe, pra
+    # nao tentar duplicar nome (tem UNIQUE em sistemaperfil.nome) num banco que ja esta em uso
+    total = run_query("SELECT count(*) AS total FROM sist_logistica.sistemaperfil")[0]["total"]
+    if total:
+        return
+
+    for perfil in PERFIS_PADRAO:
+        linhas = run_query("""
+            INSERT INTO sist_logistica.sistemaperfil (nome, administrador)
+            VALUES (%s, %s)
+            RETURNING sistemaperfil
+        """, [perfil["nome"], perfil["administrador"]])
+        sistemaperfil = linhas[0]["sistemaperfil"]
+        for pagina in perfil["paginas"]:
+            run_query("""
+                INSERT INTO sist_logistica.sistemaperfilpagina (sistemaperfil, pagina)
+                VALUES (%s, %s)
+            """, [sistemaperfil, pagina])
+
+
+@app.route("/api/configuracao_banco/criar_schema", methods=["POST"])
+def api_criar_schema_sist_logistica():
+    try:
+        run_query("CREATE SCHEMA IF NOT EXISTS sist_logistica")
+        for ddl in TABELAS_SIST_LOGISTICA.values():
+            run_query(ddl)
+        for ddl in INDICES_SIST_LOGISTICA:
+            run_query(ddl)
+        _seed_perfis_padrao()
         return jsonify({"ok": True})
     except Exception as erro:
         return jsonify({"ok": False, "msg": str(erro)}), 500
