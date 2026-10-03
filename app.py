@@ -2158,7 +2158,7 @@ def api_estoque_abastecimento():
             ea.estoqueseguranca AS estoque_seguranca,
             ea.pontoressuprimento AS ponto_ressuprimento,
             CASE
-                WHEN ea.estoqueminimo > 0 THEN ROUND((ea.quantidade * 60) / ea.estoqueminimo, 1)
+                WHEN ea.estoqueminimo > 0 THEN ROUND(ea.quantidade / (ea.estoqueminimo / 60), 1)
                 ELSE NULL
             END AS autonomia_dias
         FROM public.estoquearmazem ea
@@ -2195,6 +2195,23 @@ def api_estoque_abastecimento():
             linha["minimo_ok"] = total_disponivel >= float(linha["estoque_minimo"])
             linha["seguranca_ok"] = total_disponivel >= float(linha["estoque_seguranca"])
             linha["ressuprimento_ok"] = total_disponivel >= float(linha["ponto_ressuprimento"])
+
+        # produto nunca estocado em nenhum armazem (sem linha em estoquearmazem) mas com saldo em
+        # contrato: sem essa linha extra o saldo em contrato nunca apareceria pra esse produto,
+        # mesmo tendo quantidade pra receber
+        if not linhas and float(saldo_contrato) > 0:
+            linhas.append({
+                "nome_armazem": "Sem armazém configurado",
+                "total_estoque": 0,
+                "estoque_minimo": 0,
+                "estoque_seguranca": 0,
+                "ponto_ressuprimento": 0,
+                "autonomia_dias": None,
+                "saldo_contrato": saldo_contrato,
+                "minimo_ok": True,
+                "seguranca_ok": True,
+                "ressuprimento_ok": True,
+            })
 
         return jsonify(linhas)
     except Exception as erro:

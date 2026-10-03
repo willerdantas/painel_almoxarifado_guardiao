@@ -129,7 +129,7 @@
           <td>${linha.sub_grupo ?? ""}</td>
           <td>${linha.apresentacao ?? ""}</td>
           <td>${linha.procedimento_sus ?? ""}</td>
-          <td>${linha.total_estoque ?? ""}</td>
+          <td>${formatarQuantidade(linha.total_estoque)}</td>
           <td>${formatarMoeda(linha.custo_medio)}</td>
           <td>${formatarMoeda(linha.valor_total)}</td>
         </tr>
@@ -341,7 +341,7 @@
           <td>${item.nome_fantasia ?? ""}</td>
           <td>${item.lote ?? ""}</td>
           <td>${item.validade ?? ""}</td>
-          <td>${item.quantidade ?? ""}</td>
+          <td>${formatarQuantidade(item.quantidade)}</td>
           <td>${formatarMoeda(item.custo_medio)}</td>
           <td>${formatarMoeda(item.valor_total)}</td>
         </tr>`
@@ -373,11 +373,11 @@
     // meta zerada = nao configurada, entao nao faz sentido marcar nem check nem alerta
     function marcarSuficiencia(valor, ok) {
       if (!(Number(valor) > 0)) {
-        return `${valor ?? ""}`;
+        return formatarQuantidade(valor);
       }
       const simbolo = ok ? "✓" : "⚠";
       const cor = ok ? "#2e9e44" : "var(--vermelho)";
-      return `${valor ?? ""} <span style="color: ${cor}; font-weight: 700;">${simbolo}</span>`;
+      return `${formatarQuantidade(valor)} <span style="color: ${cor}; font-weight: 700;">${simbolo}</span>`;
     }
 
     function montarTabelaAbastecimento(dados) {
@@ -390,12 +390,12 @@
           (item) => `
         <tr>
           <td>${item.nome_armazem ?? ""}</td>
-          <td>${item.total_estoque ?? ""}</td>
-          <td>${item.saldo_contrato ?? ""}</td>
+          <td>${formatarQuantidade(item.total_estoque)}</td>
+          <td>${formatarQuantidade(item.saldo_contrato)}</td>
           <td>${marcarSuficiencia(item.estoque_minimo, item.minimo_ok)}</td>
           <td>${marcarSuficiencia(item.estoque_seguranca, item.seguranca_ok)}</td>
           <td>${marcarSuficiencia(item.ponto_ressuprimento, item.ressuprimento_ok)}</td>
-          <td>${item.autonomia_dias !== null && item.autonomia_dias !== undefined ? `${item.autonomia_dias} dias` : "—"}</td>
+          <td>${item.autonomia_dias !== null && item.autonomia_dias !== undefined ? `${formatarQuantidade(item.autonomia_dias)} dias` : "—"}</td>
         </tr>`
         )
         .join("");

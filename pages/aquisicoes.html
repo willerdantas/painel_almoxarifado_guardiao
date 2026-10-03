@@ -491,6 +491,7 @@
           <td class="celula-quebra">${item.nome_fantasia ?? ""}</td>
           <td>${formatarQuantidade(item.quantidade_total)}</td>
           <td>${formatarMoeda(item.valor_unitario)}</td>
+          <td>${formatarQuantidade(item.saldo)}</td>
         </tr>`
         )
         .join("");
@@ -511,6 +512,7 @@
                 <th>Nome Fantasia</th>
                 <th>Quantidade Total</th>
                 <th>Valor Unitário</th>
+                <th>Saldo Remanescente</th>
               </tr>
             </thead>
             <tbody>${linhas}</tbody>
