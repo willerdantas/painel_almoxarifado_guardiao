@@ -262,6 +262,9 @@
 
         try {
           const params = new URLSearchParams({ produto: linhaProduto.dataset.produto });
+          if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
+          const armazemFiltro = document.getElementById("filtroArmazem").value;
+          if (armazemFiltro) params.set("armazem", armazemFiltro);
           const resp = await fetch(`/api/estoque_abastecimento?${params.toString()}`);
           const abastecimento = await resp.json();
           trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}">${montarTabelaAbastecimento(abastecimento)}</td>`;
@@ -422,7 +425,7 @@
                 <th>Saldo em Contrato</th>
                 <th>Estoque Mínimo (60d)</th>
                 <th>Estoque de Segurança (90d)</th>
-                <th>Ponto de Ressuprimento (180d)</th>
+                <th>Ponto de Ressuprimento (150d)</th>
                 <th>Autonomia de Estoque</th>
               </tr>
             </thead>

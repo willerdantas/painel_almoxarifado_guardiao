@@ -762,6 +762,12 @@ TIPOMOV_SEPARACAO = 51743657
 TIPOMOV_DISTRIBUICAO = 51743658
 UNIDADE_PADRAO = 62438
 
+# ponto de ressuprimento: em vez de usar a coluna estoquearmazem.pontoressuprimento (parametro
+# antigo, pensado pra 180 dias), calcula a partir do estoqueminimo (que ja representa 60 dias de
+# consumo - estoqueminimo/60 eh o consumo diario implicito) projetado pra 150 dias. "configurado"
+# passa a significar estoqueminimo > 0 (so existe ponto calculado onde tem minimo definido)
+SQL_PONTO_RESSUPRIMENTO_150D = "ROUND(ea.estoqueminimo / 60 * 150, 2)"
+
 # distribuicao nao trava num pedido so por vez feito a separacao - o usuario pode acumular ate 10
 # pedidos reivindicados (em andamento) simultaneamente
 LIMITE_DISTRIBUICAO_USUARIO = 10
@@ -2188,20 +2194,24 @@ def api_estoque_movimentacoes():
 def api_estoque_abastecimento():
     # parametros de abastecimento (minimo, seguranca, ponto de ressuprimento) por armazem - so
     # armazem tipo C (almoxarifado/consumo), mesmo filtro usado no resto da tela de estoque
-    # estoqueminimo = estoque ideal pra 60 dias, estoqueseguranca pra 90, pontoressuprimento pra
-    # 180 - (estoqueminimo/60) eh o consumo diario implicito, autonomia_dias = quanto tempo o
-    # estoque atual aguenta nesse ritmo
+    # estoqueminimo = estoque ideal pra 60 dias, estoqueseguranca pra 90, ponto de ressuprimento
+    # calculado pra 150 (ver SQL_PONTO_RESSUPRIMENTO_150D) - autonomia_dias = quanto tempo o
+    # estoque atual aguenta no ritmo implicito do estoqueminimo
     produto = request.args.get("produto")
     if not produto:
         return jsonify([])
 
-    sql = """
+    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    armazem = request.args.get("armazem")
+    filtro_armazem, params_armazem = _fragmento_filtro_armazem("arm.armazem", usuario_logado, armazem)
+
+    sql = f"""
         SELECT
             COALESCE(pes.nome, arm.sigla) AS nome_armazem,
             ea.quantidade AS total_estoque,
             ea.estoqueminimo AS estoque_minimo,
             ea.estoqueseguranca AS estoque_seguranca,
-            ea.pontoressuprimento AS ponto_ressuprimento,
+            CASE WHEN ea.estoqueminimo > 0 THEN {SQL_PONTO_RESSUPRIMENTO_150D} ELSE 0 END AS ponto_ressuprimento,
             CASE
                 WHEN ea.estoqueminimo > 0 THEN ROUND(ea.quantidade / (ea.estoqueminimo / 60), 1)
                 ELSE NULL
@@ -2209,7 +2219,7 @@ def api_estoque_abastecimento():
         FROM public.estoquearmazem ea
         JOIN public.armazem arm ON arm.armazem = ea.armazem
         LEFT JOIN public.pessoa pes ON pes.pessoa = arm.pessoa
-        WHERE ea.produto = %s AND arm.tipoarmazem = 'C'
+        WHERE ea.produto = %s AND arm.tipoarmazem = 'C' {filtro_armazem}
         ORDER BY nome_armazem
     """
     # saldo em contrato = quanto ainda falta entregar (quantidade - quantidadeentregue) somado de
@@ -2231,7 +2241,7 @@ def api_estoque_abastecimento():
         )
     """
     try:
-        linhas = run_query(sql, [produto])
+        linhas = run_query(sql, [produto] + params_armazem)
         saldo_contrato = run_query(sql_saldo_contrato, [produto])[0]["saldo_contrato"]
 
         for linha in linhas:
@@ -2317,8 +2327,8 @@ def api_aquisicoes():
             WHERE ea.produto = p.produto
             AND arm_ea.tipoarmazem = 'C'
             {filtro_armazem_ea}
-            AND ea.pontoressuprimento > 0
-            AND (ea.quantidade + COALESCE(sp.saldo, 0)) < ea.pontoressuprimento
+            AND ea.estoqueminimo > 0
+            AND (ea.quantidade + COALESCE(sp.saldo, 0)) < {SQL_PONTO_RESSUPRIMENTO_150D}
         )
     """)
 
@@ -2995,15 +3005,15 @@ ARMAZENS_COBERTURA_PONTO_RESSUPRIMENTO = [74714, 194597, 49083881, 228756, 74712
 @app.route("/api/dashboard_ponto_ressuprimento")
 def api_dashboard_ponto_ressuprimento():
     # por armazem (lista fixa definida em ARMAZENS_COBERTURA_PONTO_RESSUPRIMENTO): dos itens
-    # que tem estoque (quantidade > 0), quantos tem ponto de ressuprimento configurado (> 0)
-    # e quantos nao tem (= 0 ou nulo) - parametro vem de estoquearmazem, a mesma tabela usada
-    # em /api/estoque_abastecimento
+    # que tem estoque (quantidade > 0), quantos tem ponto de ressuprimento configurado (hoje isso
+    # significa estoqueminimo > 0, ja que o ponto em si vira calculado a partir dele - ver
+    # SQL_PONTO_RESSUPRIMENTO_150D) e quantos nao tem
     sql = """
         SELECT
             COALESCE(pes.nome, arm.sigla) AS nome_armazem,
             count(*) FILTER (WHERE ea.quantidade > 0) AS total_itens,
-            count(*) FILTER (WHERE ea.quantidade > 0 AND COALESCE(ea.pontoressuprimento, 0) = 0) AS sem_ponto,
-            count(*) FILTER (WHERE ea.quantidade > 0 AND COALESCE(ea.pontoressuprimento, 0) > 0) AS com_ponto
+            count(*) FILTER (WHERE ea.quantidade > 0 AND COALESCE(ea.estoqueminimo, 0) = 0) AS sem_ponto,
+            count(*) FILTER (WHERE ea.quantidade > 0 AND COALESCE(ea.estoqueminimo, 0) > 0) AS com_ponto
         FROM public.armazem arm
         LEFT JOIN public.estoquearmazem ea ON ea.armazem = arm.armazem
         LEFT JOIN public.pessoa pes ON pes.pessoa = arm.pessoa
@@ -3030,7 +3040,7 @@ def api_dashboard_itens_ponto_ressuprimento():
     # a tela mostra so 10 de cada vez e rola sozinha pelo resto. armazem (opcional) restringe a um
     # unico armazem pelo nome - usado no gauge do almoxarifado central
     armazem = request.args.get("armazem")
-    condicoes = ["arm.tipoarmazem = 'C'", "ea.pontoressuprimento > 0", "ea.quantidade <= ea.pontoressuprimento"]
+    condicoes = ["arm.tipoarmazem = 'C'", "ea.estoqueminimo > 0", f"ea.quantidade <= {SQL_PONTO_RESSUPRIMENTO_150D}"]
     params = []
     if armazem:
         condicoes.append("pes_arm.nome = %s")
@@ -3042,7 +3052,7 @@ def api_dashboard_itens_ponto_ressuprimento():
             p.nome AS nome_produto,
             COALESCE(pes_arm.nome, arm.sigla) AS nome_armazem,
             ea.quantidade AS quantidade_atual,
-            ea.pontoressuprimento AS ponto_ressuprimento,
+            {SQL_PONTO_RESSUPRIMENTO_150D} AS ponto_ressuprimento,
             to_char(ea._update, 'DD/MM/YY') AS data
         FROM public.estoquearmazem ea
         JOIN public.armazem arm ON arm.armazem = ea.armazem
@@ -3061,10 +3071,10 @@ def api_dashboard_gauge_ponto_ressuprimento():
     # estoque suficiente (acima do ponto) - meta fixa de 80%. um gauge por armazem tipo C (ver
     # /api/armazens pra lista completa), armazem default fica o almoxarifado central
     nome_armazem = request.args.get("armazem") or "ALMOXARIFADO CENTRAL"
-    sql = """
+    sql = f"""
         SELECT
-            count(*) FILTER (WHERE ea.pontoressuprimento > 0) AS total_com_ponto,
-            count(*) FILTER (WHERE ea.pontoressuprimento > 0 AND ea.quantidade > ea.pontoressuprimento) AS suficientes
+            count(*) FILTER (WHERE ea.estoqueminimo > 0) AS total_com_ponto,
+            count(*) FILTER (WHERE ea.estoqueminimo > 0 AND ea.quantidade > {SQL_PONTO_RESSUPRIMENTO_150D}) AS suficientes
         FROM public.estoquearmazem ea
         JOIN public.armazem arm ON arm.armazem = ea.armazem
         LEFT JOIN public.pessoa pes ON pes.pessoa = arm.pessoa
