@@ -56,6 +56,13 @@
             <div class="sugestoes" id="sugestoesSubgrupo"></div>
           </div>
 
+          <div class="campo-filtro campo-curto oculto" id="blocoFiltroArmazem">
+            <label for="filtroArmazem">Armazém</label>
+            <select id="filtroArmazem">
+              <option value="">Todos</option>
+            </select>
+          </div>
+
           <div class="campo-filtro campo-acao">
             <div class="grupo-botoes-filtro">
               <button type="submit" class="botao-filtrar">Filtrar</button>
@@ -95,6 +102,7 @@
       const nomeProduto = document.getElementById("filtroNomeProduto").value.trim();
       const lote = document.getElementById("filtroLote").value.trim();
       const subgrupo = document.getElementById("filtroSubgrupo").value.trim();
+      const armazem = document.getElementById("filtroArmazem").value;
 
       if (codSeplag) params.set("cod_seplag", codSeplag);
       if (codAlmox) params.set("cod_almox", codAlmox);
@@ -102,10 +110,13 @@
       if (nomeProduto) params.set("nome_produto", nomeProduto);
       if (lote) params.set("lote", lote);
       if (subgrupo) params.set("subgrupo", subgrupo);
+      if (armazem) params.set("armazem", armazem);
       if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
 
       return params;
     }
+
+    iniciarFiltroArmazemCondicional("filtroArmazem", "blocoFiltroArmazem");
 
     const NUMERO_COLUNAS = 11;
 
@@ -512,7 +523,7 @@
                 <th>Nome Fantasia</th>
                 <th>Quantidade Total</th>
                 <th>Valor Unitário</th>
-                <th>Saldo Remanescente</th>
+                <th>Quantidade Remanescente</th>
               </tr>
             </thead>
             <tbody>${linhas}</tbody>

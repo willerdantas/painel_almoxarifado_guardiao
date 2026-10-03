@@ -708,6 +708,47 @@ def _usuario_para_filtro_armazem(usuario_logado):
     return usuario_logado
 
 
+def _fragmento_filtro_armazem(alias_coluna, usuario_logado, armazem_nome):
+    # monta "AND coluna IN (...)" pros dois filtros de armazem que convivem nessas telas: o
+    # implicito do usuario logado (SQL_ARMAZENS_DO_USUARIO) e a selecao manual no campo Armazém
+    # (so aparece pra administrador ou usuario com mais de um armazem - ver /api/usuario_armazens)
+    fragmentos = []
+    params = []
+    if usuario_logado:
+        fragmentos.append(f"{alias_coluna} IN ({SQL_ARMAZENS_DO_USUARIO})")
+        params.append(usuario_logado)
+    if armazem_nome:
+        fragmentos.append(f"""{alias_coluna} IN (
+            SELECT arm_filtro.armazem FROM public.armazem arm_filtro
+            JOIN public.pessoa pes_filtro ON pes_filtro.pessoa = arm_filtro.pessoa
+            WHERE pes_filtro.nome = %s
+        )""")
+        params.append(armazem_nome)
+    fragmento = ("AND " + " AND ".join(fragmentos)) if fragmentos else ""
+    return fragmento, params
+
+
+@app.route("/api/usuario_armazens")
+def api_usuario_armazens():
+    # armazens que o usuario logado tem em armazemfunc - usado pra decidir se mostra o campo de
+    # filtro de armazem (administrador ou mais de um armazem) e pra popular as opcoes dele
+    usuario_logado = request.args.get("usuario_logado")
+    if not usuario_logado:
+        return jsonify([])
+
+    sql = """
+        SELECT DISTINCT pes_arm.nome
+        FROM public.usuario u
+        JOIN public.funcionario f ON f.funcionario = u.funcionario
+        JOIN public.armazemfunc af ON af.funcionario = f.funcionario
+        JOIN public.armazem arm ON arm.armazem = af.armazem
+        JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
+        WHERE u.identificacao = %s
+        ORDER BY pes_arm.nome
+    """
+    return _consulta_generica(sql, [usuario_logado])
+
+
 def _resolver_usuario_id(identificacao):
     # identificacao (login) -> usuario.usuario (id numerico), usado nos inserts de armazemmovimentacao
     if not identificacao:
@@ -1500,6 +1541,7 @@ def api_produtos():
     nome_produto = request.args.get("nome_produto")
     lote = request.args.get("lote")
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    armazem = request.args.get("armazem")
     try:
         pagina = max(int(request.args.get("pagina", 1)), 1)
     except ValueError:
@@ -1525,15 +1567,14 @@ def api_produtos():
             "EXISTS (SELECT 1 FROM public.lote lt WHERE lt.produto = p.produto AND lt.lotefornecedor ILIKE %s)"
         )
         params.append(f"%{lote}%")
-    if usuario_logado:
-        condicoes.append(
-            f"""EXISTS (
-                SELECT 1 FROM public.lote lt2
-                JOIN public.estoque e2 ON e2.lote = lt2.lote
-                WHERE lt2.produto = p.produto AND e2.armazem IN ({SQL_ARMAZENS_DO_USUARIO})
-            )"""
-        )
-        params.append(usuario_logado)
+    if usuario_logado or armazem:
+        fragmento_armazem, params_armazem = _fragmento_filtro_armazem("e2.armazem", usuario_logado, armazem)
+        condicoes.append(f"""EXISTS (
+            SELECT 1 FROM public.lote lt2
+            JOIN public.estoque e2 ON e2.lote = lt2.lote
+            WHERE lt2.produto = p.produto {fragmento_armazem}
+        )""")
+        params.extend(params_armazem)
 
     where = f"WHERE {' AND '.join(condicoes)}" if condicoes else ""
 
@@ -1662,6 +1703,7 @@ def api_vencidos():
     nome_produto = request.args.get("nome_produto")
     lote = request.args.get("lote")
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    armazem = request.args.get("armazem")
     try:
         pagina = max(int(request.args.get("pagina", 1)), 1)
     except ValueError:
@@ -1690,10 +1732,11 @@ def api_vencidos():
 
     where = f"WHERE {' AND '.join(condicoes)}" if condicoes else ""
 
-    # filtro de armazem do usuario logado vem antes na string SQL (dentro da subquery), entao o
-    # parametro dele precisa ir antes dos outros na lista - por isso um params_completo separado
-    filtro_armazem_usuario = f"AND e.armazem IN ({SQL_ARMAZENS_DO_USUARIO})" if usuario_logado else ""
-    params_completo = ([usuario_logado] if usuario_logado else []) + params
+    # filtro de armazem (usuario logado e/ou selecao manual) vem antes na string SQL (dentro da
+    # subquery), entao os parametros dele precisam ir antes dos outros na lista - por isso um
+    # params_completo separado
+    filtro_armazem_usuario, params_armazem = _fragmento_filtro_armazem("e.armazem", usuario_logado, armazem)
+    params_completo = params_armazem + params
 
     base_from = f"""
         FROM public.produto p
@@ -1809,6 +1852,7 @@ def api_estoque():
     lote = request.args.get("lote")
     subgrupo = request.args.get("subgrupo")
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    armazem = request.args.get("armazem")
     try:
         pagina = max(int(request.args.get("pagina", 1)), 1)
     except ValueError:
@@ -1840,10 +1884,11 @@ def api_estoque():
 
     where = f"WHERE {' AND '.join(condicoes)}" if condicoes else ""
 
-    # filtro de armazem do usuario logado vem antes na string SQL (dentro da subquery), entao o
-    # parametro dele precisa ir antes dos outros na lista - por isso um params_completo separado
-    filtro_armazem_usuario = f"AND e.armazem IN ({SQL_ARMAZENS_DO_USUARIO})" if usuario_logado else ""
-    params_completo = ([usuario_logado] if usuario_logado else []) + params
+    # filtro de armazem (usuario logado e/ou selecao manual) vem antes na string SQL (dentro da
+    # subquery), entao os parametros dele precisam ir antes dos outros na lista - por isso um
+    # params_completo separado
+    filtro_armazem_usuario, params_armazem = _fragmento_filtro_armazem("e.armazem", usuario_logado, armazem)
+    params_completo = params_armazem + params
 
     base_from = f"""
         FROM public.produto p
@@ -2231,6 +2276,7 @@ def api_aquisicoes():
     lote = request.args.get("lote")
     subgrupo = request.args.get("subgrupo")
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    armazem = request.args.get("armazem")
     try:
         pagina = max(int(request.args.get("pagina", 1)), 1)
     except ValueError:
@@ -2261,7 +2307,7 @@ def api_aquisicoes():
         params.append(f"%{subgrupo}%")
 
     # ponto de ressuprimento insuficiente, restrito aos mesmos armazens que o usuario enxerga
-    filtro_armazem_ea = f"AND arm_ea.armazem IN ({SQL_ARMAZENS_DO_USUARIO})" if usuario_logado else ""
+    filtro_armazem_ea, params_armazem_ea = _fragmento_filtro_armazem("arm_ea.armazem", usuario_logado, armazem)
     condicoes.append(f"""
         EXISTS (
             SELECT 1
@@ -2278,12 +2324,12 @@ def api_aquisicoes():
 
     where = f"WHERE {' AND '.join(condicoes)}"
 
-    # filtro de armazem do usuario logado vem antes na string SQL (dentro da subquery), entao o
-    # parametro dele precisa ir antes dos outros na lista - por isso um params_completo separado.
-    # o parametro do filtro de armazem da condicao de ressuprimento vem DEPOIS dos filtros comuns
-    # (ela fica por ultimo em condicoes), entao o parametro dela vai no final
-    filtro_armazem_usuario = f"AND e.armazem IN ({SQL_ARMAZENS_DO_USUARIO})" if usuario_logado else ""
-    params_completo = ([usuario_logado] if usuario_logado else []) + params + ([usuario_logado] if usuario_logado else [])
+    # filtro de armazem (usuario logado e/ou selecao manual) vem antes na string SQL (dentro da
+    # subquery), entao os parametros dele precisam ir antes dos outros na lista - por isso um
+    # params_completo separado. o filtro de armazem da condicao de ressuprimento vem DEPOIS dos
+    # filtros comuns (ela fica por ultimo em condicoes), entao os parametros dela vao no final
+    filtro_armazem_usuario, params_armazem_usuario = _fragmento_filtro_armazem("e.armazem", usuario_logado, armazem)
+    params_completo = params_armazem_usuario + params + params_armazem_ea
 
     base_from = f"""
         FROM public.produto p

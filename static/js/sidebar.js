@@ -180,3 +180,35 @@ async function preencherSelect(endpoint, selectId, campo = "nome") {
     console.error(`Erro ao carregar ${endpoint}:`, erro);
   }
 }
+
+// campo de filtro de armazem (produtos/estoque/vencidos/aquisicoes) - so aparece pra
+// administrador (enxerga todos os armazens) ou usuario com mais de um armazem em armazemfunc
+// (pra quem tem so um, o filtro nao faria diferenca - ja esta implicito em usuario_logado)
+async function iniciarFiltroArmazemCondicional(selectId, blocoId) {
+  const administrador = localStorage.getItem("administrador") === "true";
+  const bloco = document.getElementById(blocoId);
+  const select = document.getElementById(selectId);
+
+  try {
+    let armazens = [];
+    if (administrador) {
+      const resp = await fetch("/api/armazens");
+      armazens = await resp.json();
+    } else if (identificacaoLogada()) {
+      const resp = await fetch(`/api/usuario_armazens?usuario_logado=${encodeURIComponent(identificacaoLogada())}`);
+      armazens = await resp.json();
+    }
+
+    if (!administrador && armazens.length <= 1) return;
+
+    armazens.forEach((item) => {
+      const opcao = document.createElement("option");
+      opcao.value = item.nome;
+      opcao.textContent = item.nome;
+      select.appendChild(opcao);
+    });
+    bloco.classList.remove("oculto");
+  } catch (erro) {
+    console.error("Erro ao carregar armazéns do filtro:", erro);
+  }
+}
