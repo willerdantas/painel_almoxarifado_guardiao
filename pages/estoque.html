@@ -76,6 +76,9 @@
         <div class="secao-cabecalho">
           <h2>Produtos</h2>
           <span class="contador-secao" id="contadorProdutos">0</span>
+          <span class="contador-secundario" id="contadorCodSeplag">Cód. Seplag: 0 (0,00%)</span>
+          <span class="contador-secundario" id="contadorCodAlmox">Cód. Almox: 0 (0,00%)</span>
+          <span class="contador-secundario" id="contadorProcedimentoSus">Procedimento SUS: 0 (0,00%)</span>
         </div>
         <div id="areaProdutos">
           <p class="msg-vazio">Carregando dado, aguenta ai...</p>
@@ -120,8 +123,18 @@
 
     const NUMERO_COLUNAS = 11;
 
+    // coluna Procedimento SUS so faz sentido pra quem olha o almoxarifado principal (ou "Todos",
+    // que inclui ele) - nos outros armazens fica escondida (continua no DOM pra nao desalinhar o
+    // colspan das linhas de acao, so entra como display:none)
+    function deveExibirProcedimentoSus() {
+      const armazem = document.getElementById("filtroArmazem")?.value || "";
+      return !armazem || armazem === "ALMOXARIFADO DE MATERIAL E TECNOLOGIA HOSPITALAR";
+    }
+
     function renderizarProdutos(dados) {
       const container = document.getElementById("areaProdutos");
+      const estiloProcedimentoSus = deveExibirProcedimentoSus() ? "" : ' style="display:none"';
+      document.getElementById("contadorProcedimentoSus").style.display = deveExibirProcedimentoSus() ? "" : "none";
 
       if (!Array.isArray(dados) || dados.length === 0) {
         container.innerHTML = '<p class="msg-vazio">Nenhum produto com estoque encontrado, homem.</p>';
@@ -139,7 +152,7 @@
           <td>${linha.classe ?? ""}</td>
           <td>${linha.sub_grupo ?? ""}</td>
           <td>${linha.apresentacao ?? ""}</td>
-          <td>${linha.procedimento_sus ?? ""}</td>
+          <td${estiloProcedimentoSus}>${linha.procedimento_sus ?? ""}</td>
           <td>${formatarQuantidade(linha.total_estoque)}</td>
           <td>${formatarMoeda(linha.custo_medio)}</td>
           <td>${formatarMoeda(linha.valor_total)}</td>
@@ -169,7 +182,7 @@
               <th>Classe</th>
               <th>Sub Grupo</th>
               <th>Apresentação</th>
-              <th>Procedimento SUS</th>
+              <th${estiloProcedimentoSus}>Procedimento SUS</th>
               <th>Total em Estoque</th>
               <th>Custo Médio</th>
               <th>Valor Total</th>
@@ -546,6 +559,17 @@
       });
     }
 
+    // badge "Cód. X: quantidade (percentual%)" - percentual sempre em relacao ao total JA
+    // filtrado (resultado.total), nao ao total geral da base
+    function atualizarContadorSecundario(elementoId, rotulo, quantidade, total) {
+      const qtd = Number(quantidade) || 0;
+      const totalNum = Number(total) || 0;
+      const percentual = totalNum > 0
+        ? ((qtd / totalNum) * 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        : "0,00";
+      document.getElementById(elementoId).textContent = `${rotulo}: ${formatarQuantidade(qtd)} (${percentual}%)`;
+    }
+
     async function buscarProdutos(pagina) {
       paginaAtual = pagina;
       const params = montarQueryFiltros();
@@ -559,6 +583,9 @@
         const resultado = await resp.json();
 
         document.getElementById("contadorProdutos").textContent = resultado.total ?? 0;
+        atualizarContadorSecundario("contadorCodSeplag", "Cód. Seplag", resultado.total_cod_seplag, resultado.total);
+        atualizarContadorSecundario("contadorCodAlmox", "Cód. Almox", resultado.total_cod_almox, resultado.total);
+        atualizarContadorSecundario("contadorProcedimentoSus", "Procedimento SUS", resultado.total_procedimento_sus, resultado.total);
         renderizarProdutos(resultado.dados);
         renderizarPaginacao(resultado.total ?? 0, resultado.pagina ?? pagina, resultado.tamanho_pagina ?? 10);
       } catch (erro) {

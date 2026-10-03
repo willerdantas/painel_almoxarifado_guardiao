@@ -50,6 +50,12 @@
             <input type="text" id="filtroLote" placeholder="Ex.: 2026A01" />
           </div>
 
+          <div class="campo-filtro campo-autocompletar campo-curto">
+            <label for="filtroProcedimentoSus">Procedimento SUS</label>
+            <input type="text" id="filtroProcedimentoSus" placeholder="Ex.: 3" autocomplete="off" />
+            <div class="sugestoes" id="sugestoesProcedimentoSus"></div>
+          </div>
+
           <div class="campo-filtro campo-curto oculto" id="blocoFiltroArmazem">
             <label for="filtroArmazem">Armazém</label>
             <select id="filtroArmazem">
@@ -70,6 +76,9 @@
         <div class="secao-cabecalho">
           <h2>Produtos</h2>
           <span class="contador-secao" id="contadorProdutos">0</span>
+          <span class="contador-secundario" id="contadorCodSeplag">Cód. Seplag: 0 (0%)</span>
+          <span class="contador-secundario" id="contadorCodAlmox">Cód. Almox: 0 (0%)</span>
+          <span class="contador-secundario" id="contadorProcedimentoSus">Procedimento SUS: 0 (0%)</span>
         </div>
         <div id="areaProdutos">
           <p class="msg-vazio">Carregando dado, aguenta ai...</p>
@@ -95,6 +104,7 @@
       const codProduto = document.getElementById("filtroCodProduto").value.trim();
       const nomeProduto = document.getElementById("filtroNomeProduto").value.trim();
       const lote = document.getElementById("filtroLote").value.trim();
+      const procedimentoSus = document.getElementById("filtroProcedimentoSus").value.trim();
       const armazem = document.getElementById("filtroArmazem").value;
 
       if (codSeplag) params.set("cod_seplag", codSeplag);
@@ -102,6 +112,7 @@
       if (codProduto) params.set("cod_produto", codProduto);
       if (nomeProduto) params.set("nome_produto", nomeProduto);
       if (lote) params.set("lote", lote);
+      if (procedimentoSus) params.set("procedimento_sus", procedimentoSus);
       if (armazem) params.set("armazem", armazem);
       if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
 
@@ -339,6 +350,15 @@
       });
     }
 
+    // badge "Cód. X: quantidade (percentual%)" - percentual sempre em relacao ao total JA
+    // filtrado (resultado.total), nao ao total geral da base
+    function atualizarContadorSecundario(elementoId, rotulo, quantidade, total) {
+      const qtd = Number(quantidade) || 0;
+      const totalNum = Number(total) || 0;
+      const percentual = totalNum > 0 ? ((qtd / totalNum) * 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0,00";
+      document.getElementById(elementoId).textContent = `${rotulo}: ${formatarQuantidade(qtd)} (${percentual}%)`;
+    }
+
     async function buscarProdutos(pagina) {
       paginaAtual = pagina;
       const params = montarQueryFiltros();
@@ -352,6 +372,9 @@
         const resultado = await resp.json();
 
         document.getElementById("contadorProdutos").textContent = resultado.total ?? 0;
+        atualizarContadorSecundario("contadorCodSeplag", "Cód. Seplag", resultado.total_cod_seplag, resultado.total);
+        atualizarContadorSecundario("contadorCodAlmox", "Cód. Almox", resultado.total_cod_almox, resultado.total);
+        atualizarContadorSecundario("contadorProcedimentoSus", "Procedimento SUS", resultado.total_procedimento_sus, resultado.total);
         renderizarProdutos(resultado.dados);
         renderizarPaginacao(resultado.total ?? 0, resultado.pagina ?? pagina, resultado.tamanho_pagina ?? 20);
       } catch (erro) {
@@ -421,8 +444,59 @@
       temporizadorSugestao = setTimeout(() => buscarSugestoes(termo), 250);
     });
 
+    const campoProcedimentoSus = document.getElementById("filtroProcedimentoSus");
+    const caixaSugestoesProcedimentoSus = document.getElementById("sugestoesProcedimentoSus");
+    let temporizadorSugestaoProcedimento = null;
+
+    function esconderSugestoesProcedimento() {
+      caixaSugestoesProcedimentoSus.innerHTML = "";
+      caixaSugestoesProcedimentoSus.classList.remove("aberto");
+    }
+
+    async function buscarSugestoesProcedimento(termo) {
+      try {
+        const resp = await fetch(`/api/procedimentos_sus_sugestoes?termo=${encodeURIComponent(termo)}`);
+        const dados = await resp.json();
+
+        if (!Array.isArray(dados) || dados.length === 0) {
+          esconderSugestoesProcedimento();
+          return;
+        }
+
+        caixaSugestoesProcedimentoSus.innerHTML = dados
+          .map((item) => `<div class="item-sugestao" data-valor="${item.procedimento_sus}">${item.procedimento_sus}</div>`)
+          .join("");
+        caixaSugestoesProcedimentoSus.classList.add("aberto");
+
+        caixaSugestoesProcedimentoSus.querySelectorAll(".item-sugestao").forEach((item) => {
+          item.addEventListener("click", () => {
+            campoProcedimentoSus.value = item.dataset.valor;
+            esconderSugestoesProcedimento();
+            buscarProdutos(1);
+          });
+        });
+      } catch (erro) {
+        esconderSugestoesProcedimento();
+      }
+    }
+
+    campoProcedimentoSus.addEventListener("input", () => {
+      const termo = campoProcedimentoSus.value.trim();
+      clearTimeout(temporizadorSugestaoProcedimento);
+
+      if (!termo) {
+        esconderSugestoesProcedimento();
+        return;
+      }
+
+      temporizadorSugestaoProcedimento = setTimeout(() => buscarSugestoesProcedimento(termo), 250);
+    });
+
     document.addEventListener("click", (ev) => {
-      if (!ev.target.closest(".campo-autocompletar")) esconderSugestoes();
+      if (!ev.target.closest(".campo-autocompletar")) {
+        esconderSugestoes();
+        esconderSugestoesProcedimento();
+      }
     });
 
     buscarProdutos(1);

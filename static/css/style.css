@@ -611,6 +611,18 @@ body {
   line-height: 1.6;
 }
 
+/* badges secundarios ao lado do contador principal (ex.: quantos produtos tem cod seplag/almox
+   preenchido, dentro do total ja filtrado) */
+.contador-secundario {
+  background: var(--cinza-claro);
+  color: var(--azul-escuro);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 999px;
+  line-height: 1.6;
+}
+
 .area-rolavel {
   max-height: 320px;
   overflow-y: auto;

@@ -1519,6 +1519,24 @@ def api_subgrupos_sugestoes():
     return _consulta_generica(sql, [f"%{termo}%"])
 
 
+@app.route("/api/procedimentos_sus_sugestoes")
+def api_procedimentos_sus_sugestoes():
+    # nome vai digitando, essa rota devolve so um punhado pra lista de sugestao - valor vem direto
+    # de produto.referenciasus (sem tabela propria), por isso o trim (vem com espaco de preenchimento)
+    termo = request.args.get("termo", "").strip()
+    if not termo:
+        return jsonify([])
+
+    sql = """
+        SELECT DISTINCT trim(referenciasus) AS procedimento_sus
+        FROM public.produto
+        WHERE referenciasus ILIKE %s AND trim(referenciasus) <> ''
+        ORDER BY procedimento_sus
+        LIMIT 10
+    """
+    return _consulta_generica(sql, [f"%{termo}%"])
+
+
 @app.route("/api/fornecedores_sugestoes")
 def api_fornecedores_sugestoes():
     # nome vai digitando, essa rota devolve so um punhado pra lista de sugestao
@@ -1546,6 +1564,7 @@ def api_produtos():
     cod_produto = request.args.get("cod_produto")
     nome_produto = request.args.get("nome_produto")
     lote = request.args.get("lote")
+    procedimento_sus = request.args.get("procedimento_sus")
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
     armazem = request.args.get("armazem")
     try:
@@ -1573,6 +1592,9 @@ def api_produtos():
             "EXISTS (SELECT 1 FROM public.lote lt WHERE lt.produto = p.produto AND lt.lotefornecedor ILIKE %s)"
         )
         params.append(f"%{lote}%")
+    if procedimento_sus:
+        condicoes.append("p.referenciasus ILIKE %s")
+        params.append(f"%{procedimento_sus}%")
     if usuario_logado or armazem:
         fragmento_armazem, params_armazem = _fragmento_filtro_armazem("e2.armazem", usuario_logado, armazem)
         condicoes.append(f"""EXISTS (
@@ -1596,7 +1618,16 @@ def api_produtos():
     offset = (pagina - 1) * tamanho_pagina
 
     try:
-        total = run_query(f"SELECT count(*) AS total {base_from}", params)[0]["total"]
+        sql_contagens = f"""
+            SELECT
+                count(*) AS total,
+                count(*) FILTER (WHERE COALESCE(TRIM(p.codigoreferencia), '') <> '') AS total_cod_seplag,
+                count(*) FILTER (WHERE COALESCE(TRIM(p.codigo), '') <> '') AS total_cod_almox,
+                count(*) FILTER (WHERE COALESCE(TRIM(p.referenciasus), '') <> '') AS total_procedimento_sus
+            {base_from}
+        """
+        contagens = run_query(sql_contagens, params)[0]
+        total = contagens["total"]
 
         sql_dados = f"""
             SELECT
@@ -1617,6 +1648,9 @@ def api_produtos():
             {
                 "dados": dados,
                 "total": total,
+                "total_cod_seplag": contagens["total_cod_seplag"],
+                "total_cod_almox": contagens["total_cod_almox"],
+                "total_procedimento_sus": contagens["total_procedimento_sus"],
                 "pagina": pagina,
                 "tamanho_pagina": tamanho_pagina,
             }
@@ -1941,6 +1975,9 @@ def api_estoque():
             )
             SELECT
                 (SELECT count(*) FROM filtrado) AS total_geral,
+                (SELECT count(*) FILTER (WHERE COALESCE(TRIM(cod_seplag), '') <> '') FROM filtrado) AS total_cod_seplag,
+                (SELECT count(*) FILTER (WHERE COALESCE(TRIM(cod_almox), '') <> '') FROM filtrado) AS total_cod_almox,
+                (SELECT count(*) FILTER (WHERE COALESCE(TRIM(procedimento_sus), '') <> '') FROM filtrado) AS total_procedimento_sus,
                 COALESCE((
                     SELECT json_agg(pagina.* ORDER BY pagina.cod_produto)
                     FROM (SELECT * FROM filtrado ORDER BY cod_produto LIMIT %s OFFSET %s) pagina
@@ -1951,6 +1988,9 @@ def api_estoque():
             {
                 "dados": resultado["dados_json"],
                 "total": resultado["total_geral"],
+                "total_cod_seplag": resultado["total_cod_seplag"],
+                "total_cod_almox": resultado["total_cod_almox"],
+                "total_procedimento_sus": resultado["total_procedimento_sus"],
                 "pagina": pagina,
                 "tamanho_pagina": tamanho_pagina,
             }

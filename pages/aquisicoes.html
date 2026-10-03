@@ -120,8 +120,17 @@
 
     const NUMERO_COLUNAS = 11;
 
+    // coluna Procedimento SUS so faz sentido pra quem olha o almoxarifado principal (ou "Todos",
+    // que inclui ele) - nos outros armazens fica escondida (continua no DOM pra nao desalinhar o
+    // colspan das linhas de acao, so entra como display:none)
+    function deveExibirProcedimentoSus() {
+      const armazem = document.getElementById("filtroArmazem")?.value || "";
+      return !armazem || armazem === "ALMOXARIFADO DE MATERIAL E TECNOLOGIA HOSPITALAR";
+    }
+
     function renderizarProdutos(dados) {
       const container = document.getElementById("areaProdutos");
+      const estiloProcedimentoSus = deveExibirProcedimentoSus() ? "" : ' style="display:none"';
 
       if (!Array.isArray(dados) || dados.length === 0) {
         container.innerHTML = '<p class="msg-vazio">Nenhum produto com ponto de ressuprimento insuficiente encontrado, homem.</p>';
@@ -139,7 +148,7 @@
           <td>${linha.classe ?? ""}</td>
           <td>${linha.sub_grupo ?? ""}</td>
           <td>${linha.apresentacao ?? ""}</td>
-          <td>${linha.procedimento_sus ?? ""}</td>
+          <td${estiloProcedimentoSus}>${linha.procedimento_sus ?? ""}</td>
           <td>${formatarQuantidade(linha.total_estoque)}</td>
           <td>${formatarMoeda(linha.custo_medio)}</td>
           <td>${formatarMoeda(linha.valor_total)}</td>
@@ -169,7 +178,7 @@
               <th>Classe</th>
               <th>Sub Grupo</th>
               <th>Apresentação</th>
-              <th>Procedimento SUS</th>
+              <th${estiloProcedimentoSus}>Procedimento SUS</th>
               <th>Total em Estoque</th>
               <th>Custo Médio</th>
               <th>Valor Total</th>

@@ -110,8 +110,17 @@
 
     iniciarFiltroArmazemCondicional("filtroArmazem", "blocoFiltroArmazem");
 
+    // coluna Procedimento SUS so faz sentido pra quem olha o almoxarifado principal (ou "Todos",
+    // que inclui ele) - nos outros armazens fica escondida (continua no DOM pra nao desalinhar o
+    // colspan da linha de lotes, que conta linha.children.length)
+    function deveExibirProcedimentoSus() {
+      const armazem = document.getElementById("filtroArmazem")?.value || "";
+      return !armazem || armazem === "ALMOXARIFADO DE MATERIAL E TECNOLOGIA HOSPITALAR";
+    }
+
     function renderizarProdutos(dados) {
       const container = document.getElementById("areaProdutos");
+      const estiloProcedimentoSus = deveExibirProcedimentoSus() ? "" : ' style="display:none"';
 
       if (!Array.isArray(dados) || dados.length === 0) {
         container.innerHTML = '<p class="msg-vazio">Nenhum produto vencido encontrado, homem.</p>';
@@ -129,7 +138,7 @@
           <td>${linha.classe ?? ""}</td>
           <td>${linha.sub_grupo ?? ""}</td>
           <td>${linha.apresentacao ?? ""}</td>
-          <td>${linha.procedimento_sus ?? ""}</td>
+          <td${estiloProcedimentoSus}>${linha.procedimento_sus ?? ""}</td>
           <td>${linha.total_estoque ?? ""}</td>
         </tr>`
         )
@@ -146,7 +155,7 @@
               <th>Classe</th>
               <th>Sub Grupo</th>
               <th>Apresentação</th>
-              <th>Procedimento SUS</th>
+              <th${estiloProcedimentoSus}>Procedimento SUS</th>
               <th>Total Vencido</th>
             </tr>
           </thead>
