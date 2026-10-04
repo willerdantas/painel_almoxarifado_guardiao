@@ -47,14 +47,9 @@ body {
   text-align: center;
 }
 
-.caixa-login .logo-in {
-  color: var(--vermelho);
-  font-weight: 800;
-}
-
-.caixa-login h1 {
-  font-size: 26px;
-  letter-spacing: 1px;
+.logo-login {
+  width: 200px;
+  height: auto;
   margin-bottom: 4px;
 }
 
@@ -104,7 +99,7 @@ body {
   position: fixed;
   top: 24px;
   right: 24px;
-  height: 34px;
+  height: 68px;
   padding: 6px 12px;
   background: var(--branco);
   border-radius: 8px;
@@ -258,7 +253,7 @@ body {
 }
 
 .logo-topo {
-  height: 46px;
+  height: 92px;
   width: auto;
 }
 
@@ -1536,7 +1531,7 @@ body.pagina-dashboard .duas-tabelas table.tabela-dados td {
   }
 
   .logo-topo {
-    height: 32px;
+    height: 64px;
     flex-shrink: 0;
   }
 
@@ -1573,7 +1568,7 @@ body.pagina-dashboard .duas-tabelas table.tabela-dados td {
   .logo-flutuante {
     top: 12px;
     right: 12px;
-    height: 26px;
+    height: 52px;
     padding: 4px 8px;
   }
 
