@@ -25,13 +25,8 @@
       <section class="cartao filtros">
         <form id="formFiltros" class="grade-filtros">
           <div class="campo-filtro">
-            <label for="filtroNumeroAta">Número da Ata</label>
-            <input type="text" id="filtroNumeroAta" placeholder="Ex.: 012/2026" />
-          </div>
-
-          <div class="campo-filtro">
-            <label for="filtroNumeroContrato">Número do Contrato</label>
-            <input type="text" id="filtroNumeroContrato" placeholder="Ex.: 012/2026" />
+            <label for="filtroNumeroAtaContrato">Número da Ata/Contrato</label>
+            <input type="text" id="filtroNumeroAtaContrato" placeholder="Ex.: 012/2026" />
           </div>
 
           <div class="campo-filtro campo-curto">
@@ -59,6 +54,24 @@
           <div class="campo-filtro">
             <label for="filtroDataFim">Data Fim</label>
             <input type="date" id="filtroDataFim" />
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroArmazem" title="Mostra só atas/contratos que já tiveram algum item recebido (entrada vinculada a um empenho) nesse armazém">Armazém</label>
+            <select id="filtroArmazem">
+              <option value="">Todos</option>
+            </select>
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroTipoPedido">Tipo de Ata/Contrato</label>
+            <select id="filtroTipoPedido">
+              <option value="">Todos</option>
+              <option value="A">ARP</option>
+              <option value="C">Aquisição</option>
+              <option value="I">Imobilizados</option>
+              <option value="S">Serviços</option>
+            </select>
           </div>
 
           <div class="campo-filtro campo-acao">
@@ -113,24 +126,30 @@
 
     function montarQueryFiltros() {
       const params = new URLSearchParams();
-      const numeroAta = document.getElementById("filtroNumeroAta").value.trim();
-      const numeroContrato = document.getElementById("filtroNumeroContrato").value.trim();
+      const numeroAtaContrato = document.getElementById("filtroNumeroAtaContrato").value.trim();
       const cnpj = document.getElementById("filtroCnpj").value.trim();
       const fornecedor = document.getElementById("filtroFornecedor").value.trim();
       const produto = document.getElementById("filtroProduto").value.trim();
+      const armazem = document.getElementById("filtroArmazem").value;
+      const tipoPedido = document.getElementById("filtroTipoPedido").value;
       const dataInicio = document.getElementById("filtroDataInicio").value;
       const dataFim = document.getElementById("filtroDataFim").value;
 
-      if (numeroAta) params.set("numero_ata", numeroAta);
-      if (numeroContrato) params.set("numero_contrato", numeroContrato);
+      if (numeroAtaContrato) params.set("numero_ata_contrato", numeroAtaContrato);
       if (cnpj) params.set("cnpj", cnpj);
       if (fornecedor) params.set("fornecedor", fornecedor);
       if (produto) params.set("produto", produto);
+      if (armazem) params.set("armazem", armazem);
+      if (tipoPedido) params.set("tipo_pedido", tipoPedido);
       if (dataInicio) params.set("data_inicio", dataInicio);
       if (dataFim) params.set("data_fim", dataFim);
 
       return params;
     }
+
+    // lista completa de armazens (sem restricao pelo usuario logado - essa tela nunca teve esse
+    // filtro implicito) so pra estreitar a busca manualmente
+    preencherSelect("/api/armazens", "filtroArmazem");
 
     // seta vermelha em L (90 graus), mesma da tela de produtos, pra indicar hierarquia
     const SETA_HIERARQUIA = `
@@ -211,19 +230,28 @@
       return "vermelha";
     }
 
-    function montarBarraSaldo(linha) {
-      const percentualRemanescente = Math.min(Math.max(Number(linha.percentual_remanescente) || 0, 0), 100);
-      const cor = corBarraSaldo(percentualRemanescente);
+    // percentual negativo (saldo estourado, gastou mais do que o contratado) enche a barra 100%
+    // em vermelho da esquerda pra direita - o texto mostra o percentual real, negativo e tudo
+    function montarBarraPercentual(percentualBruto) {
+      const valor = Number(percentualBruto) || 0;
+      const negativo = valor < 0;
+      const largura = negativo ? 100 : Math.min(valor, 100);
+      const cor = negativo ? "vermelha" : corBarraSaldo(largura);
 
+      return `
+        <div class="barra-percentual">
+          <div class="barra-percentual-preenchida ${cor}" style="width: ${largura}%"></div>
+          <span class="barra-percentual-texto">${valor.toFixed(2)}% remanescente</span>
+        </div>`;
+    }
+
+    function montarBarraSaldo(linha) {
       return `
         <div class="barra-saldo-linha">
           <span class="saldo-info"><strong>Saldo Total:</strong> ${formatarMoeda(linha.saldo_total)}</span>
           <span class="saldo-info"><strong>Saldo Utilizado:</strong> ${formatarMoeda(linha.saldo_utilizado)}</span>
           <span class="saldo-info"><strong>Saldo Remanescente:</strong> ${formatarMoeda(linha.saldo_remanescente)}</span>
-          <div class="barra-percentual">
-            <div class="barra-percentual-preenchida ${cor}" style="width: ${percentualRemanescente}%"></div>
-            <span class="barra-percentual-texto">${percentualRemanescente.toFixed(2)}% remanescente</span>
-          </div>
+          ${montarBarraPercentual(linha.percentual_remanescente)}
           <button type="button" class="botao-itens">Itens</button>
         </div>`;
     }
@@ -306,16 +334,10 @@
     }
 
     function montarBarraSaldoItem(item) {
-      const percentualRemanescente = Math.min(Math.max(Number(item.percentual_remanescente) || 0, 0), 100);
-      const cor = corBarraSaldo(percentualRemanescente);
-
       return `
         <div class="barra-saldo-linha">
           <span class="saldo-info"><strong>Qtd. Utilizada:</strong> ${item.quantidade_utilizada ?? "0"}</span>
-          <div class="barra-percentual">
-            <div class="barra-percentual-preenchida ${cor}" style="width: ${percentualRemanescente}%"></div>
-            <span class="barra-percentual-texto">${percentualRemanescente.toFixed(2)}% remanescente</span>
-          </div>
+          ${montarBarraPercentual(item.percentual_remanescente)}
         </div>`;
     }
 

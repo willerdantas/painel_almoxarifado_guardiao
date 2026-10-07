@@ -3870,8 +3870,8 @@ def api_atas_contratos():
     fornecedor = request.args.get("fornecedor")
     produto = request.args.get("produto")
     armazem = request.args.get("armazem")
-    # tipopedido: codigo de 1 letra (C, S, I, P, D, A, H) sem mapeamento conhecido ainda - mesmo
-    # caso de statuspedido/modalidadelicitacao, filtra pelo codigo cru mesmo
+    # tipopedido: codigo de 1 letra - A = ARP, C = Aquisição, I = Imobilizados, S = Serviços
+    # (D, H e P tambem existem na constraint do banco, mas sem significado mapeado/uso no filtro)
     tipo_pedido = request.args.get("tipo_pedido")
     filtro_data_inicio = request.args.get("data_inicio")
     filtro_data_fim = request.args.get("data_fim")
@@ -4014,14 +4014,14 @@ def api_atas_contratos():
                 END AS prazo,
                 ult.valor_total AS saldo_total,
                 COALESCE(ult.saldo_utilizado, 0) AS saldo_utilizado,
-                GREATEST(0, ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) AS saldo_remanescente,
+                (ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) AS saldo_remanescente,
                 CASE
                     WHEN COALESCE(ult.saldo_utilizado, 0) = 0 THEN 100
                     ELSE ROUND((ult.valor_total / ult.saldo_utilizado) * 100, 2)
                 END AS percentual_utilizado,
                 CASE
                     WHEN ult.valor_total > 0
-                    THEN GREATEST(0, ROUND(((ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) / ult.valor_total) * 100, 2))
+                    THEN ROUND(((ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) / ult.valor_total) * 100, 2)
                     ELSE 0
                 END AS percentual_remanescente
             {base_from}
@@ -4081,7 +4081,7 @@ def api_atas_contratos_itens():
             ((pi.quantidade - COALESCE(pi.quantidadeentregue, 0)) * pi.valorunitario) AS saldo_valor,
             CASE
                 WHEN pi.quantidade > 0
-                THEN GREATEST(0, ROUND(((pi.quantidade - COALESCE(pi.quantidadeentregue, 0)) / pi.quantidade) * 100, 2))
+                THEN ROUND(((pi.quantidade - COALESCE(pi.quantidadeentregue, 0)) / pi.quantidade) * 100, 2)
                 ELSE 0
             END AS percentual_remanescente
         FROM public.pedidoitem pi
@@ -4119,11 +4119,13 @@ _DASHBOARD_BASE_FROM = """
     WHERE pc.numeroaditivo = 0
 """
 
-# formula do percentual remanescente identica a de /api/atas_contratos (mesma logica da barra de saldo)
+# formula do percentual remanescente identica a de /api/atas_contratos (mesma logica da barra de
+# saldo) - sem GREATEST(0, ...), negativo (saldo estourado) passa adiante: {percentual} <= 0 em
+# filtro_saldo abaixo acaba pegando tambem quem ja passou do saldo, nao so quem zerou exatamente
 _DASHBOARD_PERCENTUAL_REMANESCENTE = """
     CASE
         WHEN ult.valor_total > 0
-        THEN GREATEST(0, ROUND(((ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) / ult.valor_total) * 100, 2))
+        THEN ROUND(((ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) / ult.valor_total) * 100, 2)
         ELSE 0
     END
 """
@@ -4140,7 +4142,7 @@ def _dashboard_top5(situacao_cond, atapreco, filtro_saldo, ordenacao, limite=5):
             to_char(ult.efetivo, 'DD-MM-YY') AS data_fim,
             ult.valor_total AS saldo_total,
             COALESCE(ult.saldo_utilizado, 0) AS saldo_utilizado,
-            GREATEST(0, ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) AS saldo_remanescente,
+            (ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) AS saldo_remanescente,
             {percentual} AS percentual_remanescente
         {_DASHBOARD_BASE_FROM}
         AND {situacao_cond}

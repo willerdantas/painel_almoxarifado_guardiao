@@ -482,6 +482,7 @@ body {
 
 .campo-filtro input,
 .campo-filtro select {
+  width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--cinza-borda);
   border-radius: 6px;
@@ -958,6 +959,7 @@ table.tabela-dados tr.linha-produto:not(.linha-produto-com-acoes) td {
   min-width: 160px;
   height: 20px;
   background: var(--cinza-claro);
+  border: 1px solid var(--branco);
   border-radius: 10px;
   overflow: hidden;
 }
