@@ -1106,9 +1106,17 @@ def _filtros_consumo(args):
     data_fim = args.get("data_fim")
     armazem = args.get("armazem")
     usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+    # origem do lote: "cd" = fornecedor 13276609 (CENTRO DE DISTRIBUICAO SESA / C.D SESA), "hospital"
+    # = qualquer outro fornecedor (ou sem fornecedor) - separa "Itens Movimentados" em duas listas
+    origem = args.get("origem")
 
     condicoes = ["sc.status <> 'E'", "sc.data >= %s"]
     params = [data_inicio]
+
+    if origem == "cd":
+        condicoes.append("lt.fornecedor = 13276609")
+    elif origem == "hospital":
+        condicoes.append("(lt.fornecedor IS NULL OR lt.fornecedor <> 13276609)")
 
     if cod_seplag:
         condicoes.append("p.codigoreferencia ILIKE %s")
@@ -1354,6 +1362,10 @@ def _montar_cabecalho_pdf_consumo(args):
         ("armazem", "Armazém"),
     ]
     filtros = [f"{rotulo}: {args.get(chave)}" for chave, rotulo in rotulos if args.get(chave)]
+    if args.get("origem") == "cd":
+        filtros.append("Origem: Itens do CD")
+    elif args.get("origem") == "hospital":
+        filtros.append("Origem: Itens do Hospital")
     periodo = f"{args.get('data_inicio') or 'sem início'} até {args.get('data_fim') or 'sem fim'}"
     agora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
@@ -1513,8 +1525,14 @@ def _gerar_pdf_consumo_detalhado(linhas, args):
 
     linha_total = ["Total Geral", "", "", "", "", "", "", _formatar_quantidade_pdf(total_quantidade), "", _formatar_moeda_pdf(total_valor), ""]
 
+    titulo = "Relatório de Consumo"
+    if args.get("origem") == "cd":
+        titulo += " - Itens do CD"
+    elif args.get("origem") == "hospital":
+        titulo += " - Itens do Hospital"
+
     return _montar_pdf_relatorio(
-        "Relatório de Consumo",
+        titulo,
         _montar_cabecalho_pdf_consumo(args),
         [
             {
@@ -1525,6 +1543,16 @@ def _gerar_pdf_consumo_detalhado(linhas, args):
             }
         ],
     )
+
+
+def _sufixo_origem(args):
+    # sufixo pro nome do arquivo exportado, quando a lista foi filtrada por origem (CD/Hospital)
+    origem = args.get("origem")
+    if origem == "cd":
+        return "_cd"
+    if origem == "hospital":
+        return "_hospital"
+    return ""
 
 
 @app.route("/api/consumo_pdf")
@@ -1541,7 +1569,7 @@ def api_consumo_pdf():
         if erro:
             return jsonify({"erro": erro}), 400
         pdf_bytes = _gerar_pdf_consumo_detalhado(linhas, request.args)
-        nome_arquivo = "relatorio_consumo.pdf"
+        nome_arquivo = f"relatorio_consumo{_sufixo_origem(request.args)}.pdf"
     else:
         pdf_bytes = _gerar_pdf_consumo_resumo(request.args)
         nome_arquivo = "relatorio_resumo_consumo.pdf"
@@ -1649,7 +1677,7 @@ def api_consumo_csv():
         if erro:
             return jsonify({"erro": erro}), 400
         conteudo_csv = _escrever_csv(*_linhas_consumo_detalhado(linhas))
-        nome_arquivo = "consumo.csv"
+        nome_arquivo = f"consumo{_sufixo_origem(request.args)}.csv"
     else:
         conteudo_csv = _escrever_csv(*_linhas_consumo_resumo(request.args))
         nome_arquivo = "resumo_consumo.csv"
@@ -1675,7 +1703,7 @@ def api_consumo_xlsx():
         if erro:
             return jsonify({"erro": erro}), 400
         xlsx_bytes = _escrever_xlsx(*_linhas_consumo_detalhado(linhas))
-        nome_arquivo = "consumo.xlsx"
+        nome_arquivo = f"consumo{_sufixo_origem(request.args)}.xlsx"
     else:
         xlsx_bytes = _escrever_xlsx(*_linhas_consumo_resumo(request.args))
         nome_arquivo = "resumo_consumo.xlsx"
@@ -2856,22 +2884,21 @@ def api_vencidos_lotes():
     return _consulta_generica(sql, params_completo)
 
 
-@app.route("/api/estoque")
-def api_estoque():
-    # mesmos filtros da tela de produtos, mas so lista quem tem estoque > 0 (soma de todos os lotes)
-    cod_seplag = request.args.get("cod_seplag")
-    cod_almox = request.args.get("cod_almox")
-    cod_produto = request.args.get("cod_produto")
-    nome_produto = request.args.get("nome_produto")
-    descricao = request.args.get("descricao")
-    lote = request.args.get("lote")
-    subgrupo = request.args.get("subgrupo")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
-    armazem = request.args.get("armazem")
-    try:
-        pagina = max(int(request.args.get("pagina", 1)), 1)
-    except ValueError:
-        pagina = 1
+def _filtros_estoque(args):
+    # monta o WHERE/FROM comuns a /api/estoque (paginado) e ao relatorio de posicao de estoque
+    # (pdf, sem paginacao) - so lista quem tem estoque > 0 (soma de todos os lotes, sem separar
+    # por lote). origem do lote: "cd" = fornecedor 13276609 (CENTRO DE DISTRIBUICAO SESA / C.D
+    # SESA), "hospital" = qualquer outro fornecedor (ou sem fornecedor)
+    cod_seplag = args.get("cod_seplag")
+    cod_almox = args.get("cod_almox")
+    cod_produto = args.get("cod_produto")
+    nome_produto = args.get("nome_produto")
+    descricao = args.get("descricao")
+    lote = args.get("lote")
+    subgrupo = args.get("subgrupo")
+    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+    armazem = args.get("armazem")
+    origem = args.get("origem")
 
     condicoes = []
     params = []
@@ -2908,6 +2935,12 @@ def api_estoque():
     filtro_armazem_usuario, params_armazem = _fragmento_filtro_armazem("e.armazem", usuario_logado, armazem)
     params_completo = params_armazem + params
 
+    filtro_origem = ""
+    if origem == "cd":
+        filtro_origem = "AND lt.fornecedor = 13276609"
+    elif origem == "hospital":
+        filtro_origem = "AND (lt.fornecedor IS NULL OR lt.fornecedor <> 13276609)"
+
     base_from = f"""
         FROM public.produto p
         JOIN (
@@ -2916,6 +2949,7 @@ def api_estoque():
             JOIN public.estoque e ON e.lote = lt.lote
             WHERE 1=1
             {filtro_armazem_usuario}
+            {filtro_origem}
             GROUP BY lt.produto
             HAVING SUM(e.quantidade) > 0
         ) est ON est.produto = p.produto
@@ -2925,6 +2959,17 @@ def api_estoque():
         LEFT JOIN public.estoquetotal et ON et.produto = p.produto
         {where}
     """
+
+    return base_from, params_completo
+
+
+@app.route("/api/estoque")
+def api_estoque():
+    base_from, params_completo = _filtros_estoque(request.args)
+    try:
+        pagina = max(int(request.args.get("pagina", 1)), 1)
+    except ValueError:
+        pagina = 1
 
     tamanho_pagina = 10
     offset = (pagina - 1) * tamanho_pagina
@@ -2975,6 +3020,234 @@ def api_estoque():
         )
     except Exception as erro:
         return jsonify({"erro": str(erro)}), 500
+
+
+def _dados_estoque_sem_paginacao(args, origem):
+    # mesma consulta de /api/estoque, sem paginar - usado no relatorio de posicao de estoque
+    # (pdf), que precisa da lista inteira de uma vez, sempre com origem fixa (cd ou hospital)
+    args_com_origem = {**args.to_dict(), "origem": origem}
+    base_from, params = _filtros_estoque(args_com_origem)
+    sql = f"""
+        SELECT
+            p.codigoreferencia AS cod_seplag,
+            p.codigo AS cod_almox,
+            p.produto AS cod_produto,
+            p.nome AS nome_produto,
+            p.descricao AS descricao_produto,
+            est.total AS total_estoque,
+            et.customedio AS custo_medio,
+            (est.total * et.customedio) AS valor_total
+        {base_from}
+        ORDER BY p.nome
+    """
+    return run_query(sql, params)
+
+
+def _dados_estoque_posicao_historica(args, origem, data_posicao):
+    # posicao de estoque numa data passada: nao existe tabela de historico/snapshot, entao o
+    # saldo eh reconstruido via regressao - soma de tudo que entrou (entradaitem) menos tudo que
+    # saiu (saidaitem) ate aquela data, por produto. essa regressao NAO fecha 100% com o estoque
+    # atual (tem baixa/perda/ajuste que nao passa por entradaitem nem saidaitem), por isso so eh
+    # usada pra datas passadas - pra hoje usa _dados_estoque_sem_paginacao (estoque.quantidade,
+    # que reflete esses ajustes e eh o numero realmente certo)
+    cod_seplag = args.get("cod_seplag")
+    cod_almox = args.get("cod_almox")
+    cod_produto = args.get("cod_produto")
+    nome_produto = args.get("nome_produto")
+    descricao = args.get("descricao")
+    lote = args.get("lote")
+    subgrupo = args.get("subgrupo")
+    armazem = args.get("armazem")
+    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+
+    filtro_origem = ""
+    if origem == "cd":
+        filtro_origem = "AND lt.fornecedor = 13276609"
+    elif origem == "hospital":
+        filtro_origem = "AND (lt.fornecedor IS NULL OR lt.fornecedor <> 13276609)"
+
+    filtro_lote = ""
+    params_lote = []
+    if lote:
+        filtro_lote = "AND lt.lotefornecedor ILIKE %s"
+        params_lote = [f"%{lote}%"]
+
+    filtro_armazem_entrada, params_armazem_entrada = _fragmento_filtro_armazem("ec.armazem", usuario_logado, armazem)
+    filtro_armazem_saida, params_armazem_saida = _fragmento_filtro_armazem("sc.armazem", usuario_logado, armazem)
+
+    params_movimentos = (
+        [data_posicao] + params_lote + params_armazem_entrada
+        + [data_posicao] + params_lote + params_armazem_saida
+    )
+
+    condicoes = []
+    params_where = []
+    if cod_seplag:
+        condicoes.append("p.codigoreferencia ILIKE %s")
+        params_where.append(f"%{cod_seplag}%")
+    if cod_almox:
+        condicoes.append("p.codigo ILIKE %s")
+        params_where.append(f"%{cod_almox}%")
+    if cod_produto:
+        condicoes.append("p.produto::text ILIKE %s")
+        params_where.append(f"%{cod_produto}%")
+    if nome_produto:
+        condicoes.append("p.nome ILIKE %s")
+        params_where.append(f"%{nome_produto}%")
+    if descricao:
+        condicoes.append("p.descricao ILIKE %s")
+        params_where.append(f"%{descricao}%")
+    if subgrupo:
+        condicoes.append("sg.descricao ILIKE %s")
+        params_where.append(f"%{subgrupo}%")
+    where = f"WHERE {' AND '.join(condicoes)}" if condicoes else ""
+
+    sql = f"""
+        WITH movimentos AS (
+            SELECT lt.produto AS produto, ei.quantidade AS qtd
+            FROM public.entradaitem ei
+            JOIN public.entradacabecalho ec ON ec.entradacabecalho = ei.entradacabecalho
+            JOIN public.estoque e ON e.estoque = ei.estoque
+            JOIN public.lote lt ON lt.lote = e.lote
+            WHERE ei._creation < (%s::date + INTERVAL '1 day')
+            {filtro_origem}
+            {filtro_lote}
+            {filtro_armazem_entrada}
+
+            UNION ALL
+
+            SELECT lt.produto AS produto, (-si.quantidade) AS qtd
+            FROM public.saidaitem si
+            JOIN public.saidacabecalho sc ON sc.saidacabecalho = si.saidacabecalho
+            JOIN public.estoque e ON e.estoque = si.estoque
+            JOIN public.lote lt ON lt.lote = e.lote
+            WHERE si._creation < (%s::date + INTERVAL '1 day')
+            {filtro_origem}
+            {filtro_lote}
+            {filtro_armazem_saida}
+        )
+        SELECT
+            p.codigoreferencia AS cod_seplag,
+            p.codigo AS cod_almox,
+            p.produto AS cod_produto,
+            p.nome AS nome_produto,
+            p.descricao AS descricao_produto,
+            SUM(mov.qtd) AS total_estoque,
+            et.customedio AS custo_medio,
+            (SUM(mov.qtd) * et.customedio) AS valor_total
+        FROM movimentos mov
+        JOIN public.produto p ON p.produto = mov.produto
+        LEFT JOIN public.classe c ON p.classe = c.classe
+        LEFT JOIN public.subgrupo sg ON c.subgrupo = sg.subgrupo
+        LEFT JOIN public.estoquetotal et ON et.produto = p.produto
+        {where}
+        GROUP BY p.produto, p.nome, p.descricao, p.codigoreferencia, p.codigo, et.customedio
+        HAVING SUM(mov.qtd) > 0
+        ORDER BY p.nome
+    """
+    return run_query(sql, params_movimentos + params_where)
+
+
+def _montar_cabecalho_pdf_estoque(args, data_posicao=None):
+    rotulos = [
+        ("cod_seplag", "Cód. Seplag"),
+        ("cod_almox", "Cód. Almox"),
+        ("cod_produto", "Cód. Produto"),
+        ("nome_produto", "Nome do Produto"),
+        ("descricao", "Descrição"),
+        ("lote", "Lote"),
+        ("subgrupo", "Subgrupo"),
+        ("armazem", "Armazém"),
+    ]
+    filtros = [f"{rotulo}: {args.get(chave)}" for chave, rotulo in rotulos if args.get(chave)]
+    agora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+    linhas = [f"<b>Gerado em:</b> {agora}"]
+    if data_posicao:
+        data_formatada = datetime.date.fromisoformat(data_posicao).strftime("%d/%m/%Y")
+        linhas.append(f"<b>Posição em:</b> {data_formatada}")
+    linhas.append(f"<b>Filtros aplicados:</b> {' · '.join(filtros) if filtros else 'Nenhum (todo o estoque)'}")
+    return linhas
+
+
+def _bloco_pdf_estoque_posicao(titulo, produtos):
+    cabecalho_tabela = ["Cód. Seplag", "Cód. Almox", "Cód. Produto", "Produto", "Descrição", "Total em Estoque", "Custo Médio", "Valor Total"]
+    larguras = [1.8 * cm, 1.8 * cm, 1.8 * cm, 6.0 * cm, 8.0 * cm, 2.2 * cm, 2.2 * cm, 2.2 * cm]
+
+    total_estoque = 0.0
+    total_valor = 0.0
+    linhas_tabela = []
+    for item in produtos:
+        total_estoque += float(item.get("total_estoque") or 0)
+        total_valor += float(item.get("valor_total") or 0)
+        linhas_tabela.append(
+            [
+                item.get("cod_seplag") or "",
+                item.get("cod_almox") or "",
+                item.get("cod_produto") or "",
+                item.get("nome_produto") or "",
+                _truncar_descricao_pdf(item.get("descricao_produto")),
+                _formatar_quantidade_pdf(item.get("total_estoque")),
+                _formatar_moeda_pdf(item.get("custo_medio")),
+                _formatar_moeda_pdf(item.get("valor_total")),
+            ]
+        )
+
+    linha_total = ["Total Geral", "", "", "", "", _formatar_quantidade_pdf(total_estoque), "", _formatar_moeda_pdf(total_valor)]
+
+    return {
+        "subtitulo": titulo,
+        "cabecalho_tabela": cabecalho_tabela,
+        "linhas_tabela": linhas_tabela,
+        "largura_colunas": larguras,
+        "linha_total": linha_total,
+    }
+
+
+def _gerar_pdf_estoque_posicao(args, data_posicao, hoje):
+    # posicao de estoque: quantidade que tinha em estoque de cada produto numa data (hoje por
+    # padrao), somada entre todos os lotes (sem separar por lote), dividida em dois blocos -
+    # produto do CD e produto do hospital (mesmo criterio de origem usado no resto da tela de
+    # estoque). pra hoje usa o estoque atual (rapido e exato); pra data passada usa a regressao
+    # por entradas/saidas (ver _dados_estoque_posicao_historica - nao fecha 100% com o real, mas
+    # foi a decisao de produto pra esse caso)
+    if data_posicao == hoje:
+        produtos_cd = _dados_estoque_sem_paginacao(args, "cd")
+        produtos_hospital = _dados_estoque_sem_paginacao(args, "hospital")
+    else:
+        produtos_cd = _dados_estoque_posicao_historica(args, "cd", data_posicao)
+        produtos_hospital = _dados_estoque_posicao_historica(args, "hospital", data_posicao)
+
+    data_formatada = datetime.date.fromisoformat(data_posicao).strftime("%d/%m/%Y")
+    return _montar_pdf_relatorio(
+        f"Relatório de Posição de Estoque - {data_formatada}",
+        _montar_cabecalho_pdf_estoque(args, data_posicao),
+        [
+            _bloco_pdf_estoque_posicao("Produtos do CD", produtos_cd),
+            _bloco_pdf_estoque_posicao("Produtos do Hospital", produtos_hospital),
+        ],
+    )
+
+
+@app.route("/api/estoque_posicao_pdf")
+def api_estoque_posicao_pdf():
+    if not REPORTLAB_DISPONIVEL:
+        return jsonify({"erro": "Geração de PDF indisponível: biblioteca reportlab não instalada no servidor."}), 500
+
+    hoje = datetime.date.today().isoformat()
+    data_posicao = request.args.get("data_posicao") or hoje
+    try:
+        if datetime.date.fromisoformat(data_posicao) > datetime.date.today():
+            return jsonify({"erro": "A data da posição de estoque não pode ser no futuro."}), 400
+    except ValueError:
+        return jsonify({"erro": "Data inválida."}), 400
+
+    pdf_bytes = _gerar_pdf_estoque_posicao(request.args, data_posicao, hoje)
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=posicao_estoque.pdf"},
+    )
 
 
 @app.route("/api/estoque_lotes")

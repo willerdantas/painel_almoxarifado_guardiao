@@ -80,17 +80,42 @@
 
       <section class="cartao secao-pedidos">
         <div class="secao-cabecalho">
-          <h2>Produtos</h2>
-          <span class="contador-secao" id="contadorProdutos">0</span>
-          <span class="contador-secundario" id="contadorCodSeplag">Cód. Seplag: 0 (0,00%)</span>
-          <span class="contador-secundario" id="contadorCodAlmox">Cód. Almox: 0 (0,00%)</span>
-          <span class="contador-secundario" id="contadorProcedimentoSus">Procedimento SUS: 0 (0,00%)</span>
+          <h2>Ações</h2>
           <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoConsumo">Consumo</button>
+          <div class="campo-filtro campo-curto">
+            <label for="filtroDataPosicaoEstoque">Posição em</label>
+            <input type="date" id="filtroDataPosicaoEstoque" />
+          </div>
+          <button type="button" class="botao-resetar" id="botaoPosicaoEstoque">Posição de Estoque</button>
         </div>
-        <div id="areaProdutos">
+      </section>
+
+      <section class="cartao secao-pedidos" id="secaoProdutosCd">
+        <div class="secao-cabecalho">
+          <h2>Produtos do CD</h2>
+          <span class="contador-secao" id="contadorProdutosCd">0</span>
+          <span class="contador-secundario" id="contadorCodSeplagCd">Cód. Seplag: 0 (0,00%)</span>
+          <span class="contador-secundario" id="contadorCodAlmoxCd">Cód. Almox: 0 (0,00%)</span>
+          <span class="contador-secundario" id="contadorProcedimentoSusCd">Procedimento SUS: 0 (0,00%)</span>
+        </div>
+        <div id="areaProdutosCd">
           <p class="msg-vazio">Carregando dado, aguenta ai...</p>
         </div>
-        <div class="paginacao" id="areaPaginacao"></div>
+        <div class="paginacao" id="areaPaginacaoCd"></div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Produtos do Hospital</h2>
+          <span class="contador-secao" id="contadorProdutosHospital">0</span>
+          <span class="contador-secundario" id="contadorCodSeplagHospital">Cód. Seplag: 0 (0,00%)</span>
+          <span class="contador-secundario" id="contadorCodAlmoxHospital">Cód. Almox: 0 (0,00%)</span>
+          <span class="contador-secundario" id="contadorProcedimentoSusHospital">Procedimento SUS: 0 (0,00%)</span>
+        </div>
+        <div id="areaProdutosHospital">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+        <div class="paginacao" id="areaPaginacaoHospital"></div>
       </section>
     </main>
   </div>
@@ -102,7 +127,7 @@
     protegerPagina();
     iniciarMenu("estoque");
 
-    let paginaAtual = 1;
+    document.getElementById("filtroDataPosicaoEstoque").value = dataHojeISO();
 
     function montarQueryFiltros() {
       const params = new URLSearchParams();
@@ -151,7 +176,7 @@
         console.error("Erro ao carregar armazéns do filtro:", erro);
       }
 
-      buscarProdutos(1);
+      buscarTudo();
     }
 
     iniciarFiltroArmazemEstoque();
@@ -166,10 +191,10 @@
       return !armazem || armazem === "ALMOXARIFADO DE MATERIAL E TECNOLOGIA HOSPITALAR";
     }
 
-    function renderizarProdutos(dados) {
-      const container = document.getElementById("areaProdutos");
+    function renderizarProdutos(dados, prefixo) {
+      const container = document.getElementById(`areaProdutos${prefixo}`);
       const estiloProcedimentoSus = deveExibirProcedimentoSus() ? "" : ' style="display:none"';
-      document.getElementById("contadorProcedimentoSus").style.display = deveExibirProcedimentoSus() ? "" : "none";
+      document.getElementById(`contadorProcedimentoSus${prefixo}`).style.display = deveExibirProcedimentoSus() ? "" : "none";
 
       if (!Array.isArray(dados) || dados.length === 0) {
         container.innerHTML = '<p class="msg-vazio">Nenhum produto com estoque encontrado, homem.</p>';
@@ -284,7 +309,10 @@
         return;
       }
 
-      fecharDetalhesAbertos();
+      // so fecha os detalhes abertos dentro da mesma lista (CD ou Hospital) - expandir uma linha
+      // numa lista nao deve mexer na outra
+      const escopo = linhaAcoes.closest("[id^='areaProdutos']");
+      fecharDetalhesAbertos(escopo);
       linhaProduto.classList.add("linha-produto-ativa");
 
       const trDetalhe = document.createElement("tr");
@@ -371,9 +399,10 @@
       }
     }
 
-    function fecharDetalhesAbertos() {
-      document.querySelectorAll('[class^="linha-detalhe-"]').forEach((el) => el.remove());
-      document.querySelectorAll(".linha-produto-ativa").forEach((el) => el.classList.remove("linha-produto-ativa"));
+    function fecharDetalhesAbertos(escopo) {
+      const raiz = escopo || document;
+      raiz.querySelectorAll('[class^="linha-detalhe-"]').forEach((el) => el.remove());
+      raiz.querySelectorAll(".linha-produto-ativa").forEach((el) => el.classList.remove("linha-produto-ativa"));
     }
 
     function montarFormularioMovimentacoes() {
@@ -569,8 +598,8 @@
     }
 
     // paginador compacto: anterior, um punhado de numeros perto da atual, proxima
-    function renderizarPaginacao(total, pagina, tamanhoPagina) {
-      const area = document.getElementById("areaPaginacao");
+    function renderizarPaginacao(total, pagina, tamanhoPagina, areaId, aoTrocarPagina) {
+      const area = document.getElementById(areaId);
       const totalPaginas = Math.max(Math.ceil(total / tamanhoPagina), 1);
 
       if (totalPaginas <= 1) {
@@ -592,7 +621,7 @@
       area.innerHTML = botoes;
 
       area.querySelectorAll(".botao-pagina").forEach((botao) => {
-        botao.addEventListener("click", () => buscarProdutos(Number(botao.dataset.pagina)));
+        botao.addEventListener("click", () => aoTrocarPagina(Number(botao.dataset.pagina)));
       });
     }
 
@@ -607,28 +636,48 @@
       document.getElementById(elementoId).textContent = `${rotulo}: ${formatarQuantidade(qtd)} (${percentual}%)`;
     }
 
-    async function buscarProdutos(pagina) {
-      paginaAtual = pagina;
+    // origem: "cd" ou "hospital" - cada lista (produtos do CD / produtos do hospital, separadas
+    // pelo fornecedor do lote) eh buscada e paginada de forma independente. "Produtos do CD" some
+    // da tela quando nao tem nenhum item do CD pros filtros atuais
+    async function buscarProdutos(origem, pagina) {
       const params = montarQueryFiltros();
+      params.set("origem", origem);
       params.set("pagina", pagina);
 
-      const container = document.getElementById("areaProdutos");
+      const prefixo = origem === "cd" ? "Cd" : "Hospital";
+      const container = document.getElementById(`areaProdutos${prefixo}`);
       container.innerHTML = '<p class="msg-vazio">Carregando dado, aguenta ai...</p>';
 
       try {
         const resp = await fetch(`/api/estoque?${params.toString()}`);
         const resultado = await resp.json();
+        const total = resultado.total ?? 0;
 
-        document.getElementById("contadorProdutos").textContent = resultado.total ?? 0;
-        atualizarContadorSecundario("contadorCodSeplag", "Cód. Seplag", resultado.total_cod_seplag, resultado.total);
-        atualizarContadorSecundario("contadorCodAlmox", "Cód. Almox", resultado.total_cod_almox, resultado.total);
-        atualizarContadorSecundario("contadorProcedimentoSus", "Procedimento SUS", resultado.total_procedimento_sus, resultado.total);
-        renderizarProdutos(resultado.dados);
-        renderizarPaginacao(resultado.total ?? 0, resultado.pagina ?? pagina, resultado.tamanho_pagina ?? 10);
+        if (origem === "cd") {
+          document.getElementById("secaoProdutosCd").classList.toggle("oculto", total === 0);
+        }
+
+        document.getElementById(`contadorProdutos${prefixo}`).textContent = total;
+        atualizarContadorSecundario(`contadorCodSeplag${prefixo}`, "Cód. Seplag", resultado.total_cod_seplag, total);
+        atualizarContadorSecundario(`contadorCodAlmox${prefixo}`, "Cód. Almox", resultado.total_cod_almox, total);
+        atualizarContadorSecundario(`contadorProcedimentoSus${prefixo}`, "Procedimento SUS", resultado.total_procedimento_sus, total);
+        renderizarProdutos(resultado.dados, prefixo);
+        renderizarPaginacao(
+          total,
+          resultado.pagina ?? pagina,
+          resultado.tamanho_pagina ?? 10,
+          `areaPaginacao${prefixo}`,
+          (novaPagina) => buscarProdutos(origem, novaPagina)
+        );
       } catch (erro) {
         container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${erro}</p>`;
-        document.getElementById("areaPaginacao").innerHTML = "";
+        document.getElementById(`areaPaginacao${prefixo}`).innerHTML = "";
       }
+    }
+
+    function buscarTudo() {
+      buscarProdutos("cd", 1);
+      buscarProdutos("hospital", 1);
     }
 
     document.getElementById("formFiltros").addEventListener("submit", (ev) => {
@@ -636,7 +685,7 @@
       esconderSugestoes();
       esconderSugestoesSubgrupo();
       esconderSugestoesDescricao();
-      buscarProdutos(1);
+      buscarTudo();
     });
 
     document.getElementById("botaoResetarFiltros").addEventListener("click", () => {
@@ -644,7 +693,7 @@
       esconderSugestoes();
       esconderSugestoesSubgrupo();
       esconderSugestoesDescricao();
-      buscarProdutos(1);
+      buscarTudo();
     });
 
     // sugestao de nome enquanto digita, com debounce pra nao martelar a api a cada tecla
@@ -676,7 +725,7 @@
           item.addEventListener("click", () => {
             campoNomeProduto.value = item.dataset.nome;
             esconderSugestoes();
-            buscarProdutos(1);
+            buscarTudo();
           });
         });
       } catch (erro) {
@@ -725,7 +774,7 @@
           item.addEventListener("click", () => {
             campoSubgrupo.value = item.dataset.nome;
             esconderSugestoesSubgrupo();
-            buscarProdutos(1);
+            buscarTudo();
           });
         });
       } catch (erro) {
@@ -776,7 +825,7 @@
           item.addEventListener("click", () => {
             campoDescricao.value = item.dataset.descricao;
             esconderSugestoesDescricao();
-            buscarProdutos(1);
+            buscarTudo();
           });
         });
       } catch (erro) {
@@ -809,6 +858,17 @@
     // muda de pagina (mesma aba) em vez de abrir aba nova
     document.getElementById("botaoConsumo").addEventListener("click", () => {
       window.location.href = `/pages/consumo.html?${montarQueryFiltros().toString()}`;
+    });
+
+    // pdf com a quantidade em estoque de cada produto (somada entre os lotes, sem separar por
+    // lote), dividido em "Produtos do CD" e "Produtos do Hospital" - mesmos filtros aplicados
+    // aqui, na data escolhida (hoje por padrao - usa o estoque atual; data passada usa regressao
+    // por entradas/saidas, ver comentario de _dados_estoque_posicao_historica no servidor)
+    document.getElementById("botaoPosicaoEstoque").addEventListener("click", () => {
+      const params = montarQueryFiltros();
+      const dataPosicao = document.getElementById("filtroDataPosicaoEstoque").value;
+      if (dataPosicao) params.set("data_posicao", dataPosicao);
+      window.open(`/api/estoque_posicao_pdf?${params.toString()}`, "_blank");
     });
   </script>
 </body>

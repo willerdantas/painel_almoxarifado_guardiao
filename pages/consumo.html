@@ -8,6 +8,8 @@
 </head>
 <body>
   <div class="app-shell">
+    <div id="menuContainer"></div>
+
     <main class="conteudo">
       <div class="topo-pagina">
         <h1>Consumo</h1>
@@ -91,30 +93,44 @@
         </div>
       </section>
 
-      <section class="cartao secao-pedidos">
+      <section class="cartao secao-pedidos" id="secaoItensCd">
         <div class="secao-cabecalho">
-          <h2>Itens Movimentados</h2>
-          <span class="contador-secao" id="contadorMovimentacoes">0</span>
-          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoGerarRelatorioDetalhado">Gerar Relatório</button>
-          <button type="button" class="botao-resetar" id="botaoCsvDetalhado">CSV</button>
-          <button type="button" class="botao-resetar" id="botaoXlsxDetalhado">Planilha</button>
+          <h2>Itens do CD</h2>
+          <span class="contador-secao" id="contadorMovimentacoesCd">0</span>
+          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoGerarRelatorioCd">Gerar Relatório</button>
+          <button type="button" class="botao-resetar" id="botaoCsvCd">CSV</button>
+          <button type="button" class="botao-resetar" id="botaoXlsxCd">Planilha</button>
         </div>
-        <div id="areaMovimentacoes">
+        <div id="areaMovimentacoesCd">
           <p class="msg-vazio">Carregando dado, aguenta ai...</p>
         </div>
-        <div class="paginacao" id="areaPaginacao"></div>
+        <div class="paginacao" id="areaPaginacaoCd"></div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Itens do Hospital</h2>
+          <span class="contador-secao" id="contadorMovimentacoesHospital">0</span>
+          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoGerarRelatorioHospital">Gerar Relatório</button>
+          <button type="button" class="botao-resetar" id="botaoCsvHospital">CSV</button>
+          <button type="button" class="botao-resetar" id="botaoXlsxHospital">Planilha</button>
+        </div>
+        <div id="areaMovimentacoesHospital">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+        <div class="paginacao" id="areaPaginacaoHospital"></div>
       </section>
     </main>
   </div>
 
   <script src="/static/js/sidebar.js"></script>
+  <script src="/static/js/tabela.js"></script>
   <script>
-    // pagina sem menu lateral - chegada aqui eh por mudanca de pagina (mesma aba) vinda de
-    // estoque.html, entao voltar eh navegar de volta pra la (nao da pra window.close() uma aba
-    // que nao foi aberta via window.open)
+    // caverna so abre pra quem tem crachá - usa a chave "estoque" (nao tem item proprio no menu,
+    // essa pagina so se chega pelo botao "Consumo" em estoque.html) pra herdar a mesma permissao
+    // de quem pode ver Controle de Estoque, e deixar o item correspondente marcado como ativo
     protegerPagina();
-    document.getElementById("usuarioLogado").textContent = localStorage.getItem("usuario") || "visitante";
-    document.getElementById("botaoSairTopo").addEventListener("click", sair);
+    iniciarMenu("estoque");
     document.getElementById("botaoVoltar").addEventListener("click", () => {
       window.location.href = "/pages/estoque.html";
     });
@@ -194,8 +210,8 @@
       }
     }
 
-    function renderizarMovimentacoes(dados) {
-      const container = document.getElementById("areaMovimentacoes");
+    function renderizarMovimentacoes(dados, containerId) {
+      const container = document.getElementById(containerId);
 
       if (!Array.isArray(dados) || dados.length === 0) {
         container.innerHTML = '<p class="msg-vazio">Nenhuma movimentação encontrada, homem.</p>';
@@ -242,8 +258,8 @@
         </table>`;
     }
 
-    function renderizarPaginacao(total, pagina, tamanhoPagina) {
-      const area = document.getElementById("areaPaginacao");
+    function renderizarPaginacao(total, pagina, tamanhoPagina, areaId, aoTrocarPagina) {
+      const area = document.getElementById(areaId);
       const totalPaginas = Math.max(Math.ceil(total / tamanhoPagina), 1);
 
       if (totalPaginas <= 1) {
@@ -265,34 +281,52 @@
       area.innerHTML = botoes;
 
       area.querySelectorAll(".botao-pagina").forEach((botao) => {
-        botao.addEventListener("click", () => buscarMovimentacoes(Number(botao.dataset.pagina)));
+        botao.addEventListener("click", () => aoTrocarPagina(Number(botao.dataset.pagina)));
       });
     }
 
-    async function buscarMovimentacoes(pagina) {
+    // origem: "cd" ou "hospital" - cada lista (itens do CD / itens do hospital, separadas pelo
+    // fornecedor do lote) eh buscada e paginada de forma independente
+    async function buscarMovimentacoes(origem, pagina) {
       const params = montarQueryFiltros();
+      params.set("origem", origem);
       params.set("pagina", pagina);
 
-      const container = document.getElementById("areaMovimentacoes");
+      const sufixo = origem === "cd" ? "Cd" : "Hospital";
+      const container = document.getElementById(`areaMovimentacoes${sufixo}`);
       container.innerHTML = '<p class="msg-vazio">Carregando dado, aguenta ai...</p>';
 
       try {
         const resp = await fetch(`/api/consumo?${params.toString()}`);
         const resultado = await resp.json();
+        const total = resultado.total ?? 0;
 
-        document.getElementById("contadorMovimentacoes").textContent = resultado.total ?? 0;
-        renderizarMovimentacoes(resultado.dados);
-        renderizarPaginacao(resultado.total ?? 0, resultado.pagina ?? pagina, resultado.tamanho_pagina ?? 20);
+        // sem item nenhum do CD pros filtros atuais, a sessao "Itens do CD" nem aparece
+        if (origem === "cd") {
+          document.getElementById("secaoItensCd").classList.toggle("oculto", total === 0);
+        }
+
+        document.getElementById(`contadorMovimentacoes${sufixo}`).textContent = total;
+        renderizarMovimentacoes(resultado.dados, `areaMovimentacoes${sufixo}`);
+        renderizarPaginacao(
+          total,
+          resultado.pagina ?? pagina,
+          resultado.tamanho_pagina ?? 20,
+          `areaPaginacao${sufixo}`,
+          (novaPagina) => buscarMovimentacoes(origem, novaPagina)
+        );
       } catch (erro) {
         container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${erro}</p>`;
-        document.getElementById("areaPaginacao").innerHTML = "";
+        document.getElementById(`areaPaginacao${sufixo}`).innerHTML = "";
       }
     }
 
-    // resumo e lista paginada sao independentes, mas sempre atualizam juntos quando o filtro muda
+    // resumo e as duas listas paginadas sao independentes, mas sempre atualizam juntos quando o
+    // filtro muda
     function buscarTudo() {
       buscarResumo();
-      buscarMovimentacoes(1);
+      buscarMovimentacoes("cd", 1);
+      buscarMovimentacoes("hospital", 1);
     }
 
     document.getElementById("formFiltros").addEventListener("submit", (ev) => {
@@ -474,29 +508,36 @@
       window.open(`/api/consumo_xlsx?${params.toString()}`, "_blank");
     });
 
-    document.getElementById("botaoGerarRelatorioDetalhado").addEventListener("click", () => {
-      if (!periodoDentroDoLimiteRelatorioDetalhado()) return;
+    // botoes de Itens do CD / Itens do Hospital: cada lista tem seu proprio trio de botoes
+    // (Gerar Relatório / CSV / Planilha), exportando so os itens daquela origem
+    function ligarBotoesExportacaoDetalhado(origem, idPdf, idCsv, idXlsx) {
+      document.getElementById(idPdf).addEventListener("click", () => {
+        if (!periodoDentroDoLimiteRelatorioDetalhado()) return;
+        const params = montarQueryFiltros();
+        params.set("secao", "detalhado");
+        params.set("origem", origem);
+        window.open(`/api/consumo_pdf?${params.toString()}`, "_blank");
+      });
 
-      const params = montarQueryFiltros();
-      params.set("secao", "detalhado");
-      window.open(`/api/consumo_pdf?${params.toString()}`, "_blank");
-    });
+      document.getElementById(idCsv).addEventListener("click", () => {
+        if (!periodoDentroDoLimiteRelatorioDetalhado()) return;
+        const params = montarQueryFiltros();
+        params.set("secao", "detalhado");
+        params.set("origem", origem);
+        window.open(`/api/consumo_csv?${params.toString()}`, "_blank");
+      });
 
-    document.getElementById("botaoCsvDetalhado").addEventListener("click", () => {
-      if (!periodoDentroDoLimiteRelatorioDetalhado()) return;
+      document.getElementById(idXlsx).addEventListener("click", () => {
+        if (!periodoDentroDoLimiteRelatorioDetalhado()) return;
+        const params = montarQueryFiltros();
+        params.set("secao", "detalhado");
+        params.set("origem", origem);
+        window.open(`/api/consumo_xlsx?${params.toString()}`, "_blank");
+      });
+    }
 
-      const params = montarQueryFiltros();
-      params.set("secao", "detalhado");
-      window.open(`/api/consumo_csv?${params.toString()}`, "_blank");
-    });
-
-    document.getElementById("botaoXlsxDetalhado").addEventListener("click", () => {
-      if (!periodoDentroDoLimiteRelatorioDetalhado()) return;
-
-      const params = montarQueryFiltros();
-      params.set("secao", "detalhado");
-      window.open(`/api/consumo_xlsx?${params.toString()}`, "_blank");
-    });
+    ligarBotoesExportacaoDetalhado("cd", "botaoGerarRelatorioCd", "botaoCsvCd", "botaoXlsxCd");
+    ligarBotoesExportacaoDetalhado("hospital", "botaoGerarRelatorioHospital", "botaoCsvHospital", "botaoXlsxHospital");
   </script>
 </body>
 </html>
