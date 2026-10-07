@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>INSYSTEM | Movimentações de Saída</title>
+  <title>INSYSTEM | Consumo</title>
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
   <div class="app-shell">
     <main class="conteudo">
       <div class="topo-pagina">
-        <h1>Movimentações de Saída</h1>
+        <h1>Consumo</h1>
         <div class="topo-direita">
           <button type="button" class="botao-resetar" id="botaoVoltar">Voltar</button>
           <div class="area-usuario">
@@ -86,7 +86,8 @@
           <span class="contador-secundario" id="resumoMediaDiaria">Média Diária: 0</span>
           <span class="contador-secundario oculto" id="resumoMediaMensal">Média Mensal: 0</span>
           <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoGerarRelatorioResumo">Gerar Relatório</button>
-          <button type="button" class="botao-resetar" id="botaoPlanilhaResumo">Planilha</button>
+          <button type="button" class="botao-resetar" id="botaoCsvResumo">CSV</button>
+          <button type="button" class="botao-resetar" id="botaoXlsxResumo">Planilha</button>
         </div>
       </section>
 
@@ -95,7 +96,8 @@
           <h2>Itens Movimentados</h2>
           <span class="contador-secao" id="contadorMovimentacoes">0</span>
           <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoGerarRelatorioDetalhado">Gerar Relatório</button>
-          <button type="button" class="botao-resetar" id="botaoPlanilhaDetalhado">Planilha</button>
+          <button type="button" class="botao-resetar" id="botaoCsvDetalhado">CSV</button>
+          <button type="button" class="botao-resetar" id="botaoXlsxDetalhado">Planilha</button>
         </div>
         <div id="areaMovimentacoes">
           <p class="msg-vazio">Carregando dado, aguenta ai...</p>
@@ -122,8 +124,8 @@
     document.getElementById("filtroDataInicio").value = "2026-10-01";
     document.getElementById("filtroDataFim").value = dataHojeISO();
 
-    // essa pagina abre numa aba nova vinda do botao "Movimentações de Saída" em estoque.html,
-    // que ja manda o filtro atual na querystring - repopula o formulario com o que veio de la
+    // essa pagina eh aberta vinda do botao "Consumo" em estoque.html, que ja manda o filtro
+    // atual na querystring - repopula o formulario com o que veio de la
     const parametrosIniciais = new URLSearchParams(window.location.search);
     const MAPA_CAMPOS_INICIAIS = {
       cod_seplag: "filtroCodSeplag",
@@ -184,7 +186,7 @@
       const params = montarQueryFiltros();
 
       try {
-        const resp = await fetch(`/api/movimentacoes_saida_resumo?${params.toString()}`);
+        const resp = await fetch(`/api/consumo_resumo?${params.toString()}`);
         const resumo = await resp.json();
         renderizarResumo(resumo);
       } catch (erro) {
@@ -275,7 +277,7 @@
       container.innerHTML = '<p class="msg-vazio">Carregando dado, aguenta ai...</p>';
 
       try {
-        const resp = await fetch(`/api/movimentacoes_saida?${params.toString()}`);
+        const resp = await fetch(`/api/consumo?${params.toString()}`);
         const resultado = await resp.json();
 
         document.getElementById("contadorMovimentacoes").textContent = resultado.total ?? 0;
@@ -457,13 +459,19 @@
     document.getElementById("botaoGerarRelatorioResumo").addEventListener("click", () => {
       const params = montarQueryFiltros();
       params.set("secao", "resumo");
-      window.open(`/api/movimentacoes_saida_pdf?${params.toString()}`, "_blank");
+      window.open(`/api/consumo_pdf?${params.toString()}`, "_blank");
     });
 
-    document.getElementById("botaoPlanilhaResumo").addEventListener("click", () => {
+    document.getElementById("botaoCsvResumo").addEventListener("click", () => {
       const params = montarQueryFiltros();
       params.set("secao", "resumo");
-      window.open(`/api/movimentacoes_saida_csv?${params.toString()}`, "_blank");
+      window.open(`/api/consumo_csv?${params.toString()}`, "_blank");
+    });
+
+    document.getElementById("botaoXlsxResumo").addEventListener("click", () => {
+      const params = montarQueryFiltros();
+      params.set("secao", "resumo");
+      window.open(`/api/consumo_xlsx?${params.toString()}`, "_blank");
     });
 
     document.getElementById("botaoGerarRelatorioDetalhado").addEventListener("click", () => {
@@ -471,15 +479,23 @@
 
       const params = montarQueryFiltros();
       params.set("secao", "detalhado");
-      window.open(`/api/movimentacoes_saida_pdf?${params.toString()}`, "_blank");
+      window.open(`/api/consumo_pdf?${params.toString()}`, "_blank");
     });
 
-    document.getElementById("botaoPlanilhaDetalhado").addEventListener("click", () => {
+    document.getElementById("botaoCsvDetalhado").addEventListener("click", () => {
       if (!periodoDentroDoLimiteRelatorioDetalhado()) return;
 
       const params = montarQueryFiltros();
       params.set("secao", "detalhado");
-      window.open(`/api/movimentacoes_saida_csv?${params.toString()}`, "_blank");
+      window.open(`/api/consumo_csv?${params.toString()}`, "_blank");
+    });
+
+    document.getElementById("botaoXlsxDetalhado").addEventListener("click", () => {
+      if (!periodoDentroDoLimiteRelatorioDetalhado()) return;
+
+      const params = montarQueryFiltros();
+      params.set("secao", "detalhado");
+      window.open(`/api/consumo_xlsx?${params.toString()}`, "_blank");
     });
   </script>
 </body>

@@ -9,7 +9,7 @@ from flask import Flask, jsonify, request, send_from_directory, Response
 from werkzeug.security import check_password_hash, generate_password_hash
 import psycopg2
 
-# reportlab eh so pra gerar os pdfs de movimentacoes de saida - import tolerante pra nao derrubar
+# reportlab eh so pra gerar os pdfs de consumo - import tolerante pra nao derrubar
 # o resto do site se alguem rodar sem "pip install -r requirements.txt" atualizado ainda
 try:
     from reportlab.lib import colors
@@ -21,6 +21,15 @@ try:
     REPORTLAB_DISPONIVEL = True
 except ImportError:
     REPORTLAB_DISPONIVEL = False
+
+# openpyxl eh so pra gerar as planilhas (.xlsx) - mesmo import tolerante do reportlab acima
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    OPENPYXL_DISPONIVEL = True
+except ImportError:
+    OPENPYXL_DISPONIVEL = False
 
 from db import run_query, DB_CONFIG, salvar_config
 
@@ -37,8 +46,7 @@ PAGES = [
     "vencidos.html",
     "estoque.html",
     "estoque_movimentacoes.html",
-    "movimentacoes_saida.html",
-    "relatorio_vencidos.html",
+    "consumo.html",
     "aquisicoes.html",
     "painel_pedidos.html",
     "pagamentos.html",
@@ -1083,8 +1091,8 @@ def api_saida_itens():
     return _consulta_generica(sql, [saidacabecalho])
 
 
-def _filtros_movimentacoes_saida(args):
-    # monta o WHERE/FROM comuns aos 3 endpoints de movimentacoes de saida (lista paginada, resumo
+def _filtros_consumo(args):
+    # monta o WHERE/FROM comuns aos 3 endpoints de consumo (lista paginada, resumo
     # e detalhado sem paginacao pro relatorio de impressao) - produto vem por estoque->lote (mesmo
     # caminho de /api/saida_itens), valor unitario eh o custo medio do produto (mesma base de
     # /api/estoque_lotes). sem filtro de data comeca em 01-10-2026, mesma janela util de dado real
@@ -1145,11 +1153,11 @@ def _filtros_movimentacoes_saida(args):
     return base_from, params, data_inicio, data_fim
 
 
-@app.route("/api/movimentacoes_saida")
-def api_movimentacoes_saida():
+@app.route("/api/consumo")
+def api_consumo():
     # lista paginada de itens de saida (saidaitem) dentro do filtro - usado pelo botao
-    # "Movimentações de Saída" em estoque.html
-    base_from, params, _data_inicio, _data_fim = _filtros_movimentacoes_saida(request.args)
+    # "Consumo" em estoque.html
+    base_from, params, _data_inicio, _data_fim = _filtros_consumo(request.args)
     try:
         pagina = max(int(request.args.get("pagina", 1)), 1)
     except ValueError:
@@ -1196,16 +1204,16 @@ def api_movimentacoes_saida():
         return jsonify({"erro": str(erro)}), 500
 
 
-LIMITE_DIAS_RELATORIO_MOVIMENTACOES = 30
+LIMITE_DIAS_RELATORIO_CONSUMO = 30
 
 
-def _dados_movimentacoes_saida_detalhado(args):
-    # mesma consulta de /api/movimentacoes_saida, mas sem paginacao - usado no pdf de "Itens
-    # Movimentados" (api_movimentacoes_saida_pdf), que precisa de todas as linhas de uma vez. por
+def _dados_consumo_detalhado(args):
+    # mesma consulta de /api/consumo, mas sem paginacao - usado no pdf de "Itens
+    # Movimentados" (api_consumo_pdf), que precisa de todas as linhas de uma vez. por
     # isso o periodo filtrado eh limitado (um periodo maior ja travou o servico antes: consulta
     # pesada sem paginacao, varrendo e ordenando tudo que bate o filtro de uma vez so). retorna
     # (linhas, erro) - erro preenchido (e linhas None) quando o periodo passa do limite
-    base_from, params, data_inicio, data_fim = _filtros_movimentacoes_saida(args)
+    base_from, params, data_inicio, data_fim = _filtros_consumo(args)
 
     if not data_fim:
         return None, "Informe Data Início e Data Fim para gerar o relatório."
@@ -1213,8 +1221,8 @@ def _dados_movimentacoes_saida_detalhado(args):
         dias_periodo = (datetime.date.fromisoformat(data_fim) - datetime.date.fromisoformat(data_inicio)).days
     except ValueError:
         return None, "Data inválida."
-    if dias_periodo > LIMITE_DIAS_RELATORIO_MOVIMENTACOES:
-        return None, f"O relatório só pode ser gerado para períodos de até {LIMITE_DIAS_RELATORIO_MOVIMENTACOES} dias."
+    if dias_periodo > LIMITE_DIAS_RELATORIO_CONSUMO:
+        return None, f"O relatório só pode ser gerado para períodos de até {LIMITE_DIAS_RELATORIO_CONSUMO} dias."
 
     sql = f"""
         SELECT
@@ -1235,14 +1243,14 @@ def _dados_movimentacoes_saida_detalhado(args):
     return run_query(sql, params), None
 
 
-def _dados_movimentacoes_saida_resumo(args):
-    # resumo usado tanto na sessao "Resumo" de movimentacoes_saida.html (campos gerais: itens
+def _dados_consumo_resumo(args):
+    # resumo usado tanto na sessao "Resumo" de consumo.html (campos gerais: itens
     # unicos, quantidade de movimentacoes, quantidade/valor total, media diaria/mensal geral)
     # quanto no pdf de resumo (mesmos campos gerais + a quebra "produtos", por produto). media
     # diaria = quantidade / dias que teve saida; media mensal = quantidade / meses completos no
     # periodo filtrado - so faz sentido se o filtro cobre 1+ mes inteiro, por isso meses_completos
     # vai separado: quem usa decide se mostra o campo com base nele
-    base_from, params, data_inicio, data_fim = _filtros_movimentacoes_saida(args)
+    base_from, params, data_inicio, data_fim = _filtros_consumo(args)
 
     sql_produtos = f"""
         SELECT
@@ -1306,9 +1314,9 @@ def _dados_movimentacoes_saida_resumo(args):
     }
 
 
-@app.route("/api/movimentacoes_saida_resumo")
-def api_movimentacoes_saida_resumo():
-    return jsonify(_dados_movimentacoes_saida_resumo(request.args))
+@app.route("/api/consumo_resumo")
+def api_consumo_resumo():
+    return jsonify(_dados_consumo_resumo(request.args))
 
 
 def _formatar_quantidade_pdf(valor):
@@ -1335,7 +1343,7 @@ def _truncar_descricao_pdf(texto, limite=300):
     return texto[:limite].rstrip() + "…"
 
 
-def _montar_cabecalho_pdf_movimentacoes(args):
+def _montar_cabecalho_pdf_consumo(args):
     # mesmas linhas de "Filtros aplicados"/"Período" que apareciam no relatorio html antigo
     rotulos = [
         ("cod_seplag", "Cód. Seplag"),
@@ -1352,7 +1360,7 @@ def _montar_cabecalho_pdf_movimentacoes(args):
     return [
         f"<b>Gerado em:</b> {agora}",
         f"<b>Período:</b> {periodo}",
-        f"<b>Filtros aplicados:</b> {' · '.join(filtros) if filtros else 'Nenhum (todas as movimentações de saída)'}",
+        f"<b>Filtros aplicados:</b> {' · '.join(filtros) if filtros else 'Nenhum (todo o consumo)'}",
     ]
 
 
@@ -1362,9 +1370,11 @@ def _montar_cabecalho_pdf_movimentacoes(args):
 LINHAS_POR_BLOCO_PDF = 40
 
 
-def _montar_pdf_tabela(titulo, linhas_cabecalho, cabecalho_tabela, linhas_tabela, largura_colunas, linha_total=None):
-    # builder generico pra um pdf de 1 tabela (cabecalho de texto + tabela paisagem) - usado pelos
-    # dois relatorios de movimentacoes de saida (resumo e detalhado)
+def _montar_pdf_relatorio(titulo, linhas_cabecalho, blocos):
+    # builder generico pra um pdf de 1+ tabelas (cabecalho de texto + N tabelas em paisagem, cada
+    # uma com subtitulo opcional) - usado pelos relatorios de consumo e vencidos.
+    # "blocos" eh uma lista de dicts: subtitulo (opcional), cabecalho_tabela, linhas_tabela,
+    # largura_colunas, linha_total (opcional)
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -1379,49 +1389,59 @@ def _montar_pdf_tabela(titulo, linhas_cabecalho, cabecalho_tabela, linhas_tabela
     estilo_cabecalho_tabela = ParagraphStyle(
         "cabecalhoTabelaRelatorio", parent=estilo_celula, fontName="Helvetica-Bold", textColor=colors.white
     )
+    estilo_subtitulo = ParagraphStyle("subtituloRelatorio", parent=estilos["Heading2"], fontSize=12, spaceBefore=4, spaceAfter=6)
 
     elementos = [Paragraph(titulo, estilos["Title"]), Spacer(1, 6)]
     for linha in linhas_cabecalho:
         elementos.append(Paragraph(linha, estilos["Normal"]))
     elementos.append(Spacer(1, 12))
 
-    cabecalho_formatado = [Paragraph(str(c), estilo_cabecalho_tabela) for c in cabecalho_tabela]
-    blocos = [linhas_tabela[i : i + LINHAS_POR_BLOCO_PDF] for i in range(0, len(linhas_tabela), LINHAS_POR_BLOCO_PDF)]
+    for bloco in blocos:
+        if bloco.get("subtitulo"):
+            elementos.append(Paragraph(bloco["subtitulo"], estilo_subtitulo))
 
-    for bloco in blocos or [[]]:
-        corpo_formatado = [[Paragraph(str(valor), estilo_celula) for valor in linha] for linha in bloco]
-        dados_bloco = [cabecalho_formatado] + corpo_formatado
-        tabela = Table(dados_bloco, colWidths=largura_colunas, repeatRows=1)
-        estilo_tabela = [
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1c2b3a")),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d7dde3")),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        cabecalho_formatado = [Paragraph(str(c), estilo_cabecalho_tabela) for c in bloco["cabecalho_tabela"]]
+        largura_colunas = bloco["largura_colunas"]
+        pedacos = [
+            bloco["linhas_tabela"][i : i + LINHAS_POR_BLOCO_PDF] for i in range(0, len(bloco["linhas_tabela"]), LINHAS_POR_BLOCO_PDF)
         ]
-        if len(dados_bloco) > 1:
-            estilo_tabela.append(("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f2f2")]))
-        tabela.setStyle(TableStyle(estilo_tabela))
-        elementos.append(tabela)
 
-    if linha_total:
-        linha_total_formatada = [[Paragraph(f"<b>{valor}</b>", estilo_celula) for valor in linha_total]]
-        tabela_total = Table(linha_total_formatada, colWidths=largura_colunas)
-        tabela_total.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#c8cccf")),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d7dde3")),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ]
+        for pedaco in pedacos or [[]]:
+            corpo_formatado = [[Paragraph(str(valor), estilo_celula) for valor in linha] for linha in pedaco]
+            dados_bloco = [cabecalho_formatado] + corpo_formatado
+            tabela = Table(dados_bloco, colWidths=largura_colunas, repeatRows=1)
+            estilo_tabela = [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1c2b3a")),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d7dde3")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+            if len(dados_bloco) > 1:
+                estilo_tabela.append(("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f2f2")]))
+            tabela.setStyle(TableStyle(estilo_tabela))
+            elementos.append(tabela)
+
+        if bloco.get("linha_total"):
+            linha_total_formatada = [[Paragraph(f"<b>{valor}</b>", estilo_celula) for valor in bloco["linha_total"]]]
+            tabela_total = Table(linha_total_formatada, colWidths=largura_colunas)
+            tabela_total.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#c8cccf")),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d7dde3")),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ]
+                )
             )
-        )
-        elementos.append(tabela_total)
+            elementos.append(tabela_total)
+
+        elementos.append(Spacer(1, 16))
 
     doc.build(elementos)
     return buffer.getvalue()
 
 
-def _gerar_pdf_movimentacoes_resumo(args):
-    resumo = _dados_movimentacoes_saida_resumo(args)
+def _gerar_pdf_consumo_resumo(args):
+    resumo = _dados_consumo_resumo(args)
     mostrar_media_mensal = resumo["meses_completos"] > 0
 
     cabecalho_tabela = ["Cód. Seplag", "Cód. Almox", "Cód. Produto", "Produto", "Descrição", "Quantidade", "Valor Total", "Dias com Saída", "Média Diária"]
@@ -1451,17 +1471,21 @@ def _gerar_pdf_movimentacoes_resumo(args):
     if mostrar_media_mensal:
         linha_total.append("")
 
-    return _montar_pdf_tabela(
-        "Relatório de Resumo de Movimentações de Saída",
-        _montar_cabecalho_pdf_movimentacoes(args),
-        cabecalho_tabela,
-        linhas_tabela,
-        larguras,
-        linha_total,
+    return _montar_pdf_relatorio(
+        "Relatório de Resumo de Consumo",
+        _montar_cabecalho_pdf_consumo(args),
+        [
+            {
+                "cabecalho_tabela": cabecalho_tabela,
+                "linhas_tabela": linhas_tabela,
+                "largura_colunas": larguras,
+                "linha_total": linha_total,
+            }
+        ],
     )
 
 
-def _gerar_pdf_movimentacoes_detalhado(linhas, args):
+def _gerar_pdf_consumo_detalhado(linhas, args):
     cabecalho_tabela = ["Cód. Seplag", "Cód. Almox", "Cód. Produto", "Produto", "Descrição", "Lote", "Tipo de Movimentação", "Quantidade", "Valor Unitário", "Valor Total", "Dt. Movimentação"]
     larguras = [1.5 * cm, 1.5 * cm, 1.5 * cm, 4.0 * cm, 5.5 * cm, 1.8 * cm, 2.6 * cm, 1.6 * cm, 1.8 * cm, 1.8 * cm, 2.0 * cm]
 
@@ -1489,18 +1513,22 @@ def _gerar_pdf_movimentacoes_detalhado(linhas, args):
 
     linha_total = ["Total Geral", "", "", "", "", "", "", _formatar_quantidade_pdf(total_quantidade), "", _formatar_moeda_pdf(total_valor), ""]
 
-    return _montar_pdf_tabela(
-        "Relatório de Movimentações de Saída",
-        _montar_cabecalho_pdf_movimentacoes(args),
-        cabecalho_tabela,
-        linhas_tabela,
-        larguras,
-        linha_total,
+    return _montar_pdf_relatorio(
+        "Relatório de Consumo",
+        _montar_cabecalho_pdf_consumo(args),
+        [
+            {
+                "cabecalho_tabela": cabecalho_tabela,
+                "linhas_tabela": linhas_tabela,
+                "largura_colunas": larguras,
+                "linha_total": linha_total,
+            }
+        ],
     )
 
 
-@app.route("/api/movimentacoes_saida_pdf")
-def api_movimentacoes_saida_pdf():
+@app.route("/api/consumo_pdf")
+def api_consumo_pdf():
     # gera o pdf direto (sem pagina html intermediaria pra imprimir) - um relatorio muito grande
     # impresso numa impressora fisica real estava travando ela; pdf nao depende de impressora
     if not REPORTLAB_DISPONIVEL:
@@ -1509,14 +1537,14 @@ def api_movimentacoes_saida_pdf():
     secao = request.args.get("secao")
 
     if secao == "detalhado":
-        linhas, erro = _dados_movimentacoes_saida_detalhado(request.args)
+        linhas, erro = _dados_consumo_detalhado(request.args)
         if erro:
             return jsonify({"erro": erro}), 400
-        pdf_bytes = _gerar_pdf_movimentacoes_detalhado(linhas, request.args)
-        nome_arquivo = "relatorio_movimentacoes_saida.pdf"
+        pdf_bytes = _gerar_pdf_consumo_detalhado(linhas, request.args)
+        nome_arquivo = "relatorio_consumo.pdf"
     else:
-        pdf_bytes = _gerar_pdf_movimentacoes_resumo(request.args)
-        nome_arquivo = "relatorio_resumo_movimentacoes_saida.pdf"
+        pdf_bytes = _gerar_pdf_consumo_resumo(request.args)
+        nome_arquivo = "relatorio_resumo_consumo.pdf"
 
     return Response(
         pdf_bytes,
@@ -1536,8 +1564,32 @@ def _escrever_csv(cabecalho, linhas):
     return "﻿" + buffer.getvalue()
 
 
-def _gerar_csv_movimentacoes_resumo(args):
-    resumo = _dados_movimentacoes_saida_resumo(args)
+def _escrever_xlsx(cabecalho, linhas):
+    # planilha .xlsx com o mesmo cabecalho/linhas do csv (mesmos valores ja formatados em
+    # _formatar_quantidade_pdf) - so troca o formato do arquivo, botao "Planilha" ao lado do "CSV"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(cabecalho)
+    for linha in linhas:
+        ws.append(linha)
+
+    fonte_cabecalho = Font(bold=True, color="FFFFFF")
+    preenchimento_cabecalho = PatternFill(start_color="1C2B3A", end_color="1C2B3A", fill_type="solid")
+    for celula in ws[1]:
+        celula.font = fonte_cabecalho
+        celula.fill = preenchimento_cabecalho
+
+    for coluna in ws.columns:
+        maior = max((len(str(celula.value)) for celula in coluna if celula.value is not None), default=10)
+        ws.column_dimensions[coluna[0].column_letter].width = min(maior + 2, 60)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def _linhas_consumo_resumo(args):
+    resumo = _dados_consumo_resumo(args)
     mostrar_media_mensal = resumo["meses_completos"] > 0
 
     cabecalho = ["Cód. Seplag", "Cód. Almox", "Cód. Produto", "Produto", "Descrição", "Quantidade", "Valor Total", "Dias com Saída", "Média Diária"]
@@ -1561,10 +1613,10 @@ def _gerar_csv_movimentacoes_resumo(args):
             linha.append(_formatar_quantidade_pdf(item.get("media_mensal")))
         linhas.append(linha)
 
-    return _escrever_csv(cabecalho, linhas)
+    return cabecalho, linhas
 
 
-def _gerar_csv_movimentacoes_detalhado(itens):
+def _linhas_consumo_detalhado(itens):
     cabecalho = ["Cód. Seplag", "Cód. Almox", "Cód. Produto", "Produto", "Descrição", "Lote", "Tipo de Movimentação", "Quantidade", "Valor Unitário", "Valor Total", "Dt. Movimentação"]
     linhas = [
         [
@@ -1582,29 +1634,55 @@ def _gerar_csv_movimentacoes_detalhado(itens):
         ]
         for item in itens
     ]
-    return _escrever_csv(cabecalho, linhas)
+    return cabecalho, linhas
 
 
-@app.route("/api/movimentacoes_saida_csv")
-def api_movimentacoes_saida_csv():
-    # planilha com os mesmos dados do pdf (ver api_movimentacoes_saida_pdf) - mesmo limite de 30
+@app.route("/api/consumo_csv")
+def api_consumo_csv():
+    # planilha com os mesmos dados do pdf (ver api_consumo_pdf) - mesmo limite de 30
     # dias na secao detalhado, pela mesma razao (consulta pesada sem paginacao). diferente do pdf,
     # a descricao NAO eh truncada aqui (csv nao tem o problema de altura de linha de pagina)
     secao = request.args.get("secao")
 
     if secao == "detalhado":
-        linhas, erro = _dados_movimentacoes_saida_detalhado(request.args)
+        linhas, erro = _dados_consumo_detalhado(request.args)
         if erro:
             return jsonify({"erro": erro}), 400
-        conteudo_csv = _gerar_csv_movimentacoes_detalhado(linhas)
-        nome_arquivo = "movimentacoes_saida.csv"
+        conteudo_csv = _escrever_csv(*_linhas_consumo_detalhado(linhas))
+        nome_arquivo = "consumo.csv"
     else:
-        conteudo_csv = _gerar_csv_movimentacoes_resumo(request.args)
-        nome_arquivo = "resumo_movimentacoes_saida.csv"
+        conteudo_csv = _escrever_csv(*_linhas_consumo_resumo(request.args))
+        nome_arquivo = "resumo_consumo.csv"
 
     return Response(
         conteudo_csv.encode("utf-8"),
         mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={nome_arquivo}"},
+    )
+
+
+@app.route("/api/consumo_xlsx")
+def api_consumo_xlsx():
+    # mesmos dados do csv (ver api_consumo_csv), so que em .xlsx - mesmo limite de 30 dias na
+    # secao detalhado, pela mesma razao (consulta pesada sem paginacao)
+    if not OPENPYXL_DISPONIVEL:
+        return jsonify({"erro": "Geração de planilha indisponível: biblioteca openpyxl não instalada no servidor."}), 500
+
+    secao = request.args.get("secao")
+
+    if secao == "detalhado":
+        linhas, erro = _dados_consumo_detalhado(request.args)
+        if erro:
+            return jsonify({"erro": erro}), 400
+        xlsx_bytes = _escrever_xlsx(*_linhas_consumo_detalhado(linhas))
+        nome_arquivo = "consumo.xlsx"
+    else:
+        xlsx_bytes = _escrever_xlsx(*_linhas_consumo_resumo(request.args))
+        nome_arquivo = "resumo_consumo.xlsx"
+
+    return Response(
+        xlsx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={nome_arquivo}"},
     )
 
@@ -2476,18 +2554,17 @@ def api_vencidos():
         return jsonify({"erro": str(erro)}), 500
 
 
-@app.route("/api/vencidos_por_armazem")
-def api_vencidos_por_armazem():
-    # relatorio: quantidade e valor vencido somados POR ARMAZEM (em vez de por produto, como
-    # /api/vencidos) - mesmos filtros de texto/armazem/usuario da tela, so troca o agrupamento
-    cod_seplag = request.args.get("cod_seplag")
-    cod_almox = request.args.get("cod_almox")
-    cod_produto = request.args.get("cod_produto")
-    nome_produto = request.args.get("nome_produto")
-    descricao = request.args.get("descricao")
-    lote = request.args.get("lote")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
-    armazem = request.args.get("armazem")
+def _filtros_vencidos_relatorio(args):
+    # where/filtro de armazem compartilhados pelos relatorios de vencidos (por armazem e
+    # detalhado) - mesmos filtros de texto/armazem/usuario da tela vencidos.html
+    cod_seplag = args.get("cod_seplag")
+    cod_almox = args.get("cod_almox")
+    cod_produto = args.get("cod_produto")
+    nome_produto = args.get("nome_produto")
+    descricao = args.get("descricao")
+    lote = args.get("lote")
+    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+    armazem = args.get("armazem")
 
     condicoes = ["l.validade < CURRENT_DATE", "e.quantidade > 0"]
     params = []
@@ -2514,6 +2591,13 @@ def api_vencidos_por_armazem():
     filtro_armazem, params_armazem = _fragmento_filtro_armazem("arm.armazem", usuario_logado, armazem)
     where = " AND ".join(condicoes)
 
+    return where, filtro_armazem, params + params_armazem
+
+
+def _dados_vencidos_por_armazem(args):
+    # relatorio: quantidade e valor vencido somados POR ARMAZEM (em vez de por produto, como
+    # /api/vencidos) - mesmos filtros de texto/armazem/usuario da tela, so troca o agrupamento
+    where, filtro_armazem, params = _filtros_vencidos_relatorio(args)
     sql = f"""
         SELECT
             COALESCE(pes_arm.nome, arm.sigla) AS nome_armazem,
@@ -2529,47 +2613,18 @@ def api_vencidos_por_armazem():
         GROUP BY arm.armazem, COALESCE(pes_arm.nome, arm.sigla)
         ORDER BY nome_armazem
     """
-    return _consulta_generica(sql, params + params_armazem)
+    return run_query(sql, params)
 
 
-@app.route("/api/vencidos_detalhado")
-def api_vencidos_detalhado():
+@app.route("/api/vencidos_por_armazem")
+def api_vencidos_por_armazem():
+    return jsonify(_dados_vencidos_por_armazem(request.args))
+
+
+def _dados_vencidos_detalhado(args):
     # relatorio: TODOS os itens/lotes vencidos (um por lote+armazem, sem paginar) que atendem aos
-    # mesmos filtros de vencidos.html - usado no relatorio impresso, junto com o resumo por armazem
-    cod_seplag = request.args.get("cod_seplag")
-    cod_almox = request.args.get("cod_almox")
-    cod_produto = request.args.get("cod_produto")
-    nome_produto = request.args.get("nome_produto")
-    descricao = request.args.get("descricao")
-    lote = request.args.get("lote")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
-    armazem = request.args.get("armazem")
-
-    condicoes = ["l.validade < CURRENT_DATE", "e.quantidade > 0"]
-    params = []
-
-    if cod_seplag:
-        condicoes.append("p.codigoreferencia ILIKE %s")
-        params.append(f"%{cod_seplag}%")
-    if cod_almox:
-        condicoes.append("p.codigo ILIKE %s")
-        params.append(f"%{cod_almox}%")
-    if cod_produto:
-        condicoes.append("p.produto::text ILIKE %s")
-        params.append(f"%{cod_produto}%")
-    if nome_produto:
-        condicoes.append("p.nome ILIKE %s")
-        params.append(f"%{nome_produto}%")
-    if descricao:
-        condicoes.append("p.descricao ILIKE %s")
-        params.append(f"%{descricao}%")
-    if lote:
-        condicoes.append("l.lotefornecedor ILIKE %s")
-        params.append(f"%{lote}%")
-
-    filtro_armazem, params_armazem = _fragmento_filtro_armazem("arm.armazem", usuario_logado, armazem)
-    where = " AND ".join(condicoes)
-
+    # mesmos filtros de vencidos.html - usado nos relatorios pdf/csv, junto com o resumo por armazem
+    where, filtro_armazem, params = _filtros_vencidos_relatorio(args)
     sql = f"""
         SELECT
             p.codigoreferencia AS cod_seplag,
@@ -2591,7 +2646,155 @@ def api_vencidos_detalhado():
         WHERE {where} {filtro_armazem}
         ORDER BY p.nome, l.validade ASC
     """
-    return _consulta_generica(sql, params + params_armazem)
+    return run_query(sql, params)
+
+
+def _montar_cabecalho_pdf_vencidos(args):
+    rotulos = [
+        ("cod_seplag", "Cód. Seplag"),
+        ("cod_almox", "Cód. Almox"),
+        ("cod_produto", "Cód. Produto"),
+        ("nome_produto", "Nome do Produto"),
+        ("descricao", "Descrição"),
+        ("lote", "Lote"),
+        ("armazem", "Armazém"),
+    ]
+    filtros = [f"{rotulo}: {args.get(chave)}" for chave, rotulo in rotulos if args.get(chave)]
+    agora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+    return [
+        f"<b>Gerado em:</b> {agora}",
+        f"<b>Filtros aplicados:</b> {' · '.join(filtros) if filtros else 'Nenhum (todos os produtos vencidos)'}",
+    ]
+
+
+def _gerar_pdf_vencidos(args):
+    armazens = _dados_vencidos_por_armazem(args)
+    itens = _dados_vencidos_detalhado(args)
+
+    total_qtd_armazem = sum(float(item.get("quantidade_vencida") or 0) for item in armazens)
+    total_valor_armazem = sum(float(item.get("valor_vencido") or 0) for item in armazens)
+    linhas_armazem = [
+        [
+            item.get("nome_armazem") or "",
+            _formatar_quantidade_pdf(item.get("quantidade_vencida")),
+            _formatar_moeda_pdf(item.get("valor_vencido")),
+        ]
+        for item in armazens
+    ]
+    linha_total_armazem = ["Total Geral", _formatar_quantidade_pdf(total_qtd_armazem), _formatar_moeda_pdf(total_valor_armazem)]
+
+    total_qtd_itens = sum(float(item.get("quantidade") or 0) for item in itens)
+    total_valor_itens = sum(float(item.get("valor_total") or 0) for item in itens)
+    linhas_itens = [
+        [
+            item.get("cod_seplag") or "",
+            item.get("cod_almox") or "",
+            item.get("cod_produto") or "",
+            item.get("nome_produto") or "",
+            item.get("lote") or "",
+            item.get("validade") or "",
+            item.get("nome_armazem") or "",
+            _formatar_quantidade_pdf(item.get("quantidade")),
+            _formatar_moeda_pdf(item.get("valor_unitario")),
+            _formatar_moeda_pdf(item.get("valor_total")),
+        ]
+        for item in itens
+    ]
+    linha_total_itens = ["Total Geral", "", "", "", "", "", "", _formatar_quantidade_pdf(total_qtd_itens), "", _formatar_moeda_pdf(total_valor_itens)]
+
+    return _montar_pdf_relatorio(
+        "Relatório de Produtos Vencidos por Armazém",
+        _montar_cabecalho_pdf_vencidos(args),
+        [
+            {
+                "subtitulo": "Por Armazém",
+                "cabecalho_tabela": ["Armazém", "Qtde. Vencida", "Valor Vencido"],
+                "linhas_tabela": linhas_armazem,
+                "largura_colunas": [8 * cm, 4 * cm, 4 * cm],
+                "linha_total": linha_total_armazem,
+            },
+            {
+                "subtitulo": "Itens Detalhados",
+                "cabecalho_tabela": [
+                    "Cód. Seplag",
+                    "Cód. Almox",
+                    "Cód. Produto",
+                    "Nome do Produto",
+                    "Lote",
+                    "Validade",
+                    "Armazém",
+                    "Quantidade",
+                    "Valor Unitário",
+                    "Valor Total",
+                ],
+                "linhas_tabela": linhas_itens,
+                "largura_colunas": [1.8 * cm, 1.8 * cm, 1.8 * cm, 6.5 * cm, 2.0 * cm, 2.0 * cm, 3.5 * cm, 2.0 * cm, 2.2 * cm, 2.2 * cm],
+                "linha_total": linha_total_itens,
+            },
+        ],
+    )
+
+
+def _linhas_vencidos(args):
+    itens = _dados_vencidos_detalhado(args)
+    cabecalho = ["Cód. Seplag", "Cód. Almox", "Cód. Produto", "Nome do Produto", "Lote", "Validade", "Armazém", "Quantidade", "Valor Unitário", "Valor Total"]
+    linhas = [
+        [
+            item.get("cod_seplag") or "",
+            item.get("cod_almox") or "",
+            item.get("cod_produto") or "",
+            item.get("nome_produto") or "",
+            item.get("lote") or "",
+            item.get("validade") or "",
+            item.get("nome_armazem") or "",
+            _formatar_quantidade_pdf(item.get("quantidade")),
+            _formatar_quantidade_pdf(item.get("valor_unitario")),
+            _formatar_quantidade_pdf(item.get("valor_total")),
+        ]
+        for item in itens
+    ]
+    return cabecalho, linhas
+
+
+@app.route("/api/vencidos_pdf")
+def api_vencidos_pdf():
+    # gera o pdf direto (sem pagina html intermediaria pra imprimir) - mesma ideia do pdf de
+    # consumo: junta "Por Armazém" e "Itens Detalhados" num pdf so
+    if not REPORTLAB_DISPONIVEL:
+        return jsonify({"erro": "Geração de PDF indisponível: biblioteca reportlab não instalada no servidor."}), 500
+
+    pdf_bytes = _gerar_pdf_vencidos(request.args)
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=relatorio_produtos_vencidos.pdf"},
+    )
+
+
+@app.route("/api/vencidos_csv")
+def api_vencidos_csv():
+    # planilha com os itens detalhados (mesmos dados da segunda tabela do pdf)
+    conteudo_csv = _escrever_csv(*_linhas_vencidos(request.args))
+    return Response(
+        conteudo_csv.encode("utf-8"),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=produtos_vencidos.csv"},
+    )
+
+
+@app.route("/api/vencidos_xlsx")
+def api_vencidos_xlsx():
+    # mesmos dados do csv (ver api_vencidos_csv), so que em .xlsx
+    if not OPENPYXL_DISPONIVEL:
+        return jsonify({"erro": "Geração de planilha indisponível: biblioteca openpyxl não instalada no servidor."}), 500
+
+    xlsx_bytes = _escrever_xlsx(*_linhas_vencidos(request.args))
+    return Response(
+        xlsx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=produtos_vencidos.xlsx"},
+    )
 
 
 @app.route("/api/vencidos_lotes")

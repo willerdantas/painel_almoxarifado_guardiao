@@ -85,7 +85,7 @@
           <span class="contador-secundario" id="contadorCodSeplag">Cód. Seplag: 0 (0,00%)</span>
           <span class="contador-secundario" id="contadorCodAlmox">Cód. Almox: 0 (0,00%)</span>
           <span class="contador-secundario" id="contadorProcedimentoSus">Procedimento SUS: 0 (0,00%)</span>
-          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoMovimentacoesSaida">Movimentações de Saída</button>
+          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoConsumo">Consumo</button>
         </div>
         <div id="areaProdutos">
           <p class="msg-vazio">Carregando dado, aguenta ai...</p>
@@ -805,10 +805,10 @@
     });
 
     // leva os filtros atuais (cod seplag/almox/produto, nome, descricao, armazem) pra tela de
-    // movimentacoes de saida - ela mesma ignora os parametros que nao usa (lote, subgrupo).
+    // consumo - ela mesma ignora os parametros que nao usa (lote, subgrupo).
     // muda de pagina (mesma aba) em vez de abrir aba nova
-    document.getElementById("botaoMovimentacoesSaida").addEventListener("click", () => {
-      window.location.href = `/pages/movimentacoes_saida.html?${montarQueryFiltros().toString()}`;
+    document.getElementById("botaoConsumo").addEventListener("click", () => {
+      window.location.href = `/pages/consumo.html?${montarQueryFiltros().toString()}`;
     });
   </script>
 </body>

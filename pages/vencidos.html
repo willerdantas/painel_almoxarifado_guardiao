@@ -76,6 +76,8 @@
         <div class="secao-cabecalho secao-cabecalho-relatorio" id="cabecalhoRelatorioArmazem">
           <h2>Relatório por Armazém</h2>
           <button type="button" class="botao-filtrar" id="botaoGerarRelatorio">Gerar Relatório</button>
+          <button type="button" class="botao-resetar" id="botaoCsv">CSV</button>
+          <button type="button" class="botao-resetar" id="botaoXlsx">Planilha</button>
         </div>
       </section>
 
@@ -366,9 +368,18 @@
       }
     }
 
-    // abre o relatorio pronto pra impressao numa aba nova, com os mesmos filtros aplicados aqui
+    // relatorio (pdf), csv e planilha (xlsx) saem direto, sem pagina html intermediaria pra
+    // imprimir - mesmos filtros aplicados aqui
     document.getElementById("botaoGerarRelatorio").addEventListener("click", () => {
-      window.open(`/pages/relatorio_vencidos.html?${montarQueryFiltros().toString()}`, "_blank");
+      window.open(`/api/vencidos_pdf?${montarQueryFiltros().toString()}`, "_blank");
+    });
+
+    document.getElementById("botaoCsv").addEventListener("click", () => {
+      window.open(`/api/vencidos_csv?${montarQueryFiltros().toString()}`, "_blank");
+    });
+
+    document.getElementById("botaoXlsx").addEventListener("click", () => {
+      window.open(`/api/vencidos_xlsx?${montarQueryFiltros().toString()}`, "_blank");
     });
 
     async function buscarProdutos(pagina) {
