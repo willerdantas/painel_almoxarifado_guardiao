@@ -127,7 +127,33 @@
       return params;
     }
 
-    iniciarFiltroArmazemCondicional("filtroArmazem", "blocoFiltroArmazem");
+    // dropdown de armazem so com quem de fato tem estoque (nao a lista cheia de armazens tipo C)
+    // - se o usuario logado cair num unico armazem dessa lista (via armazemfunc), filtra por ele
+    // automaticamente em vez de comecar em "Todos"
+    async function iniciarFiltroArmazemEstoque() {
+      try {
+        const query = identificacaoLogada() ? `?usuario_logado=${encodeURIComponent(identificacaoLogada())}` : "";
+        const resp = await fetch(`/api/estoque_armazens${query}`);
+        const armazens = await resp.json();
+        const select = document.getElementById("filtroArmazem");
+
+        armazens.forEach((item) => {
+          const opcao = document.createElement("option");
+          opcao.value = item.nome;
+          opcao.textContent = item.nome;
+          select.appendChild(opcao);
+        });
+
+        if (armazens.length > 0) document.getElementById("blocoFiltroArmazem").classList.remove("oculto");
+        if (armazens.length === 1) select.value = armazens[0].nome;
+      } catch (erro) {
+        console.error("Erro ao carregar armazéns do filtro:", erro);
+      }
+
+      buscarProdutos(1);
+    }
+
+    iniciarFiltroArmazemEstoque();
 
     const NUMERO_COLUNAS = 12;
 
@@ -776,8 +802,6 @@
         esconderSugestoesDescricao();
       }
     });
-
-    buscarProdutos(1);
   </script>
 </body>
 </html>

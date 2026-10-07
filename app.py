@@ -853,6 +853,30 @@ def api_vencidos_armazens():
     return _consulta_generica(sql, params)
 
 
+@app.route("/api/estoque_armazens")
+def api_estoque_armazens():
+    # armazens de qualquer tipo que tem pelo menos um produto com estoque > 0 - usado pra popular
+    # o filtro de armazem em estoque.html (em vez da lista cheia de armazens, so quem realmente
+    # tem estoque). restrito aos armazens do usuario logado quando ele nao eh administrador
+    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    condicoes = ["e.quantidade > 0"]
+    params = []
+    if usuario_logado:
+        condicoes.append(f"arm.armazem IN ({SQL_ARMAZENS_DO_USUARIO})")
+        params.append(usuario_logado)
+    where = " AND ".join(condicoes)
+
+    sql = f"""
+        SELECT DISTINCT arm.armazem, COALESCE(pes.nome, arm.sigla) AS nome
+        FROM public.estoque e
+        JOIN public.armazem arm ON arm.armazem = e.armazem
+        LEFT JOIN public.pessoa pes ON pes.pessoa = arm.pessoa
+        WHERE {where}
+        ORDER BY nome
+    """
+    return _consulta_generica(sql, params)
+
+
 @app.route("/api/unidades")
 def api_unidades():
     sql = """
@@ -2132,8 +2156,7 @@ def api_estoque():
             SELECT lt.produto, SUM(e.quantidade) AS total
             FROM public.lote lt
             JOIN public.estoque e ON e.lote = lt.lote
-            JOIN public.armazem arm_e ON arm_e.armazem = e.armazem
-            WHERE arm_e.tipoarmazem = 'C'
+            WHERE 1=1
             {filtro_armazem_usuario}
             GROUP BY lt.produto
             HAVING SUM(e.quantidade) > 0
@@ -2239,8 +2262,7 @@ def api_estoque_lotes():
         JOIN (
             SELECT e.lote, SUM(e.quantidade) AS quantidade
             FROM public.estoque e
-            JOIN public.armazem arm_e ON arm_e.armazem = e.armazem
-            WHERE arm_e.tipoarmazem = 'C'
+            WHERE 1=1
             {filtro_armazem_usuario}
             GROUP BY e.lote
             HAVING SUM(e.quantidade) > 0
@@ -2513,8 +2535,8 @@ def api_estoque_abastecimento():
 @app.route("/api/aquisicoes")
 def api_aquisicoes():
     # igual a /api/estoque (mesmos filtros, mesma paginacao), mas so lista produto que tem pelo
-    # menos um armazem onde o ponto de ressuprimento ta configurado (> 0) e NAO esta sendo
-    # atendido (estoque daquele armazem + saldo em contrato do produto < ponto de ressuprimento) -
+    # menos um armazem onde o limite escolhido (tipo_alerta) ta configurado (estoqueminimo > 0) e
+    # NAO esta sendo atendido (estoque daquele armazem + saldo em contrato do produto < limite) -
     # mesma regra de "insuficiente" usada no sinalizador ⚠ de /api/estoque_abastecimento
     cod_seplag = request.args.get("cod_seplag")
     cod_almox = request.args.get("cod_almox")
@@ -2525,6 +2547,14 @@ def api_aquisicoes():
     subgrupo = request.args.get("subgrupo")
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
     armazem = request.args.get("armazem")
+    # qual limite usar pra decidir "insuficiente": estoque minimo (30d), estoque de seguranca
+    # (90d) ou ponto de ressuprimento (180d, default - mesmo criterio de antes dessa opcao existir)
+    limite_alerta_por_tipo = {
+        "minimo": "ea.estoqueminimo",
+        "seguranca": "ea.estoqueseguranca",
+        "ressuprimento": SQL_PONTO_RESSUPRIMENTO_180D,
+    }
+    limite_alerta = limite_alerta_por_tipo.get(request.args.get("tipo_alerta"), SQL_PONTO_RESSUPRIMENTO_180D)
     try:
         pagina = max(int(request.args.get("pagina", 1)), 1)
     except ValueError:
@@ -2557,7 +2587,7 @@ def api_aquisicoes():
         condicoes.append("sg.descricao ILIKE %s")
         params.append(f"%{subgrupo}%")
 
-    # ponto de ressuprimento insuficiente, restrito aos mesmos armazens que o usuario enxerga
+    # limite escolhido insuficiente, restrito aos mesmos armazens que o usuario enxerga
     filtro_armazem_ea, params_armazem_ea = _fragmento_filtro_armazem("arm_ea.armazem", usuario_logado, armazem)
     condicoes.append(f"""
         EXISTS (
@@ -2569,7 +2599,7 @@ def api_aquisicoes():
             AND arm_ea.tipoarmazem = 'C'
             {filtro_armazem_ea}
             AND ea.estoqueminimo > 0
-            AND (ea.quantidade + COALESCE(sp.saldo, 0)) < {SQL_PONTO_RESSUPRIMENTO_180D}
+            AND (ea.quantidade + COALESCE(sp.saldo, 0)) < {limite_alerta}
         )
     """)
 

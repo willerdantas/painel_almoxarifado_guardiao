@@ -62,6 +62,15 @@
             <div class="sugestoes" id="sugestoesSubgrupo"></div>
           </div>
 
+          <div class="campo-filtro campo-curto">
+            <label for="filtroTipoAlerta">Autonomia Insuficiente Em</label>
+            <select id="filtroTipoAlerta">
+              <option value="ressuprimento">Ponto de Ressuprimento</option>
+              <option value="minimo">Estoque Mínimo</option>
+              <option value="seguranca">Estoque de Segurança</option>
+            </select>
+          </div>
+
           <div class="campo-filtro campo-curto oculto" id="blocoFiltroArmazem">
             <label for="filtroArmazem">Armazém</label>
             <select id="filtroArmazem">
@@ -110,6 +119,7 @@
       const descricao = document.getElementById("filtroDescricao").value.trim();
       const subgrupo = document.getElementById("filtroSubgrupo").value.trim();
       const armazem = document.getElementById("filtroArmazem").value;
+      const tipoAlerta = document.getElementById("filtroTipoAlerta").value;
 
       if (codSeplag) params.set("cod_seplag", codSeplag);
       if (codAlmox) params.set("cod_almox", codAlmox);
@@ -119,6 +129,7 @@
       if (descricao) params.set("descricao", descricao);
       if (subgrupo) params.set("subgrupo", subgrupo);
       if (armazem) params.set("armazem", armazem);
+      if (tipoAlerta) params.set("tipo_alerta", tipoAlerta);
       if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
 
       return params;
