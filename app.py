@@ -3863,11 +3863,16 @@ def api_pagamentos():
 def api_atas_contratos():
     # TODO homem: status/modalidade ainda nao tem mapeamento definido (statuspedido/modalidadelicitacao
     # sao codigos de 1 letra e nao sei o que cada valor significa) - filtros ficam guardados mas sem uso
-    numero_ata = request.args.get("numero_ata")
-    numero_contrato = request.args.get("numero_contrato")
+    # ata e contrato sao mutuamente exclusivos por linha (atapreco 'S' usa numeroata, 'N' usa
+    # numerocontrato) - um campo so de busca cobre os dois
+    numero_ata_contrato = request.args.get("numero_ata_contrato")
     cnpj = request.args.get("cnpj")
     fornecedor = request.args.get("fornecedor")
     produto = request.args.get("produto")
+    armazem = request.args.get("armazem")
+    # tipopedido: codigo de 1 letra (C, S, I, P, D, A, H) sem mapeamento conhecido ainda - mesmo
+    # caso de statuspedido/modalidadelicitacao, filtra pelo codigo cru mesmo
+    tipo_pedido = request.args.get("tipo_pedido")
     filtro_data_inicio = request.args.get("data_inicio")
     filtro_data_fim = request.args.get("data_fim")
     situacao = request.args.get("situacao")  # "validos" ou "vencidos"
@@ -3882,12 +3887,10 @@ def api_atas_contratos():
     condicoes = ["pc.numeroaditivo = 0"]
     params = []
 
-    if numero_ata:
-        condicoes.append("pc.numeroata ILIKE %s")
-        params.append(f"%{numero_ata}%")
-    if numero_contrato:
-        condicoes.append("pc.numerocontrato ILIKE %s")
-        params.append(f"%{numero_contrato}%")
+    if numero_ata_contrato:
+        condicoes.append("(pc.numeroata ILIKE %s OR pc.numerocontrato ILIKE %s)")
+        params.append(f"%{numero_ata_contrato}%")
+        params.append(f"%{numero_ata_contrato}%")
     if cnpj:
         # tira mascara (pontos, barra, traco) - o campo no banco eh so digito
         cnpj_digitos = re.sub(r"\D", "", cnpj)
@@ -3905,6 +3908,27 @@ def api_atas_contratos():
             )
         """)
         params.append(f"%{produto}%")
+    if armazem:
+        # associa item do contrato -> armazem atraves do que de fato foi recebido contra ele:
+        # pedidoitem -> pedidodestaque (empenho) -> entradaitem (entrada que gerou o lote) ->
+        # estoque (lote + armazem onde esse lote esta). so pega contrato que ja teve entrada
+        # recebida nesse armazem especifico
+        condicoes.append("""
+            EXISTS (
+                SELECT 1
+                FROM public.pedidoitem pi
+                JOIN public.pedidodestaque pd ON pd.pedidoitem = pi.pedidoitem
+                JOIN public.entradaitem ei ON ei.pedidodestaque = pd.pedidodestaque
+                JOIN public.estoque e ON e.estoque = ei.estoque
+                JOIN public.armazem arm ON arm.armazem = e.armazem
+                LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
+                WHERE pi.pedidocabecalho = pc.pedidocabecalho AND pes_arm.nome = %s
+            )
+        """)
+        params.append(armazem)
+    if tipo_pedido:
+        condicoes.append("pc.tipopedido = %s")
+        params.append(tipo_pedido)
     # filtro de periodo: traz contratos cuja data de inicio E data fim (efetiva, maior aditivo)
     # caem dentro do intervalo informado - os dois extremos do contrato "cabem" no filtro
     if filtro_data_inicio and filtro_data_fim:
