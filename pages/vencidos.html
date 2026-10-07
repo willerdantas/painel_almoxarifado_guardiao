@@ -75,7 +75,7 @@
       <section class="cartao secao-pedidos">
         <div class="secao-cabecalho secao-cabecalho-relatorio" id="cabecalhoRelatorioArmazem">
           <h2>Relatório por Armazém</h2>
-          <button type="button" class="botao-filtrar" id="botaoGerarRelatorio">Gerar Relatório</button>
+          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoGerarRelatorio">Gerar Relatório</button>
           <button type="button" class="botao-resetar" id="botaoCsv">CSV</button>
           <button type="button" class="botao-resetar" id="botaoXlsx">Planilha</button>
         </div>
@@ -342,20 +342,24 @@
     // os mesmos filtros da busca principal
     async function atualizarRelatorioPorArmazem() {
       const cabecalho = document.getElementById("cabecalhoRelatorioArmazem");
+      // badges entram antes do botao "Gerar Relatório" (nao no final do cabecalho) - com os
+      // botoes empurrados pro lado direito (.secao-cabecalho-botao-fim), isso mantem os badges
+      // coladinhos no titulo, a esquerda, e os botoes isolados a direita
+      const botaoGerarRelatorio = document.getElementById("botaoGerarRelatorio");
       try {
         const resp = await fetch(`/api/vencidos_por_armazem?${montarQueryFiltros().toString()}`);
         const armazens = await resp.json();
 
-        cabecalho.querySelectorAll(".grupo-badge-armazem").forEach((el) => el.remove());
+        cabecalho.querySelectorAll(".grupo-badge-armazem, .msg-vazio").forEach((el) => el.remove());
 
         if (!Array.isArray(armazens) || armazens.length === 0) {
-          cabecalho.insertAdjacentHTML("beforeend", '<span class="msg-vazio">Nenhum armazém com produto vencido pros filtros atuais.</span>');
+          botaoGerarRelatorio.insertAdjacentHTML("beforebegin", '<span class="msg-vazio">Nenhum armazém com produto vencido pros filtros atuais.</span>');
           return;
         }
 
         armazens.forEach((item) => {
-          cabecalho.insertAdjacentHTML(
-            "beforeend",
+          botaoGerarRelatorio.insertAdjacentHTML(
+            "beforebegin",
             `<span class="grupo-badge-armazem">
               <span class="nome-armazem">${item.nome_armazem ?? ""}</span>
               <span>Qtde: ${formatarQuantidade(item.quantidade_vencida)}</span>
