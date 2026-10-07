@@ -211,7 +211,7 @@
     // armazem com o mesmo nome do requisitante, nao tem o que comparar
     function iconeConfereCalendario(confere) {
       if (confere === true) return '<span class="icone-confere-ok" title="Pedido no dia liberado pelo calendário de distribuição">✅</span>';
-      if (confere === false) return '<span class="icone-confere-atencao" title="Pedido fora do dia liberado pelo calendário de distribuição">⚠️</span>';
+      if (confere === false) return '<span class="tag-alerta" title="Pedido fora do dia liberado pelo calendário de distribuição">Fora do Calendário</span>';
       return "";
     }
 
@@ -298,6 +298,8 @@
         <tr>
           <td class="celula-quebra">${item.nome_produto ?? ""}</td>
           <td>${formatarQuantidade(item.quantidade)}</td>
+          <td>${item.lote ?? "-"} ${item.vencido ? '<span class="tag-vencido" title="Lote já vencido">Vencido</span>' : ""}</td>
+          <td>${item.validade ?? ""}</td>
         </tr>`
         )
         .join("");
@@ -310,6 +312,8 @@
               <tr>
                 <th>Produto</th>
                 <th>Qtde.</th>
+                <th>Lote</th>
+                <th>Validade</th>
               </tr>
             </thead>
             <tbody>${linhas}</tbody>

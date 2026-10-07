@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSYSTEM | Movimentações de Saída</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <main class="conteudo">
+      <div class="topo-pagina">
+        <h1>Movimentações de Saída</h1>
+        <div class="topo-direita">
+          <button type="button" class="botao-resetar" id="botaoVoltar">Voltar</button>
+          <div class="area-usuario">
+            <span class="usuario-logado" id="usuarioLogado"></span>
+            <button class="botao-sair" id="botaoSairTopo">Sair</button>
+          </div>
+          <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+        </div>
+      </div>
+
+      <section class="cartao filtros">
+        <form id="formFiltros" class="grade-filtros">
+          <div class="campo-filtro campo-curto">
+            <label for="filtroCodSeplag">Cód. Seplag</label>
+            <input type="text" id="filtroCodSeplag" placeholder="Ex.: 371891" />
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroCodAlmox">Cód. Almox</label>
+            <input type="text" id="filtroCodAlmox" placeholder="Ex.: 6355" />
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroCodProduto">Cód. Produto</label>
+            <input type="text" id="filtroCodProduto" placeholder="Ex.: 105844" />
+          </div>
+
+          <div class="campo-filtro campo-autocompletar campo-largo">
+            <label for="filtroNomeProduto">Nome do Produto</label>
+            <input type="text" id="filtroNomeProduto" placeholder="Ex.: Agulha descartável" autocomplete="off" />
+            <div class="sugestoes" id="sugestoesNomeProduto"></div>
+          </div>
+
+          <div class="campo-filtro campo-autocompletar campo-largo">
+            <label for="filtroDescricao">Descrição</label>
+            <input type="text" id="filtroDescricao" placeholder="Ex.: ATOXICO, APIROGENICO" autocomplete="off" />
+            <div class="sugestoes" id="sugestoesDescricao"></div>
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroDataInicio">Data Início</label>
+            <input type="date" id="filtroDataInicio" />
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroDataFim">Data Fim</label>
+            <input type="date" id="filtroDataFim" />
+          </div>
+
+          <div class="campo-filtro campo-curto oculto" id="blocoFiltroArmazem">
+            <label for="filtroArmazem">Armazém</label>
+            <select id="filtroArmazem">
+              <option value="">Todos</option>
+            </select>
+          </div>
+
+          <div class="campo-filtro campo-acao">
+            <div class="grupo-botoes-filtro">
+              <button type="submit" class="botao-filtrar">Filtrar</button>
+              <button type="button" class="botao-resetar" id="botaoResetarFiltros">Resetar</button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho secao-cabecalho-relatorio" id="cabecalhoResumo">
+          <h2>Resumo</h2>
+          <span class="contador-secundario" id="resumoItensUnicos">Itens Únicos: 0</span>
+          <span class="contador-secundario" id="resumoQuantidadeMovimentacoes">Movimentações: 0</span>
+          <span class="contador-secundario" id="resumoQuantidadeTotal">Qtde. Total: 0</span>
+          <span class="contador-secundario" id="resumoValorTotal">Valor Total: R$ 0,00</span>
+          <span class="contador-secundario" id="resumoMediaDiaria">Média Diária: 0</span>
+          <span class="contador-secundario oculto" id="resumoMediaMensal">Média Mensal: 0</span>
+          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoGerarRelatorioResumo">Gerar Relatório</button>
+          <button type="button" class="botao-resetar" id="botaoPlanilhaResumo">Planilha</button>
+        </div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Itens Movimentados</h2>
+          <span class="contador-secao" id="contadorMovimentacoes">0</span>
+          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoGerarRelatorioDetalhado">Gerar Relatório</button>
+          <button type="button" class="botao-resetar" id="botaoPlanilhaDetalhado">Planilha</button>
+        </div>
+        <div id="areaMovimentacoes">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+        <div class="paginacao" id="areaPaginacao"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script>
+    // pagina sem menu lateral - chegada aqui eh por mudanca de pagina (mesma aba) vinda de
+    // estoque.html, entao voltar eh navegar de volta pra la (nao da pra window.close() uma aba
+    // que nao foi aberta via window.open)
+    protegerPagina();
+    document.getElementById("usuarioLogado").textContent = localStorage.getItem("usuario") || "visitante";
+    document.getElementById("botaoSairTopo").addEventListener("click", sair);
+    document.getElementById("botaoVoltar").addEventListener("click", () => {
+      window.location.href = "/pages/estoque.html";
+    });
+
+    // padrao mostra tudo a partir de 01-10-2026 (janela util de dado real de teste) ate hoje -
+    // sem limite superior, data suja antiga (ano digitado errado tipo 6019) sobe pro topo da lista
+    document.getElementById("filtroDataInicio").value = "2026-10-01";
+    document.getElementById("filtroDataFim").value = dataHojeISO();
+
+    // essa pagina abre numa aba nova vinda do botao "Movimentações de Saída" em estoque.html,
+    // que ja manda o filtro atual na querystring - repopula o formulario com o que veio de la
+    const parametrosIniciais = new URLSearchParams(window.location.search);
+    const MAPA_CAMPOS_INICIAIS = {
+      cod_seplag: "filtroCodSeplag",
+      cod_almox: "filtroCodAlmox",
+      cod_produto: "filtroCodProduto",
+      nome_produto: "filtroNomeProduto",
+      descricao: "filtroDescricao",
+      data_inicio: "filtroDataInicio",
+      data_fim: "filtroDataFim",
+    };
+    Object.entries(MAPA_CAMPOS_INICIAIS).forEach(([parametro, campoId]) => {
+      const valor = parametrosIniciais.get(parametro);
+      if (valor) document.getElementById(campoId).value = valor;
+    });
+
+    function montarQueryFiltros() {
+      const params = new URLSearchParams();
+      const codSeplag = document.getElementById("filtroCodSeplag").value.trim();
+      const codAlmox = document.getElementById("filtroCodAlmox").value.trim();
+      const codProduto = document.getElementById("filtroCodProduto").value.trim();
+      const nomeProduto = document.getElementById("filtroNomeProduto").value.trim();
+      const descricao = document.getElementById("filtroDescricao").value.trim();
+      const dataInicio = document.getElementById("filtroDataInicio").value;
+      const dataFim = document.getElementById("filtroDataFim").value;
+      const armazem = document.getElementById("filtroArmazem").value;
+
+      if (codSeplag) params.set("cod_seplag", codSeplag);
+      if (codAlmox) params.set("cod_almox", codAlmox);
+      if (codProduto) params.set("cod_produto", codProduto);
+      if (nomeProduto) params.set("nome_produto", nomeProduto);
+      if (descricao) params.set("descricao", descricao);
+      if (dataInicio) params.set("data_inicio", dataInicio);
+      if (dataFim) params.set("data_fim", dataFim);
+      if (armazem) params.set("armazem", armazem);
+      if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
+
+      return params;
+    }
+
+    function renderizarResumo(resumo) {
+      document.getElementById("resumoItensUnicos").textContent = `Itens Únicos: ${resumo.itens_unicos ?? 0}`;
+      document.getElementById("resumoQuantidadeMovimentacoes").textContent = `Movimentações: ${resumo.quantidade_movimentacoes ?? 0}`;
+      document.getElementById("resumoQuantidadeTotal").textContent = `Qtde. Total: ${formatarQuantidade(resumo.quantidade_total)}`;
+      document.getElementById("resumoValorTotal").textContent = `Valor Total: ${formatarMoeda(resumo.valor_total)}`;
+      document.getElementById("resumoMediaDiaria").textContent = `Média Diária: ${formatarQuantidade(resumo.media_diaria)}`;
+
+      // media mensal so faz sentido (e so aparece) quando o periodo filtrado cobre 1+ mes inteiro
+      const badgeMediaMensal = document.getElementById("resumoMediaMensal");
+      if (Number(resumo.meses_completos) > 0) {
+        badgeMediaMensal.textContent = `Média Mensal: ${formatarQuantidade(resumo.media_mensal)}`;
+        badgeMediaMensal.classList.remove("oculto");
+      } else {
+        badgeMediaMensal.classList.add("oculto");
+      }
+    }
+
+    async function buscarResumo() {
+      const params = montarQueryFiltros();
+
+      try {
+        const resp = await fetch(`/api/movimentacoes_saida_resumo?${params.toString()}`);
+        const resumo = await resp.json();
+        renderizarResumo(resumo);
+      } catch (erro) {
+        console.error("Erro ao carregar resumo:", erro);
+      }
+    }
+
+    function renderizarMovimentacoes(dados) {
+      const container = document.getElementById("areaMovimentacoes");
+
+      if (!Array.isArray(dados) || dados.length === 0) {
+        container.innerHTML = '<p class="msg-vazio">Nenhuma movimentação encontrada, homem.</p>';
+        return;
+      }
+
+      const linhas = dados
+        .map(
+          (item) => `
+        <tr>
+          <td>${item.cod_seplag ?? ""}</td>
+          <td>${item.cod_almox ?? ""}</td>
+          <td>${item.cod_produto ?? ""}</td>
+          <td class="celula-quebra">${item.nome_produto ?? ""}</td>
+          <td class="celula-quebra">${item.descricao_produto ?? ""}</td>
+          <td>${item.lote ?? ""}</td>
+          <td>${item.tipo_movimentacao ?? ""}</td>
+          <td>${formatarQuantidade(item.quantidade)}</td>
+          <td>${formatarMoeda(item.valor_unitario)}</td>
+          <td>${formatarMoeda(item.valor_total)}</td>
+          <td>${item.data_movimentacao ?? ""}</td>
+        </tr>`
+        )
+        .join("");
+
+      container.innerHTML = `
+        <table class="tabela-dados">
+          <thead>
+            <tr>
+              <th>Cód. Seplag</th>
+              <th>Cód. Almox</th>
+              <th>Cód. Produto</th>
+              <th>Produto</th>
+              <th>Descrição</th>
+              <th>Lote</th>
+              <th>Tipo de Movimentação</th>
+              <th>Qtde.</th>
+              <th>Valor Unitário</th>
+              <th>Valor Total</th>
+              <th>Dt. da Movimentação</th>
+            </tr>
+          </thead>
+          <tbody>${linhas}</tbody>
+        </table>`;
+    }
+
+    function renderizarPaginacao(total, pagina, tamanhoPagina) {
+      const area = document.getElementById("areaPaginacao");
+      const totalPaginas = Math.max(Math.ceil(total / tamanhoPagina), 1);
+
+      if (totalPaginas <= 1) {
+        area.innerHTML = "";
+        return;
+      }
+
+      const inicio = Math.max(pagina - 2, 1);
+      const fim = Math.min(inicio + 4, totalPaginas);
+
+      let botoes = `<button type="button" class="botao-pagina" data-pagina="${pagina - 1}" ${pagina <= 1 ? "disabled" : ""}>‹ Anterior</button>`;
+
+      for (let n = inicio; n <= fim; n++) {
+        botoes += `<button type="button" class="botao-pagina ${n === pagina ? "ativo" : ""}" data-pagina="${n}">${n}</button>`;
+      }
+
+      botoes += `<button type="button" class="botao-pagina" data-pagina="${pagina + 1}" ${pagina >= totalPaginas ? "disabled" : ""}>Próxima ›</button>`;
+
+      area.innerHTML = botoes;
+
+      area.querySelectorAll(".botao-pagina").forEach((botao) => {
+        botao.addEventListener("click", () => buscarMovimentacoes(Number(botao.dataset.pagina)));
+      });
+    }
+
+    async function buscarMovimentacoes(pagina) {
+      const params = montarQueryFiltros();
+      params.set("pagina", pagina);
+
+      const container = document.getElementById("areaMovimentacoes");
+      container.innerHTML = '<p class="msg-vazio">Carregando dado, aguenta ai...</p>';
+
+      try {
+        const resp = await fetch(`/api/movimentacoes_saida?${params.toString()}`);
+        const resultado = await resp.json();
+
+        document.getElementById("contadorMovimentacoes").textContent = resultado.total ?? 0;
+        renderizarMovimentacoes(resultado.dados);
+        renderizarPaginacao(resultado.total ?? 0, resultado.pagina ?? pagina, resultado.tamanho_pagina ?? 20);
+      } catch (erro) {
+        container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${erro}</p>`;
+        document.getElementById("areaPaginacao").innerHTML = "";
+      }
+    }
+
+    // resumo e lista paginada sao independentes, mas sempre atualizam juntos quando o filtro muda
+    function buscarTudo() {
+      buscarResumo();
+      buscarMovimentacoes(1);
+    }
+
+    document.getElementById("formFiltros").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      esconderSugestoes();
+      esconderSugestoesDescricao();
+      buscarTudo();
+    });
+
+    document.getElementById("botaoResetarFiltros").addEventListener("click", () => {
+      document.getElementById("formFiltros").reset();
+      document.getElementById("filtroDataInicio").value = "2026-10-01";
+      document.getElementById("filtroDataFim").value = dataHojeISO();
+      esconderSugestoes();
+      esconderSugestoesDescricao();
+      buscarTudo();
+    });
+
+    // select de armazem so ganha as opcoes depois do fetch (async) - o valor que veio da
+    // querystring so pode ser aplicado depois que as options existirem, e so dai a primeira
+    // busca dispara (senao ela sairia sem o filtro de armazem que veio de estoque.html)
+    iniciarFiltroArmazemCondicional("filtroArmazem", "blocoFiltroArmazem").then(() => {
+      const armazemInicial = parametrosIniciais.get("armazem");
+      if (armazemInicial) document.getElementById("filtroArmazem").value = armazemInicial;
+      buscarTudo();
+    });
+
+    // sugestao de nome enquanto digita, com debounce pra nao martelar a api a cada tecla
+    const campoNomeProduto = document.getElementById("filtroNomeProduto");
+    const caixaSugestoes = document.getElementById("sugestoesNomeProduto");
+    let temporizadorSugestao = null;
+
+    function esconderSugestoes() {
+      caixaSugestoes.innerHTML = "";
+      caixaSugestoes.classList.remove("aberto");
+    }
+
+    async function buscarSugestoes(termo) {
+      try {
+        const resp = await fetch(`/api/produtos_sugestoes?termo=${encodeURIComponent(termo)}`);
+        const dados = await resp.json();
+
+        if (!Array.isArray(dados) || dados.length === 0) {
+          esconderSugestoes();
+          return;
+        }
+
+        caixaSugestoes.innerHTML = dados
+          .map((item) => `<div class="item-sugestao" data-nome="${item.nome_produto}">${item.nome_produto}</div>`)
+          .join("");
+        caixaSugestoes.classList.add("aberto");
+
+        caixaSugestoes.querySelectorAll(".item-sugestao").forEach((item) => {
+          item.addEventListener("click", () => {
+            campoNomeProduto.value = item.dataset.nome;
+            esconderSugestoes();
+            buscarTudo();
+          });
+        });
+      } catch (erro) {
+        esconderSugestoes();
+      }
+    }
+
+    campoNomeProduto.addEventListener("input", () => {
+      const termo = campoNomeProduto.value.trim();
+      clearTimeout(temporizadorSugestao);
+
+      if (!termo) {
+        esconderSugestoes();
+        return;
+      }
+
+      temporizadorSugestao = setTimeout(() => buscarSugestoes(termo), 250);
+    });
+
+    // sugestao de descricao enquanto digita, com debounce pra nao martelar a api a cada tecla
+    const campoDescricao = document.getElementById("filtroDescricao");
+    const caixaSugestoesDescricao = document.getElementById("sugestoesDescricao");
+    let temporizadorSugestaoDescricao = null;
+
+    function esconderSugestoesDescricao() {
+      caixaSugestoesDescricao.innerHTML = "";
+      caixaSugestoesDescricao.classList.remove("aberto");
+    }
+
+    async function buscarSugestoesDescricao(termo) {
+      try {
+        const resp = await fetch(`/api/descricoes_sugestoes?termo=${encodeURIComponent(termo)}`);
+        const dados = await resp.json();
+
+        if (!Array.isArray(dados) || dados.length === 0) {
+          esconderSugestoesDescricao();
+          return;
+        }
+
+        caixaSugestoesDescricao.innerHTML = dados
+          .map(
+            (item) =>
+              `<div class="item-sugestao" data-descricao="${item.descricao_produto.replace(/"/g, "&quot;")}">${item.descricao_produto}</div>`
+          )
+          .join("");
+        caixaSugestoesDescricao.classList.add("aberto");
+
+        caixaSugestoesDescricao.querySelectorAll(".item-sugestao").forEach((item) => {
+          item.addEventListener("click", () => {
+            campoDescricao.value = item.dataset.descricao;
+            esconderSugestoesDescricao();
+            buscarTudo();
+          });
+        });
+      } catch (erro) {
+        esconderSugestoesDescricao();
+      }
+    }
+
+    campoDescricao.addEventListener("input", () => {
+      const termo = campoDescricao.value.trim();
+      clearTimeout(temporizadorSugestaoDescricao);
+
+      if (!termo) {
+        esconderSugestoesDescricao();
+        return;
+      }
+
+      temporizadorSugestaoDescricao = setTimeout(() => buscarSugestoesDescricao(termo), 250);
+    });
+
+    document.addEventListener("click", (ev) => {
+      if (!ev.target.closest(".campo-autocompletar")) {
+        esconderSugestoes();
+        esconderSugestoesDescricao();
+      }
+    });
+
+    // relatorios (pdf) e planilhas (csv) saem direto, sem pagina html intermediaria pra imprimir -
+    // um relatorio muito grande impresso numa impressora fisica real estava travando ela
+
+    // "Itens Movimentados": essa consulta traz todo mundo que bate o filtro de uma vez so, sem
+    // paginacao, e um periodo grande ja travou o servico antes, entao o periodo fica limitado a
+    // 30 dias - validacao compartilhada pelos botoes de pdf e csv dessa sessao
+    const LIMITE_DIAS_RELATORIO = 30;
+
+    function periodoDentroDoLimiteRelatorioDetalhado() {
+      const dataInicio = document.getElementById("filtroDataInicio").value;
+      const dataFim = document.getElementById("filtroDataFim").value;
+
+      if (!dataInicio || !dataFim) {
+        alert("Informe Data Início e Data Fim antes de gerar o relatório.");
+        return false;
+      }
+
+      const dias = (new Date(dataFim) - new Date(dataInicio)) / (1000 * 60 * 60 * 24);
+      if (dias > LIMITE_DIAS_RELATORIO) {
+        alert(`O relatório de itens movimentados só pode ser gerado para períodos de até ${LIMITE_DIAS_RELATORIO} dias. Ajuste o filtro de data e tente novamente.`);
+        return false;
+      }
+
+      return true;
+    }
+
+    // botao do Resumo: so a parte agregada (resumo geral + resumo por produto), sem tocar na
+    // consulta detalhada pesada - por isso nao tem limite de periodo
+    document.getElementById("botaoGerarRelatorioResumo").addEventListener("click", () => {
+      const params = montarQueryFiltros();
+      params.set("secao", "resumo");
+      window.open(`/api/movimentacoes_saida_pdf?${params.toString()}`, "_blank");
+    });
+
+    document.getElementById("botaoPlanilhaResumo").addEventListener("click", () => {
+      const params = montarQueryFiltros();
+      params.set("secao", "resumo");
+      window.open(`/api/movimentacoes_saida_csv?${params.toString()}`, "_blank");
+    });
+
+    document.getElementById("botaoGerarRelatorioDetalhado").addEventListener("click", () => {
+      if (!periodoDentroDoLimiteRelatorioDetalhado()) return;
+
+      const params = montarQueryFiltros();
+      params.set("secao", "detalhado");
+      window.open(`/api/movimentacoes_saida_pdf?${params.toString()}`, "_blank");
+    });
+
+    document.getElementById("botaoPlanilhaDetalhado").addEventListener("click", () => {
+      if (!periodoDentroDoLimiteRelatorioDetalhado()) return;
+
+      const params = montarQueryFiltros();
+      params.set("secao", "detalhado");
+      window.open(`/api/movimentacoes_saida_csv?${params.toString()}`, "_blank");
+    });
+  </script>
+</body>
+</html>

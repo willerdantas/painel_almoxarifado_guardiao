@@ -1,11 +1,26 @@
 """Homem grande serve paginas e API."""
+import csv
 import datetime
+import io
 import os
 import re
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 from werkzeug.security import check_password_hash, generate_password_hash
 import psycopg2
+
+# reportlab eh so pra gerar os pdfs de movimentacoes de saida - import tolerante pra nao derrubar
+# o resto do site se alguem rodar sem "pip install -r requirements.txt" atualizado ainda
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+
+    REPORTLAB_DISPONIVEL = True
+except ImportError:
+    REPORTLAB_DISPONIVEL = False
 
 from db import run_query, DB_CONFIG, salvar_config
 
@@ -22,6 +37,7 @@ PAGES = [
     "vencidos.html",
     "estoque.html",
     "estoque_movimentacoes.html",
+    "movimentacoes_saida.html",
     "relatorio_vencidos.html",
     "aquisicoes.html",
     "painel_pedidos.html",
@@ -934,14 +950,7 @@ def api_pedidos_novos():
 
     where = f"WHERE {' AND '.join(condicoes)}"
 
-    # o otimizador do postgres nessa base subestima quantas requisicoes passam no filtro de data
-    # e escolhe fazer hash/merge join no par requisicaoitem/saidaitem inteiro (5+ milhoes de linhas)
-    # em vez de so varrer os itens das requisicoes filtradas - forca nested loop so pra essa
-    # consulta (SET LOCAL, vale so pra essa transacao/conexao) que com os indices fica na casa dos
-    # milissegundos em vez de mais de 1 segundo
     sql = f"""
-        SET LOCAL enable_hashjoin = off;
-        SET LOCAL enable_mergejoin = off;
         SELECT
             rq.requisicao AS "N. do Pedido",
             pes_rqt.nome AS "Requisitante",
@@ -1072,6 +1081,532 @@ def api_saida_itens():
         ORDER BY p.nome
     """
     return _consulta_generica(sql, [saidacabecalho])
+
+
+def _filtros_movimentacoes_saida(args):
+    # monta o WHERE/FROM comuns aos 3 endpoints de movimentacoes de saida (lista paginada, resumo
+    # e detalhado sem paginacao pro relatorio de impressao) - produto vem por estoque->lote (mesmo
+    # caminho de /api/saida_itens), valor unitario eh o custo medio do produto (mesma base de
+    # /api/estoque_lotes). sem filtro de data comeca em 01-10-2026, mesma janela util de dado real
+    # de teste usada no resto do sistema
+    cod_seplag = args.get("cod_seplag")
+    cod_almox = args.get("cod_almox")
+    cod_produto = args.get("cod_produto")
+    nome_produto = args.get("nome_produto")
+    descricao = args.get("descricao")
+    data_inicio = args.get("data_inicio") or "2026-10-01"
+    data_fim = args.get("data_fim")
+    armazem = args.get("armazem")
+    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+
+    condicoes = ["sc.status <> 'E'", "sc.data >= %s"]
+    params = [data_inicio]
+
+    if cod_seplag:
+        condicoes.append("p.codigoreferencia ILIKE %s")
+        params.append(f"%{cod_seplag}%")
+    if cod_almox:
+        condicoes.append("p.codigo ILIKE %s")
+        params.append(f"%{cod_almox}%")
+    if cod_produto:
+        condicoes.append("p.produto::text ILIKE %s")
+        params.append(f"%{cod_produto}%")
+    if nome_produto:
+        condicoes.append("p.nome ILIKE %s")
+        params.append(f"%{nome_produto}%")
+    if descricao:
+        condicoes.append("p.descricao ILIKE %s")
+        params.append(f"%{descricao}%")
+    if data_fim:
+        condicoes.append("sc.data < (%s::date + INTERVAL '1 day')")
+        params.append(data_fim)
+    if armazem:
+        condicoes.append("pes_arm.nome = %s")
+        params.append(armazem)
+    if usuario_logado:
+        condicoes.append(f"sc.armazem IN ({SQL_ARMAZENS_DO_USUARIO})")
+        params.append(usuario_logado)
+
+    where = f"WHERE {' AND '.join(condicoes)}"
+
+    base_from = f"""
+        FROM public.saidaitem si
+        JOIN public.saidacabecalho sc ON sc.saidacabecalho = si.saidacabecalho
+        LEFT JOIN public.estoque e ON e.estoque = si.estoque
+        LEFT JOIN public.lote lt ON lt.lote = e.lote
+        LEFT JOIN public.produto p ON p.produto = lt.produto
+        LEFT JOIN public.tipomovimentacao tm ON tm.tipomovimentacao = sc.tipomovimentacao
+        LEFT JOIN public.armazem arm ON arm.armazem = sc.armazem
+        LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
+        LEFT JOIN public.estoquetotal et ON et.produto = p.produto
+        {where}
+    """
+
+    return base_from, params, data_inicio, data_fim
+
+
+@app.route("/api/movimentacoes_saida")
+def api_movimentacoes_saida():
+    # lista paginada de itens de saida (saidaitem) dentro do filtro - usado pelo botao
+    # "Movimentações de Saída" em estoque.html
+    base_from, params, _data_inicio, _data_fim = _filtros_movimentacoes_saida(request.args)
+    try:
+        pagina = max(int(request.args.get("pagina", 1)), 1)
+    except ValueError:
+        pagina = 1
+
+    tamanho_pagina = 20
+    offset = (pagina - 1) * tamanho_pagina
+
+    try:
+        sql_dados = f"""
+            WITH filtrado AS MATERIALIZED (
+                SELECT
+                    p.codigoreferencia AS cod_seplag,
+                    p.codigo AS cod_almox,
+                    p.produto AS cod_produto,
+                    p.nome AS nome_produto,
+                    p.descricao AS descricao_produto,
+                    lt.lotefornecedor AS lote,
+                    tm.descricao AS tipo_movimentacao,
+                    si.quantidade AS quantidade,
+                    et.customedio AS valor_unitario,
+                    (si.quantidade * et.customedio) AS valor_total,
+                    to_char(sc.data, 'DD/MM/YY HH24:MI') AS data_movimentacao,
+                    sc.data AS data_ordenacao
+                {base_from}
+            )
+            SELECT
+                (SELECT count(*) FROM filtrado) AS total_geral,
+                COALESCE((
+                    SELECT json_agg(pagina.* ORDER BY pagina.data_ordenacao DESC)
+                    FROM (SELECT * FROM filtrado ORDER BY data_ordenacao DESC LIMIT %s OFFSET %s) pagina
+                ), '[]'::json) AS dados_json
+        """
+        resultado = run_query(sql_dados, params + [tamanho_pagina, offset])[0]
+        return jsonify(
+            {
+                "dados": resultado["dados_json"],
+                "total": resultado["total_geral"],
+                "pagina": pagina,
+                "tamanho_pagina": tamanho_pagina,
+            }
+        )
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+
+
+LIMITE_DIAS_RELATORIO_MOVIMENTACOES = 30
+
+
+def _dados_movimentacoes_saida_detalhado(args):
+    # mesma consulta de /api/movimentacoes_saida, mas sem paginacao - usado no pdf de "Itens
+    # Movimentados" (api_movimentacoes_saida_pdf), que precisa de todas as linhas de uma vez. por
+    # isso o periodo filtrado eh limitado (um periodo maior ja travou o servico antes: consulta
+    # pesada sem paginacao, varrendo e ordenando tudo que bate o filtro de uma vez so). retorna
+    # (linhas, erro) - erro preenchido (e linhas None) quando o periodo passa do limite
+    base_from, params, data_inicio, data_fim = _filtros_movimentacoes_saida(args)
+
+    if not data_fim:
+        return None, "Informe Data Início e Data Fim para gerar o relatório."
+    try:
+        dias_periodo = (datetime.date.fromisoformat(data_fim) - datetime.date.fromisoformat(data_inicio)).days
+    except ValueError:
+        return None, "Data inválida."
+    if dias_periodo > LIMITE_DIAS_RELATORIO_MOVIMENTACOES:
+        return None, f"O relatório só pode ser gerado para períodos de até {LIMITE_DIAS_RELATORIO_MOVIMENTACOES} dias."
+
+    sql = f"""
+        SELECT
+            p.codigoreferencia AS cod_seplag,
+            p.codigo AS cod_almox,
+            p.produto AS cod_produto,
+            p.nome AS nome_produto,
+            p.descricao AS descricao_produto,
+            lt.lotefornecedor AS lote,
+            tm.descricao AS tipo_movimentacao,
+            si.quantidade AS quantidade,
+            et.customedio AS valor_unitario,
+            (si.quantidade * et.customedio) AS valor_total,
+            to_char(sc.data, 'DD/MM/YY HH24:MI') AS data_movimentacao
+        {base_from}
+        ORDER BY p.nome, sc.data DESC
+    """
+    return run_query(sql, params), None
+
+
+def _dados_movimentacoes_saida_resumo(args):
+    # resumo usado tanto na sessao "Resumo" de movimentacoes_saida.html (campos gerais: itens
+    # unicos, quantidade de movimentacoes, quantidade/valor total, media diaria/mensal geral)
+    # quanto no pdf de resumo (mesmos campos gerais + a quebra "produtos", por produto). media
+    # diaria = quantidade / dias que teve saida; media mensal = quantidade / meses completos no
+    # periodo filtrado - so faz sentido se o filtro cobre 1+ mes inteiro, por isso meses_completos
+    # vai separado: quem usa decide se mostra o campo com base nele
+    base_from, params, data_inicio, data_fim = _filtros_movimentacoes_saida(args)
+
+    sql_produtos = f"""
+        SELECT
+            p.codigoreferencia AS cod_seplag,
+            p.codigo AS cod_almox,
+            p.produto AS cod_produto,
+            p.nome AS nome_produto,
+            p.descricao AS descricao_produto,
+            SUM(si.quantidade) AS quantidade_total,
+            SUM(si.quantidade * et.customedio) AS valor_total,
+            COUNT(DISTINCT date_trunc('day', sc.data)) AS dias_com_saida
+        {base_from}
+        GROUP BY p.produto, p.nome, p.descricao, p.codigoreferencia, p.codigo
+        ORDER BY valor_total DESC NULLS LAST
+    """
+    produtos = run_query(sql_produtos, params)
+
+    sql_geral = f"""
+        SELECT
+            COUNT(*) AS quantidade_movimentacoes,
+            COUNT(DISTINCT date_trunc('day', sc.data)) AS dias_com_movimentacao
+        {base_from}
+    """
+    geral = run_query(sql_geral, params)[0]
+
+    # meses_completos: so conta mes cujo intervalo inteiro [inicio do mes, fim do mes] cabe dentro
+    # de [data_inicio, data_fim] - sem data_fim nao da pra saber se algum mes fecha, fica 0
+    meses_completos = 0
+    if data_fim:
+        sql_meses = """
+            SELECT count(*) AS total
+            FROM generate_series(date_trunc('month', %s::date), date_trunc('month', %s::date), interval '1 month') AS mes_inicio
+            WHERE mes_inicio >= %s::date
+            AND (mes_inicio + interval '1 month') <= (%s::date + interval '1 day')
+        """
+        meses_completos = run_query(sql_meses, [data_inicio, data_fim, data_inicio, data_fim])[0]["total"]
+
+    valor_total_geral = 0
+    quantidade_total_geral = 0
+    for item in produtos:
+        quantidade = float(item["quantidade_total"] or 0)
+        dias = item["dias_com_saida"] or 0
+        item["media_diaria"] = round(quantidade / dias, 2) if dias else 0
+        item["media_mensal"] = round(quantidade / meses_completos, 2) if meses_completos else None
+        valor_total_geral += float(item["valor_total"] or 0)
+        quantidade_total_geral += quantidade
+
+    dias_com_movimentacao = geral["dias_com_movimentacao"] or 0
+    media_diaria_geral = round(quantidade_total_geral / dias_com_movimentacao, 2) if dias_com_movimentacao else 0
+    media_mensal_geral = round(quantidade_total_geral / meses_completos, 2) if meses_completos else None
+
+    return {
+        "valor_total": valor_total_geral,
+        "quantidade_total": quantidade_total_geral,
+        "itens_unicos": len(produtos),
+        "quantidade_movimentacoes": geral["quantidade_movimentacoes"],
+        "media_diaria": media_diaria_geral,
+        "media_mensal": media_mensal_geral,
+        "meses_completos": meses_completos,
+        "produtos": produtos,
+    }
+
+
+@app.route("/api/movimentacoes_saida_resumo")
+def api_movimentacoes_saida_resumo():
+    return jsonify(_dados_movimentacoes_saida_resumo(request.args))
+
+
+def _formatar_quantidade_pdf(valor):
+    try:
+        numero = float(valor)
+    except (TypeError, ValueError):
+        return ""
+    texto = f"{numero:,.2f}"
+    return texto.replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def _formatar_moeda_pdf(valor):
+    texto = _formatar_quantidade_pdf(valor)
+    return f"R$ {texto}" if texto else ""
+
+
+def _truncar_descricao_pdf(texto, limite=300):
+    # descricao de produto pode passar de 1000 caracteres (edital/especificacao completa) - sem
+    # limite, o texto embrulhado numa celula estreita vira uma linha mais alta que a pagina
+    # inteira, e o reportlab trava (LayoutError) por nao conseguir dividir uma linha entre paginas
+    texto = (texto or "").strip()
+    if len(texto) <= limite:
+        return texto
+    return texto[:limite].rstrip() + "…"
+
+
+def _montar_cabecalho_pdf_movimentacoes(args):
+    # mesmas linhas de "Filtros aplicados"/"Período" que apareciam no relatorio html antigo
+    rotulos = [
+        ("cod_seplag", "Cód. Seplag"),
+        ("cod_almox", "Cód. Almox"),
+        ("cod_produto", "Cód. Produto"),
+        ("nome_produto", "Nome do Produto"),
+        ("descricao", "Descrição"),
+        ("armazem", "Armazém"),
+    ]
+    filtros = [f"{rotulo}: {args.get(chave)}" for chave, rotulo in rotulos if args.get(chave)]
+    periodo = f"{args.get('data_inicio') or 'sem início'} até {args.get('data_fim') or 'sem fim'}"
+    agora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+    return [
+        f"<b>Gerado em:</b> {agora}",
+        f"<b>Período:</b> {periodo}",
+        f"<b>Filtros aplicados:</b> {' · '.join(filtros) if filtros else 'Nenhum (todas as movimentações de saída)'}",
+    ]
+
+
+# uma Table so do reportlab com milhares de linhas trava (LayoutError) quando ela precisa se
+# dividir em muitas paginas - por isso os dados viram varias Tables menores (um flowable por
+# bloco), cada uma com seu proprio cabecalho repetido
+LINHAS_POR_BLOCO_PDF = 40
+
+
+def _montar_pdf_tabela(titulo, linhas_cabecalho, cabecalho_tabela, linhas_tabela, largura_colunas, linha_total=None):
+    # builder generico pra um pdf de 1 tabela (cabecalho de texto + tabela paisagem) - usado pelos
+    # dois relatorios de movimentacoes de saida (resumo e detalhado)
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        leftMargin=1.3 * cm,
+        rightMargin=1.3 * cm,
+        topMargin=1.3 * cm,
+        bottomMargin=1.3 * cm,
+    )
+    estilos = getSampleStyleSheet()
+    estilo_celula = ParagraphStyle("celulaRelatorio", parent=estilos["Normal"], fontSize=7, leading=9)
+    estilo_cabecalho_tabela = ParagraphStyle(
+        "cabecalhoTabelaRelatorio", parent=estilo_celula, fontName="Helvetica-Bold", textColor=colors.white
+    )
+
+    elementos = [Paragraph(titulo, estilos["Title"]), Spacer(1, 6)]
+    for linha in linhas_cabecalho:
+        elementos.append(Paragraph(linha, estilos["Normal"]))
+    elementos.append(Spacer(1, 12))
+
+    cabecalho_formatado = [Paragraph(str(c), estilo_cabecalho_tabela) for c in cabecalho_tabela]
+    blocos = [linhas_tabela[i : i + LINHAS_POR_BLOCO_PDF] for i in range(0, len(linhas_tabela), LINHAS_POR_BLOCO_PDF)]
+
+    for bloco in blocos or [[]]:
+        corpo_formatado = [[Paragraph(str(valor), estilo_celula) for valor in linha] for linha in bloco]
+        dados_bloco = [cabecalho_formatado] + corpo_formatado
+        tabela = Table(dados_bloco, colWidths=largura_colunas, repeatRows=1)
+        estilo_tabela = [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1c2b3a")),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d7dde3")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]
+        if len(dados_bloco) > 1:
+            estilo_tabela.append(("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f2f2")]))
+        tabela.setStyle(TableStyle(estilo_tabela))
+        elementos.append(tabela)
+
+    if linha_total:
+        linha_total_formatada = [[Paragraph(f"<b>{valor}</b>", estilo_celula) for valor in linha_total]]
+        tabela_total = Table(linha_total_formatada, colWidths=largura_colunas)
+        tabela_total.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#c8cccf")),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d7dde3")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        elementos.append(tabela_total)
+
+    doc.build(elementos)
+    return buffer.getvalue()
+
+
+def _gerar_pdf_movimentacoes_resumo(args):
+    resumo = _dados_movimentacoes_saida_resumo(args)
+    mostrar_media_mensal = resumo["meses_completos"] > 0
+
+    cabecalho_tabela = ["Cód. Seplag", "Cód. Almox", "Cód. Produto", "Produto", "Descrição", "Quantidade", "Valor Total", "Dias com Saída", "Média Diária"]
+    larguras = [1.8 * cm, 1.8 * cm, 1.8 * cm, 4.8 * cm, 6.5 * cm, 2.0 * cm, 2.2 * cm, 1.9 * cm, 1.9 * cm]
+    if mostrar_media_mensal:
+        cabecalho_tabela.append("Média Mensal")
+        larguras.append(1.9 * cm)
+
+    linhas_tabela = []
+    for item in resumo["produtos"]:
+        linha = [
+            item.get("cod_seplag") or "",
+            item.get("cod_almox") or "",
+            item.get("cod_produto") or "",
+            item.get("nome_produto") or "",
+            _truncar_descricao_pdf(item.get("descricao_produto")),
+            _formatar_quantidade_pdf(item.get("quantidade_total")),
+            _formatar_moeda_pdf(item.get("valor_total")),
+            item.get("dias_com_saida") or 0,
+            _formatar_quantidade_pdf(item.get("media_diaria")),
+        ]
+        if mostrar_media_mensal:
+            linha.append(_formatar_quantidade_pdf(item.get("media_mensal")))
+        linhas_tabela.append(linha)
+
+    linha_total = ["Total Geral", "", "", "", "", _formatar_quantidade_pdf(resumo["quantidade_total"]), _formatar_moeda_pdf(resumo["valor_total"]), "", ""]
+    if mostrar_media_mensal:
+        linha_total.append("")
+
+    return _montar_pdf_tabela(
+        "Relatório de Resumo de Movimentações de Saída",
+        _montar_cabecalho_pdf_movimentacoes(args),
+        cabecalho_tabela,
+        linhas_tabela,
+        larguras,
+        linha_total,
+    )
+
+
+def _gerar_pdf_movimentacoes_detalhado(linhas, args):
+    cabecalho_tabela = ["Cód. Seplag", "Cód. Almox", "Cód. Produto", "Produto", "Descrição", "Lote", "Tipo de Movimentação", "Quantidade", "Valor Unitário", "Valor Total", "Dt. Movimentação"]
+    larguras = [1.5 * cm, 1.5 * cm, 1.5 * cm, 4.0 * cm, 5.5 * cm, 1.8 * cm, 2.6 * cm, 1.6 * cm, 1.8 * cm, 1.8 * cm, 2.0 * cm]
+
+    linhas_tabela = []
+    total_quantidade = 0.0
+    total_valor = 0.0
+    for item in linhas:
+        total_quantidade += float(item.get("quantidade") or 0)
+        total_valor += float(item.get("valor_total") or 0)
+        linhas_tabela.append(
+            [
+                item.get("cod_seplag") or "",
+                item.get("cod_almox") or "",
+                item.get("cod_produto") or "",
+                item.get("nome_produto") or "",
+                _truncar_descricao_pdf(item.get("descricao_produto")),
+                item.get("lote") or "",
+                item.get("tipo_movimentacao") or "",
+                _formatar_quantidade_pdf(item.get("quantidade")),
+                _formatar_moeda_pdf(item.get("valor_unitario")),
+                _formatar_moeda_pdf(item.get("valor_total")),
+                item.get("data_movimentacao") or "",
+            ]
+        )
+
+    linha_total = ["Total Geral", "", "", "", "", "", "", _formatar_quantidade_pdf(total_quantidade), "", _formatar_moeda_pdf(total_valor), ""]
+
+    return _montar_pdf_tabela(
+        "Relatório de Movimentações de Saída",
+        _montar_cabecalho_pdf_movimentacoes(args),
+        cabecalho_tabela,
+        linhas_tabela,
+        larguras,
+        linha_total,
+    )
+
+
+@app.route("/api/movimentacoes_saida_pdf")
+def api_movimentacoes_saida_pdf():
+    # gera o pdf direto (sem pagina html intermediaria pra imprimir) - um relatorio muito grande
+    # impresso numa impressora fisica real estava travando ela; pdf nao depende de impressora
+    if not REPORTLAB_DISPONIVEL:
+        return jsonify({"erro": "Geração de PDF indisponível: biblioteca reportlab não instalada no servidor."}), 500
+
+    secao = request.args.get("secao")
+
+    if secao == "detalhado":
+        linhas, erro = _dados_movimentacoes_saida_detalhado(request.args)
+        if erro:
+            return jsonify({"erro": erro}), 400
+        pdf_bytes = _gerar_pdf_movimentacoes_detalhado(linhas, request.args)
+        nome_arquivo = "relatorio_movimentacoes_saida.pdf"
+    else:
+        pdf_bytes = _gerar_pdf_movimentacoes_resumo(request.args)
+        nome_arquivo = "relatorio_resumo_movimentacoes_saida.pdf"
+
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={nome_arquivo}"},
+    )
+
+
+def _escrever_csv(cabecalho, linhas):
+    # ";" como separador e "," como decimal (via _formatar_quantidade_pdf) pra abrir certo direto
+    # no Excel em pt-br sem passar pelo assistente de importação. BOM utf-8 pro Excel nao confundir
+    # acento com ANSI
+    buffer = io.StringIO()
+    escritor = csv.writer(buffer, delimiter=";")
+    escritor.writerow(cabecalho)
+    escritor.writerows(linhas)
+    return "﻿" + buffer.getvalue()
+
+
+def _gerar_csv_movimentacoes_resumo(args):
+    resumo = _dados_movimentacoes_saida_resumo(args)
+    mostrar_media_mensal = resumo["meses_completos"] > 0
+
+    cabecalho = ["Cód. Seplag", "Cód. Almox", "Cód. Produto", "Produto", "Descrição", "Quantidade", "Valor Total", "Dias com Saída", "Média Diária"]
+    if mostrar_media_mensal:
+        cabecalho.append("Média Mensal")
+
+    linhas = []
+    for item in resumo["produtos"]:
+        linha = [
+            item.get("cod_seplag") or "",
+            item.get("cod_almox") or "",
+            item.get("cod_produto") or "",
+            item.get("nome_produto") or "",
+            item.get("descricao_produto") or "",
+            _formatar_quantidade_pdf(item.get("quantidade_total")),
+            _formatar_quantidade_pdf(item.get("valor_total")),
+            item.get("dias_com_saida") or 0,
+            _formatar_quantidade_pdf(item.get("media_diaria")),
+        ]
+        if mostrar_media_mensal:
+            linha.append(_formatar_quantidade_pdf(item.get("media_mensal")))
+        linhas.append(linha)
+
+    return _escrever_csv(cabecalho, linhas)
+
+
+def _gerar_csv_movimentacoes_detalhado(itens):
+    cabecalho = ["Cód. Seplag", "Cód. Almox", "Cód. Produto", "Produto", "Descrição", "Lote", "Tipo de Movimentação", "Quantidade", "Valor Unitário", "Valor Total", "Dt. Movimentação"]
+    linhas = [
+        [
+            item.get("cod_seplag") or "",
+            item.get("cod_almox") or "",
+            item.get("cod_produto") or "",
+            item.get("nome_produto") or "",
+            item.get("descricao_produto") or "",
+            item.get("lote") or "",
+            item.get("tipo_movimentacao") or "",
+            _formatar_quantidade_pdf(item.get("quantidade")),
+            _formatar_quantidade_pdf(item.get("valor_unitario")),
+            _formatar_quantidade_pdf(item.get("valor_total")),
+            item.get("data_movimentacao") or "",
+        ]
+        for item in itens
+    ]
+    return _escrever_csv(cabecalho, linhas)
+
+
+@app.route("/api/movimentacoes_saida_csv")
+def api_movimentacoes_saida_csv():
+    # planilha com os mesmos dados do pdf (ver api_movimentacoes_saida_pdf) - mesmo limite de 30
+    # dias na secao detalhado, pela mesma razao (consulta pesada sem paginacao). diferente do pdf,
+    # a descricao NAO eh truncada aqui (csv nao tem o problema de altura de linha de pagina)
+    secao = request.args.get("secao")
+
+    if secao == "detalhado":
+        linhas, erro = _dados_movimentacoes_saida_detalhado(request.args)
+        if erro:
+            return jsonify({"erro": erro}), 400
+        conteudo_csv = _gerar_csv_movimentacoes_detalhado(linhas)
+        nome_arquivo = "movimentacoes_saida.csv"
+    else:
+        conteudo_csv = _gerar_csv_movimentacoes_resumo(request.args)
+        nome_arquivo = "resumo_movimentacoes_saida.csv"
+
+    return Response(
+        conteudo_csv.encode("utf-8"),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={nome_arquivo}"},
+    )
 
 
 @app.route("/api/separacao_ativa")
@@ -1249,7 +1784,10 @@ def api_separacao_concluir():
 
 @app.route("/api/requisicao_itens")
 def api_requisicao_itens():
-    # itens de uma requisicao especifica, carregado so quando o usuario clica na linha
+    # itens de uma requisicao especifica, carregado so quando o usuario clica na linha - lote
+    # mostrado eh o proximo a vencer (FEFO) com estoque > 0 no armazem do pedido (rq.armazem); sem
+    # estoque naquele armazem fica sem lote (NULL). "vencido" sinaliza quando a validade desse
+    # lote ja passou, pra alertar antes mesmo da separacao comecar
     requisicao = request.args.get("requisicao")
     if not requisicao:
         return jsonify([])
@@ -1257,9 +1795,26 @@ def api_requisicao_itens():
     sql = """
         SELECT
             p.nome AS nome_produto,
-            ri.quantidade AS quantidade
+            ri.quantidade AS quantidade,
+            proximo_lote.lote,
+            proximo_lote.validade,
+            proximo_lote.vencido
         FROM public.requisicaoitem ri
+        JOIN public.requisicao rq ON rq.requisicao = ri.requisicao
         JOIN public.produto p ON p.produto = ri.produto
+        LEFT JOIN LATERAL (
+            SELECT
+                l.lotefornecedor AS lote,
+                to_char(l.validade, 'DD-MM-YY') AS validade,
+                (l.validade < CURRENT_DATE) AS vencido
+            FROM public.lote l
+            JOIN public.estoque e ON e.lote = l.lote
+            WHERE l.produto = ri.produto
+            AND e.armazem = rq.armazem
+            AND e.quantidade > 0
+            ORDER BY l.validade ASC
+            LIMIT 1
+        ) proximo_lote ON TRUE
         WHERE ri.requisicao = %s
         ORDER BY p.nome
     """
@@ -2726,8 +3281,7 @@ def api_painel_contadores():
     # sobre o armazem implicito do usuario logado
     armazem = request.args.get("armazem")
 
-    # novos pedidos: requisicao ainda nao tocada por nenhuma saida (mesma condicao de
-    # /api/pedidos_novos, incluindo o SET LOCAL que forca nested loop - ver comentario la)
+    # novos pedidos: requisicao ainda nao tocada por nenhuma saida (mesma condicao de /api/pedidos_novos)
     condicoes_novos = [
         "rq.data >= %s",
         """NOT EXISTS (
@@ -2749,8 +3303,6 @@ def api_painel_contadores():
         condicoes_novos.append(f"rq.armazem IN ({SQL_ARMAZENS_DO_USUARIO})")
         params_novos.append(usuario_logado)
     sql_novos = f"""
-        SET LOCAL enable_hashjoin = off;
-        SET LOCAL enable_mergejoin = off;
         SELECT count(*) AS total FROM public.requisicao rq {join_novos} WHERE {' AND '.join(condicoes_novos)}
     """
     novos = run_query(sql_novos, params_novos)[0]["total"]

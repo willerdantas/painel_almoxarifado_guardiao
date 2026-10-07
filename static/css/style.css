@@ -4,6 +4,7 @@
   --azul-medio: #2e4258;
   --azul-claro: #3d5872;
   --vermelho: #d0271d;
+  --laranja: #e07c10;
   --branco: #ffffff;
   --cinza-claro: #c8cccf;
   --cinza-borda: #d7dde3;
@@ -589,6 +590,12 @@ body {
   margin-bottom: 12px;
 }
 
+/* empurra um botao pro final do cabecalho da secao (ex.: "Movimentações de Saída" em
+   estoque.html), deixando os contadores/badges agrupados do lado esquerdo */
+.secao-cabecalho-botao-fim {
+  margin-left: auto;
+}
+
 /* cabecalho do relatorio por armazem (vencidos.html) - varios grupos de badge (um por armazem),
    quebra linha quando nao cabe numa so */
 .secao-cabecalho-relatorio {
@@ -642,6 +649,28 @@ body {
 .area-rolavel {
   max-height: 320px;
   overflow-y: auto;
+}
+
+/* tags inline de alerta (controle de pedidos: calendário de distribuição e lote vencido) -
+   mesma pilula de .contador-secundario, so trocando a cor pra sinalizar atenção */
+.tag-alerta,
+.tag-vencido {
+  display: inline-flex;
+  align-items: center;
+  color: var(--branco);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.tag-alerta {
+  background: var(--laranja);
+}
+
+.tag-vencido {
+  background: var(--vermelho);
 }
 
 /* pagina de cadastro (cadastro.html) - form de novo perfil, grade de paginas e botao de excluir */
