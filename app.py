@@ -128,10 +128,7 @@ def login():
     sql = """
         SELECT
             u.identificacao,
-            COALESCE(pes.nome, u.nome) AS nome,
-            EXISTS (
-                SELECT 1 FROM public.armazemfunc af WHERE af.funcionario = u.funcionario
-            ) AS tem_acesso
+            COALESCE(pes.nome, u.nome) AS nome
         FROM public.usuario u
         LEFT JOIN public.funcionario f ON f.funcionario = u.funcionario
         LEFT JOIN public.pessoafisica pf ON pf.pessoafisica = f.pessoafisica
@@ -147,9 +144,10 @@ def login():
     if not sistemausuario or not sistemausuario["sistemaperfil"]:
         return jsonify({"ok": False, "msg": "Usuário sem perfil de acesso cadastrado. Procure o administrador."}), 403
 
+    # usuario sem armazem em armazemfunc loga normalmente - so nao traz item nenhum nas paginas
+    # que filtram por armazem (SQL_ARMAZENS_DO_USUARIO devolve zero linhas pra ele, e "IN (zero
+    # linhas)" nao bate com nada), nao bloqueia o acesso em si
     eh_admin = bool(sistemausuario["administrador"])
-    if not eh_admin and not linha["tem_acesso"]:
-        return jsonify({"ok": False, "msg": "Usuário sem acesso"}), 403
 
     # primeiro acesso: ainda nao tem senha definida em sistemausuario - pede pra criar antes de
     # deixar entrar (POST /api/definir_senha)
