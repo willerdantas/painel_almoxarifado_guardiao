@@ -329,6 +329,7 @@
           (item) => `
         <tr class="linha-item">
           <td class="celula-quebra">${item.nome_produto ?? ""}</td>
+          <td class="celula-quebra">${item.descricao_produto ?? ""}</td>
           <td>${item.quantidade ?? ""}</td>
           <td>${formatarMoeda(item.valor_unitario)}</td>
           <td>${formatarMoeda(item.subtotal)}</td>
@@ -336,7 +337,7 @@
           <td></td>
         </tr>
         <tr class="linha-saldo">
-          <td colspan="6">${montarBarraSaldoItem(item)}</td>
+          <td colspan="7">${montarBarraSaldoItem(item)}</td>
         </tr>`
         )
         .join("");
@@ -348,6 +349,7 @@
             <thead>
               <tr>
                 <th>Produto</th>
+                <th>Descrição</th>
                 <th>Quantidade Total</th>
                 <th>Vl. Unitário</th>
                 <th>Subtotal</th>

@@ -45,6 +45,12 @@
             <div class="sugestoes" id="sugestoesNomeProduto"></div>
           </div>
 
+          <div class="campo-filtro campo-autocompletar campo-largo">
+            <label for="filtroDescricao">Descrição</label>
+            <input type="text" id="filtroDescricao" placeholder="Ex.: ATOXICO, APIROGENICO" autocomplete="off" />
+            <div class="sugestoes" id="sugestoesDescricao"></div>
+          </div>
+
           <div class="campo-filtro campo-curto">
             <label for="filtroLote">Lote</label>
             <input type="text" id="filtroLote" placeholder="Ex.: 2026A01" />
@@ -101,6 +107,7 @@
       const codProduto = document.getElementById("filtroCodProduto").value.trim();
       const nomeProduto = document.getElementById("filtroNomeProduto").value.trim();
       const lote = document.getElementById("filtroLote").value.trim();
+      const descricao = document.getElementById("filtroDescricao").value.trim();
       const subgrupo = document.getElementById("filtroSubgrupo").value.trim();
       const armazem = document.getElementById("filtroArmazem").value;
 
@@ -109,6 +116,7 @@
       if (codProduto) params.set("cod_produto", codProduto);
       if (nomeProduto) params.set("nome_produto", nomeProduto);
       if (lote) params.set("lote", lote);
+      if (descricao) params.set("descricao", descricao);
       if (subgrupo) params.set("subgrupo", subgrupo);
       if (armazem) params.set("armazem", armazem);
       if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
@@ -118,7 +126,7 @@
 
     iniciarFiltroArmazemCondicional("filtroArmazem", "blocoFiltroArmazem");
 
-    const NUMERO_COLUNAS = 11;
+    const NUMERO_COLUNAS = 12;
 
     // coluna Procedimento SUS so faz sentido pra quem olha o almoxarifado principal (ou "Todos",
     // que inclui ele) - nos outros armazens fica escondida (continua no DOM pra nao desalinhar o
@@ -145,8 +153,9 @@
           <td>${linha.cod_almox ?? ""}</td>
           <td>${linha.cod_produto ?? ""}</td>
           <td class="celula-quebra">${linha.nome_produto ?? ""}</td>
-          <td>${linha.classe ?? ""}</td>
-          <td>${linha.sub_grupo ?? ""}</td>
+          <td class="celula-quebra">${linha.descricao_produto ?? ""}</td>
+          <td class="celula-quebra">${linha.classe ?? ""}</td>
+          <td class="celula-quebra">${linha.sub_grupo ?? ""}</td>
           <td>${linha.apresentacao ?? ""}</td>
           <td${estiloProcedimentoSus}>${linha.procedimento_sus ?? ""}</td>
           <td>${formatarQuantidade(linha.total_estoque)}</td>
@@ -175,6 +184,7 @@
               <th>Cód. Almox</th>
               <th>Cód. Produto</th>
               <th>Nome do Produto</th>
+              <th>Descrição</th>
               <th>Classe</th>
               <th>Sub Grupo</th>
               <th>Apresentação</th>
@@ -432,9 +442,9 @@
                 <th>Armazém</th>
                 <th>Total em Estoque</th>
                 <th>Saldo em Contrato</th>
-                <th>Estoque Mínimo (60d)</th>
+                <th>Estoque Mínimo (30d)</th>
                 <th>Estoque de Segurança (90d)</th>
-                <th>Ponto de Ressuprimento (150d)</th>
+                <th>Ponto de Ressuprimento (180d)</th>
                 <th>Autonomia de Estoque</th>
               </tr>
             </thead>
@@ -595,12 +605,16 @@
     document.getElementById("formFiltros").addEventListener("submit", (ev) => {
       ev.preventDefault();
       esconderSugestoes();
+      esconderSugestoesSubgrupo();
+      esconderSugestoesDescricao();
       buscarProdutos(1);
     });
 
     document.getElementById("botaoResetarFiltros").addEventListener("click", () => {
       document.getElementById("formFiltros").reset();
       esconderSugestoes();
+      esconderSugestoesSubgrupo();
+      esconderSugestoesDescricao();
       buscarProdutos(1);
     });
 
@@ -702,10 +716,62 @@
       temporizadorSugestaoSubgrupo = setTimeout(() => buscarSugestoesSubgrupo(termo), 250);
     });
 
+    const campoDescricao = document.getElementById("filtroDescricao");
+    const caixaSugestoesDescricao = document.getElementById("sugestoesDescricao");
+    let temporizadorSugestaoDescricao = null;
+
+    function esconderSugestoesDescricao() {
+      caixaSugestoesDescricao.innerHTML = "";
+      caixaSugestoesDescricao.classList.remove("aberto");
+    }
+
+    async function buscarSugestoesDescricao(termo) {
+      try {
+        const resp = await fetch(`/api/descricoes_sugestoes?termo=${encodeURIComponent(termo)}`);
+        const dados = await resp.json();
+
+        if (!Array.isArray(dados) || dados.length === 0) {
+          esconderSugestoesDescricao();
+          return;
+        }
+
+        caixaSugestoesDescricao.innerHTML = dados
+          .map(
+            (item) =>
+              `<div class="item-sugestao" data-descricao="${item.descricao_produto.replace(/"/g, "&quot;")}">${item.descricao_produto}</div>`
+          )
+          .join("");
+        caixaSugestoesDescricao.classList.add("aberto");
+
+        caixaSugestoesDescricao.querySelectorAll(".item-sugestao").forEach((item) => {
+          item.addEventListener("click", () => {
+            campoDescricao.value = item.dataset.descricao;
+            esconderSugestoesDescricao();
+            buscarProdutos(1);
+          });
+        });
+      } catch (erro) {
+        esconderSugestoesDescricao();
+      }
+    }
+
+    campoDescricao.addEventListener("input", () => {
+      const termo = campoDescricao.value.trim();
+      clearTimeout(temporizadorSugestaoDescricao);
+
+      if (!termo) {
+        esconderSugestoesDescricao();
+        return;
+      }
+
+      temporizadorSugestaoDescricao = setTimeout(() => buscarSugestoesDescricao(termo), 250);
+    });
+
     document.addEventListener("click", (ev) => {
       if (!ev.target.closest(".campo-autocompletar")) {
         esconderSugestoes();
         esconderSugestoesSubgrupo();
+        esconderSugestoesDescricao();
       }
     });
 

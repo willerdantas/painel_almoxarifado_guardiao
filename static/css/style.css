@@ -589,6 +589,27 @@ body {
   margin-bottom: 12px;
 }
 
+/* cabecalho do relatorio por armazem (vencidos.html) - varios grupos de badge (um por armazem),
+   quebra linha quando nao cabe numa so */
+.secao-cabecalho-relatorio {
+  flex-wrap: wrap;
+}
+
+.grupo-badge-armazem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--cinza-claro);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.grupo-badge-armazem .nome-armazem {
+  font-weight: 700;
+  color: var(--azul-escuro);
+}
+
 .secao-pedidos h2 {
   font-size: 16px;
   color: var(--azul-escuro);

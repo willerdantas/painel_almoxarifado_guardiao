@@ -22,6 +22,7 @@ PAGES = [
     "vencidos.html",
     "estoque.html",
     "estoque_movimentacoes.html",
+    "relatorio_vencidos.html",
     "aquisicoes.html",
     "painel_pedidos.html",
     "pagamentos.html",
@@ -763,10 +764,10 @@ TIPOMOV_DISTRIBUICAO = 51743658
 UNIDADE_PADRAO = 62438
 
 # ponto de ressuprimento: em vez de usar a coluna estoquearmazem.pontoressuprimento (parametro
-# antigo, pensado pra 180 dias), calcula a partir do estoqueminimo (que ja representa 60 dias de
-# consumo - estoqueminimo/60 eh o consumo diario implicito) projetado pra 150 dias. "configurado"
+# antigo), calcula a partir do estoqueminimo (que agora representa 30 dias de consumo -
+# estoqueminimo/30 eh o consumo diario implicito) projetado pra 180 dias. "configurado"
 # passa a significar estoqueminimo > 0 (so existe ponto calculado onde tem minimo definido)
-SQL_PONTO_RESSUPRIMENTO_150D = "ROUND(ea.estoqueminimo / 60 * 150, 2)"
+SQL_PONTO_RESSUPRIMENTO_180D = "ROUND(ea.estoqueminimo / 30 * 180, 2)"
 
 # distribuicao nao trava num pedido so por vez feito a separacao - o usuario pode acumular ate 10
 # pedidos reivindicados (em andamento) simultaneamente
@@ -815,6 +816,8 @@ SQL_DISTRIBUICAO_CONCLUIDA = """
 
 @app.route("/api/armazens")
 def api_armazens():
+    # so tipo C (central/consumo) - usado pelos filtros de produtos/estoque e pelo dropdown de
+    # armazem central do calendario de distribuicao
     sql = """
         SELECT arm.armazem, pes_arm.nome
         FROM public.armazem arm
@@ -823,6 +826,31 @@ def api_armazens():
         ORDER BY pes_arm.nome
     """
     return _consulta_generica(sql)
+
+
+@app.route("/api/vencidos_armazens")
+def api_vencidos_armazens():
+    # armazens que tem pelo menos um produto vencido com estoque > 0 - usado pra popular o filtro
+    # de armazem em vencidos.html (em vez da lista cheia de armazens, so quem realmente tem
+    # produto vencido). restrito aos armazens do usuario logado quando ele nao eh administrador
+    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    condicoes = ["l.validade < CURRENT_DATE", "e.quantidade > 0"]
+    params = []
+    if usuario_logado:
+        condicoes.append(f"arm.armazem IN ({SQL_ARMAZENS_DO_USUARIO})")
+        params.append(usuario_logado)
+    where = " AND ".join(condicoes)
+
+    sql = f"""
+        SELECT DISTINCT arm.armazem, COALESCE(pes.nome, arm.sigla) AS nome
+        FROM public.lote l
+        JOIN public.estoque e ON e.lote = l.lote
+        JOIN public.armazem arm ON arm.armazem = e.armazem
+        LEFT JOIN public.pessoa pes ON pes.pessoa = arm.pessoa
+        WHERE {where}
+        ORDER BY nome
+    """
+    return _consulta_generica(sql, params)
 
 
 @app.route("/api/unidades")
@@ -1502,6 +1530,23 @@ def api_produtos_sugestoes():
     return _consulta_generica(sql, [f"%{termo}%"])
 
 
+@app.route("/api/descricoes_sugestoes")
+def api_descricoes_sugestoes():
+    # nome vai digitando, essa rota devolve so um punhado pra lista de sugestao
+    termo = request.args.get("termo", "").strip()
+    if not termo:
+        return jsonify([])
+
+    sql = """
+        SELECT DISTINCT descricao AS descricao_produto
+        FROM public.produto
+        WHERE descricao ILIKE %s
+        ORDER BY descricao_produto
+        LIMIT 10
+    """
+    return _consulta_generica(sql, [f"%{termo}%"])
+
+
 @app.route("/api/subgrupos_sugestoes")
 def api_subgrupos_sugestoes():
     # nome vai digitando, essa rota devolve so um punhado pra lista de sugestao
@@ -1563,6 +1608,7 @@ def api_produtos():
     cod_almox = request.args.get("cod_almox")
     cod_produto = request.args.get("cod_produto")
     nome_produto = request.args.get("nome_produto")
+    descricao = request.args.get("descricao")
     lote = request.args.get("lote")
     procedimento_sus = request.args.get("procedimento_sus")
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
@@ -1587,6 +1633,9 @@ def api_produtos():
     if nome_produto:
         condicoes.append("p.nome ILIKE %s")
         params.append(f"%{nome_produto}%")
+    if descricao:
+        condicoes.append("p.descricao ILIKE %s")
+        params.append(f"%{descricao}%")
     if lote:
         condicoes.append(
             "EXISTS (SELECT 1 FROM public.lote lt WHERE lt.produto = p.produto AND lt.lotefornecedor ILIKE %s)"
@@ -1635,6 +1684,7 @@ def api_produtos():
                 p.codigo AS cod_almox,
                 p.produto AS cod_produto,
                 p.nome AS nome_produto,
+                p.descricao AS descricao_produto,
                 c.descricao AS classe,
                 sg.descricao AS sub_grupo,
                 up.sigla AS apresentacao,
@@ -1741,6 +1791,7 @@ def api_vencidos():
     cod_almox = request.args.get("cod_almox")
     cod_produto = request.args.get("cod_produto")
     nome_produto = request.args.get("nome_produto")
+    descricao = request.args.get("descricao")
     lote = request.args.get("lote")
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
     armazem = request.args.get("armazem")
@@ -1764,6 +1815,9 @@ def api_vencidos():
     if nome_produto:
         condicoes.append("p.nome ILIKE %s")
         params.append(f"%{nome_produto}%")
+    if descricao:
+        condicoes.append("p.descricao ILIKE %s")
+        params.append(f"%{descricao}%")
     if lote:
         condicoes.append(
             "EXISTS (SELECT 1 FROM public.lote lt WHERE lt.produto = p.produto AND lt.lotefornecedor ILIKE %s)"
@@ -1786,7 +1840,6 @@ def api_vencidos():
             JOIN public.estoque e ON e.lote = lt.lote
             JOIN public.armazem arm_e ON arm_e.armazem = e.armazem
             WHERE lt.validade < CURRENT_DATE
-              AND arm_e.tipoarmazem = 'C'
             {filtro_armazem_usuario}
             GROUP BY lt.produto
             HAVING SUM(e.quantidade) > 0
@@ -1794,6 +1847,7 @@ def api_vencidos():
         LEFT JOIN public.classe c ON p.classe = c.classe
         LEFT JOIN public.subgrupo sg ON c.subgrupo = sg.subgrupo
         LEFT JOIN public.unidadeproduto up ON p.unidadeproduto = up.unidadeproduto
+        LEFT JOIN public.estoquetotal et ON et.produto = p.produto
         {where}
     """
 
@@ -1801,7 +1855,14 @@ def api_vencidos():
     offset = (pagina - 1) * tamanho_pagina
 
     try:
-        total = run_query(f"SELECT count(*) AS total {base_from}", params_completo)[0]["total"]
+        sql_contagens = f"""
+            SELECT
+                count(*) AS total,
+                COALESCE(SUM(venc.total), 0) AS total_quantidade_vencida,
+                COALESCE(SUM(venc.total * COALESCE(et.customedio, 0)), 0) AS total_valor_vencido
+            {base_from}
+        """
+        contagens = run_query(sql_contagens, params_completo)[0]
 
         sql_dados = f"""
             SELECT
@@ -1809,11 +1870,14 @@ def api_vencidos():
                 p.codigo AS cod_almox,
                 p.produto AS cod_produto,
                 p.nome AS nome_produto,
+                p.descricao AS descricao_produto,
                 c.descricao AS classe,
                 sg.descricao AS sub_grupo,
                 up.sigla AS apresentacao,
                 p.referenciasus AS procedimento_sus,
-                venc.total AS total_estoque
+                venc.total AS total_estoque,
+                et.customedio AS valor_unitario,
+                (venc.total * COALESCE(et.customedio, 0)) AS valor_total
             {base_from}
             ORDER BY p.produto
             LIMIT %s OFFSET %s
@@ -1822,7 +1886,9 @@ def api_vencidos():
         return jsonify(
             {
                 "dados": dados,
-                "total": total,
+                "total": contagens["total"],
+                "total_quantidade_vencida": contagens["total_quantidade_vencida"],
+                "total_valor_vencido": contagens["total_valor_vencido"],
                 "pagina": pagina,
                 "tamanho_pagina": tamanho_pagina,
             }
@@ -1831,12 +1897,133 @@ def api_vencidos():
         return jsonify({"erro": str(erro)}), 500
 
 
+@app.route("/api/vencidos_por_armazem")
+def api_vencidos_por_armazem():
+    # relatorio: quantidade e valor vencido somados POR ARMAZEM (em vez de por produto, como
+    # /api/vencidos) - mesmos filtros de texto/armazem/usuario da tela, so troca o agrupamento
+    cod_seplag = request.args.get("cod_seplag")
+    cod_almox = request.args.get("cod_almox")
+    cod_produto = request.args.get("cod_produto")
+    nome_produto = request.args.get("nome_produto")
+    descricao = request.args.get("descricao")
+    lote = request.args.get("lote")
+    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    armazem = request.args.get("armazem")
+
+    condicoes = ["l.validade < CURRENT_DATE", "e.quantidade > 0"]
+    params = []
+
+    if cod_seplag:
+        condicoes.append("p.codigoreferencia ILIKE %s")
+        params.append(f"%{cod_seplag}%")
+    if cod_almox:
+        condicoes.append("p.codigo ILIKE %s")
+        params.append(f"%{cod_almox}%")
+    if cod_produto:
+        condicoes.append("p.produto::text ILIKE %s")
+        params.append(f"%{cod_produto}%")
+    if nome_produto:
+        condicoes.append("p.nome ILIKE %s")
+        params.append(f"%{nome_produto}%")
+    if descricao:
+        condicoes.append("p.descricao ILIKE %s")
+        params.append(f"%{descricao}%")
+    if lote:
+        condicoes.append("l.lotefornecedor ILIKE %s")
+        params.append(f"%{lote}%")
+
+    filtro_armazem, params_armazem = _fragmento_filtro_armazem("arm.armazem", usuario_logado, armazem)
+    where = " AND ".join(condicoes)
+
+    sql = f"""
+        SELECT
+            COALESCE(pes_arm.nome, arm.sigla) AS nome_armazem,
+            SUM(e.quantidade) AS quantidade_vencida,
+            SUM(e.quantidade * COALESCE(et.customedio, 0)) AS valor_vencido
+        FROM public.lote l
+        JOIN public.estoque e ON e.lote = l.lote
+        JOIN public.armazem arm ON arm.armazem = e.armazem
+        LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
+        JOIN public.produto p ON p.produto = l.produto
+        LEFT JOIN public.estoquetotal et ON et.produto = p.produto
+        WHERE {where} {filtro_armazem}
+        GROUP BY arm.armazem, COALESCE(pes_arm.nome, arm.sigla)
+        ORDER BY nome_armazem
+    """
+    return _consulta_generica(sql, params + params_armazem)
+
+
+@app.route("/api/vencidos_detalhado")
+def api_vencidos_detalhado():
+    # relatorio: TODOS os itens/lotes vencidos (um por lote+armazem, sem paginar) que atendem aos
+    # mesmos filtros de vencidos.html - usado no relatorio impresso, junto com o resumo por armazem
+    cod_seplag = request.args.get("cod_seplag")
+    cod_almox = request.args.get("cod_almox")
+    cod_produto = request.args.get("cod_produto")
+    nome_produto = request.args.get("nome_produto")
+    descricao = request.args.get("descricao")
+    lote = request.args.get("lote")
+    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    armazem = request.args.get("armazem")
+
+    condicoes = ["l.validade < CURRENT_DATE", "e.quantidade > 0"]
+    params = []
+
+    if cod_seplag:
+        condicoes.append("p.codigoreferencia ILIKE %s")
+        params.append(f"%{cod_seplag}%")
+    if cod_almox:
+        condicoes.append("p.codigo ILIKE %s")
+        params.append(f"%{cod_almox}%")
+    if cod_produto:
+        condicoes.append("p.produto::text ILIKE %s")
+        params.append(f"%{cod_produto}%")
+    if nome_produto:
+        condicoes.append("p.nome ILIKE %s")
+        params.append(f"%{nome_produto}%")
+    if descricao:
+        condicoes.append("p.descricao ILIKE %s")
+        params.append(f"%{descricao}%")
+    if lote:
+        condicoes.append("l.lotefornecedor ILIKE %s")
+        params.append(f"%{lote}%")
+
+    filtro_armazem, params_armazem = _fragmento_filtro_armazem("arm.armazem", usuario_logado, armazem)
+    where = " AND ".join(condicoes)
+
+    sql = f"""
+        SELECT
+            p.codigoreferencia AS cod_seplag,
+            p.codigo AS cod_almox,
+            p.produto AS cod_produto,
+            p.nome AS nome_produto,
+            l.lotefornecedor AS lote,
+            to_char(l.validade, 'DD-MM-YY') AS validade,
+            COALESCE(pes_arm.nome, arm.sigla) AS nome_armazem,
+            e.quantidade AS quantidade,
+            et.customedio AS valor_unitario,
+            (e.quantidade * COALESCE(et.customedio, 0)) AS valor_total
+        FROM public.lote l
+        JOIN public.produto p ON p.produto = l.produto
+        JOIN public.estoque e ON e.lote = l.lote
+        JOIN public.armazem arm ON arm.armazem = e.armazem
+        LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
+        LEFT JOIN public.estoquetotal et ON et.produto = p.produto
+        WHERE {where} {filtro_armazem}
+        ORDER BY p.nome, l.validade ASC
+    """
+    return _consulta_generica(sql, params + params_armazem)
+
+
 @app.route("/api/vencidos_lotes")
 def api_vencidos_lotes():
-    # so lotes vencidos (validade < hoje) e com estoque > 0, do que vence ha mais tempo pro mais recente
+    # so lotes vencidos (validade < hoje) e com estoque > 0, do que vence ha mais tempo pro mais
+    # recente - uma linha POR ARMAZEM (nao soma tudo junto), pra dar pra ver em qual armazem
+    # aquele lote vencido esta
     produto = request.args.get("produto")
     lote = request.args.get("lote")
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    armazem = request.args.get("armazem")
     if not produto:
         return jsonify([])
 
@@ -1851,8 +2038,8 @@ def api_vencidos_lotes():
 
     # o filtro de armazem fica dentro da subquery eq, que aparece antes do WHERE de fora no
     # texto do SQL - por isso os parametros dela vao primeiro na lista
-    filtro_armazem_usuario = f"AND e.armazem IN ({SQL_ARMAZENS_DO_USUARIO})" if usuario_logado else ""
-    params_completo = ([usuario_logado] if usuario_logado else []) + params
+    filtro_armazem_usuario, params_armazem = _fragmento_filtro_armazem("e.armazem", usuario_logado, armazem)
+    params_completo = params_armazem + params
 
     sql = f"""
         SELECT
@@ -1862,18 +2049,23 @@ def api_vencidos_lotes():
             pj_forn.nomefantasia AS nome_fantasia,
             l.lotefornecedor AS lote,
             to_char(l.validade, 'DD-MM-YY') AS validade,
-            eq.quantidade AS quantidade
+            eq.nome_armazem AS nome_armazem,
+            eq.quantidade AS quantidade,
+            et.customedio AS valor_unitario,
+            (eq.quantidade * COALESCE(et.customedio, 0)) AS valor_total
         FROM public.lote l
         LEFT JOIN public.fornecedor forn ON l.fornecedor = forn.fornecedor
         LEFT JOIN public.pessoa pes_forn ON forn.pessoa = pes_forn.pessoa
         LEFT JOIN public.pessoajuridica pj_forn ON pj_forn.pessoa = forn.pessoa
+        LEFT JOIN public.estoquetotal et ON et.produto = l.produto
         JOIN (
-            SELECT e.lote, SUM(e.quantidade) AS quantidade
+            SELECT e.lote, arm_e.armazem, COALESCE(pes_arm_e.nome, arm_e.sigla) AS nome_armazem, SUM(e.quantidade) AS quantidade
             FROM public.estoque e
             JOIN public.armazem arm_e ON arm_e.armazem = e.armazem
-            WHERE arm_e.tipoarmazem = 'C'
+            LEFT JOIN public.pessoa pes_arm_e ON pes_arm_e.pessoa = arm_e.pessoa
+            WHERE TRUE
             {filtro_armazem_usuario}
-            GROUP BY e.lote
+            GROUP BY e.lote, arm_e.armazem, COALESCE(pes_arm_e.nome, arm_e.sigla)
             HAVING SUM(e.quantidade) > 0
         ) eq ON eq.lote = l.lote
         WHERE {where}
@@ -1889,6 +2081,7 @@ def api_estoque():
     cod_almox = request.args.get("cod_almox")
     cod_produto = request.args.get("cod_produto")
     nome_produto = request.args.get("nome_produto")
+    descricao = request.args.get("descricao")
     lote = request.args.get("lote")
     subgrupo = request.args.get("subgrupo")
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
@@ -1913,6 +2106,9 @@ def api_estoque():
     if nome_produto:
         condicoes.append("p.nome ILIKE %s")
         params.append(f"%{nome_produto}%")
+    if descricao:
+        condicoes.append("p.descricao ILIKE %s")
+        params.append(f"%{descricao}%")
     if lote:
         condicoes.append(
             "EXISTS (SELECT 1 FROM public.lote lt WHERE lt.produto = p.produto AND lt.lotefornecedor ILIKE %s)"
@@ -1964,6 +2160,7 @@ def api_estoque():
                     p.codigo AS cod_almox,
                     p.produto AS cod_produto,
                     p.nome AS nome_produto,
+                    p.descricao AS descricao_produto,
                     c.descricao AS classe,
                     sg.descricao AS sub_grupo,
                     up.sigla AS apresentacao,
@@ -2234,8 +2431,8 @@ def api_estoque_movimentacoes():
 def api_estoque_abastecimento():
     # parametros de abastecimento (minimo, seguranca, ponto de ressuprimento) por armazem - so
     # armazem tipo C (almoxarifado/consumo), mesmo filtro usado no resto da tela de estoque
-    # estoqueminimo = estoque ideal pra 60 dias, estoqueseguranca pra 90, ponto de ressuprimento
-    # calculado pra 150 (ver SQL_PONTO_RESSUPRIMENTO_150D) - autonomia_dias = quanto tempo o
+    # estoqueminimo = estoque ideal pra 30 dias, estoqueseguranca pra 90, ponto de ressuprimento
+    # calculado pra 180 (ver SQL_PONTO_RESSUPRIMENTO_180D) - autonomia_dias = quanto tempo o
     # estoque atual aguenta no ritmo implicito do estoqueminimo
     produto = request.args.get("produto")
     if not produto:
@@ -2251,9 +2448,9 @@ def api_estoque_abastecimento():
             ea.quantidade AS total_estoque,
             ea.estoqueminimo AS estoque_minimo,
             ea.estoqueseguranca AS estoque_seguranca,
-            CASE WHEN ea.estoqueminimo > 0 THEN {SQL_PONTO_RESSUPRIMENTO_150D} ELSE 0 END AS ponto_ressuprimento,
+            CASE WHEN ea.estoqueminimo > 0 THEN {SQL_PONTO_RESSUPRIMENTO_180D} ELSE 0 END AS ponto_ressuprimento,
             CASE
-                WHEN ea.estoqueminimo > 0 THEN ROUND(ea.quantidade / (ea.estoqueminimo / 60), 1)
+                WHEN ea.estoqueminimo > 0 THEN ROUND(ea.quantidade / (ea.estoqueminimo / 30), 1)
                 ELSE NULL
             END AS autonomia_dias
         FROM public.estoquearmazem ea
@@ -2323,6 +2520,7 @@ def api_aquisicoes():
     cod_almox = request.args.get("cod_almox")
     cod_produto = request.args.get("cod_produto")
     nome_produto = request.args.get("nome_produto")
+    descricao = request.args.get("descricao")
     lote = request.args.get("lote")
     subgrupo = request.args.get("subgrupo")
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
@@ -2347,6 +2545,9 @@ def api_aquisicoes():
     if nome_produto:
         condicoes.append("p.nome ILIKE %s")
         params.append(f"%{nome_produto}%")
+    if descricao:
+        condicoes.append("p.descricao ILIKE %s")
+        params.append(f"%{descricao}%")
     if lote:
         condicoes.append(
             "EXISTS (SELECT 1 FROM public.lote lt WHERE lt.produto = p.produto AND lt.lotefornecedor ILIKE %s)"
@@ -2368,7 +2569,7 @@ def api_aquisicoes():
             AND arm_ea.tipoarmazem = 'C'
             {filtro_armazem_ea}
             AND ea.estoqueminimo > 0
-            AND (ea.quantidade + COALESCE(sp.saldo, 0)) < {SQL_PONTO_RESSUPRIMENTO_150D}
+            AND (ea.quantidade + COALESCE(sp.saldo, 0)) < {SQL_PONTO_RESSUPRIMENTO_180D}
         )
     """)
 
@@ -2426,6 +2627,7 @@ def api_aquisicoes():
                     p.codigo AS cod_almox,
                     p.produto AS cod_produto,
                     p.nome AS nome_produto,
+                    p.descricao AS descricao_produto,
                     c.descricao AS classe,
                     sg.descricao AS sub_grupo,
                     up.sigla AS apresentacao,
@@ -2796,6 +2998,7 @@ def api_atas_contratos_itens():
     sql = """
         SELECT
             p.nome AS nome_produto,
+            p.descricao AS descricao_produto,
             pi.quantidade AS quantidade,
             COALESCE(pi.quantidadeentregue, 0) AS quantidade_utilizada,
             pi.valorunitario AS valor_unitario,
@@ -3047,7 +3250,7 @@ def api_dashboard_ponto_ressuprimento():
     # por armazem (lista fixa definida em ARMAZENS_COBERTURA_PONTO_RESSUPRIMENTO): dos itens
     # que tem estoque (quantidade > 0), quantos tem ponto de ressuprimento configurado (hoje isso
     # significa estoqueminimo > 0, ja que o ponto em si vira calculado a partir dele - ver
-    # SQL_PONTO_RESSUPRIMENTO_150D) e quantos nao tem
+    # SQL_PONTO_RESSUPRIMENTO_180D) e quantos nao tem
     sql = """
         SELECT
             COALESCE(pes.nome, arm.sigla) AS nome_armazem,
@@ -3080,7 +3283,7 @@ def api_dashboard_itens_ponto_ressuprimento():
     # a tela mostra so 10 de cada vez e rola sozinha pelo resto. armazem (opcional) restringe a um
     # unico armazem pelo nome - usado no gauge do almoxarifado central
     armazem = request.args.get("armazem")
-    condicoes = ["arm.tipoarmazem = 'C'", "ea.estoqueminimo > 0", f"ea.quantidade <= {SQL_PONTO_RESSUPRIMENTO_150D}"]
+    condicoes = ["arm.tipoarmazem = 'C'", "ea.estoqueminimo > 0", f"ea.quantidade <= {SQL_PONTO_RESSUPRIMENTO_180D}"]
     params = []
     if armazem:
         condicoes.append("pes_arm.nome = %s")
@@ -3092,7 +3295,7 @@ def api_dashboard_itens_ponto_ressuprimento():
             p.nome AS nome_produto,
             COALESCE(pes_arm.nome, arm.sigla) AS nome_armazem,
             ea.quantidade AS quantidade_atual,
-            {SQL_PONTO_RESSUPRIMENTO_150D} AS ponto_ressuprimento,
+            {SQL_PONTO_RESSUPRIMENTO_180D} AS ponto_ressuprimento,
             to_char(ea._update, 'DD/MM/YY') AS data
         FROM public.estoquearmazem ea
         JOIN public.armazem arm ON arm.armazem = ea.armazem
@@ -3114,7 +3317,7 @@ def api_dashboard_gauge_ponto_ressuprimento():
     sql = f"""
         SELECT
             count(*) FILTER (WHERE ea.estoqueminimo > 0) AS total_com_ponto,
-            count(*) FILTER (WHERE ea.estoqueminimo > 0 AND ea.quantidade > {SQL_PONTO_RESSUPRIMENTO_150D}) AS suficientes
+            count(*) FILTER (WHERE ea.estoqueminimo > 0 AND ea.quantidade > {SQL_PONTO_RESSUPRIMENTO_180D}) AS suficientes
         FROM public.estoquearmazem ea
         JOIN public.armazem arm ON arm.armazem = ea.armazem
         LEFT JOIN public.pessoa pes ON pes.pessoa = arm.pessoa
