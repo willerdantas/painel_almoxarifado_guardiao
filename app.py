@@ -2294,7 +2294,9 @@ def api_produtos():
     descricao = request.args.get("descricao")
     lote = request.args.get("lote")
     procedimento_sus = request.args.get("procedimento_sus")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    # produtos eh excecao: mostra o catalogo pra todo mundo, sem restringir pelo armazem do
+    # usuario logado (diferente do resto do sistema) - armazem aqui so entra se o usuario
+    # escolher manualmente no filtro
     armazem = request.args.get("armazem")
     try:
         pagina = max(int(request.args.get("pagina", 1)), 1)
@@ -2327,8 +2329,8 @@ def api_produtos():
     if procedimento_sus:
         condicoes.append("p.referenciasus ILIKE %s")
         params.append(f"%{procedimento_sus}%")
-    if usuario_logado or armazem:
-        fragmento_armazem, params_armazem = _fragmento_filtro_armazem("e2.armazem", usuario_logado, armazem)
+    if armazem:
+        fragmento_armazem, params_armazem = _fragmento_filtro_armazem("e2.armazem", None, armazem)
         condicoes.append(f"""EXISTS (
             SELECT 1 FROM public.lote lt2
             JOIN public.estoque e2 ON e2.lote = lt2.lote
@@ -2395,10 +2397,10 @@ def api_produtos():
 @app.route("/api/produtos_lotes")
 def api_produtos_lotes():
     # lotes de um produto (com dados do fornecedor), carregado so quando o usuario clica na linha
-    # se o filtro de lote da tela principal estiver ativo, so traz o(s) lote(s) que batem
+    # se o filtro de lote da tela principal estiver ativo, so traz o(s) lote(s) que batem.
+    # produtos eh excecao: sem restricao pelo armazem do usuario logado (ver api_produtos)
     produto = request.args.get("produto")
     lote = request.args.get("lote")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
     if not produto:
         return jsonify([])
 
@@ -2408,14 +2410,6 @@ def api_produtos_lotes():
     if lote:
         condicoes.append("l.lotefornecedor ILIKE %s")
         params.append(f"%{lote}%")
-    if usuario_logado:
-        condicoes.append(
-            f"""EXISTS (
-                SELECT 1 FROM public.estoque e2
-                WHERE e2.lote = l.lote AND e2.armazem IN ({SQL_ARMAZENS_DO_USUARIO})
-            )"""
-        )
-        params.append(usuario_logado)
 
     where = " AND ".join(condicoes)
 

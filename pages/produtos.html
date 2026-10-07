@@ -62,7 +62,7 @@
             <div class="sugestoes" id="sugestoesProcedimentoSus"></div>
           </div>
 
-          <div class="campo-filtro campo-curto oculto" id="blocoFiltroArmazem">
+          <div class="campo-filtro campo-curto">
             <label for="filtroArmazem">Armazém</label>
             <select id="filtroArmazem">
               <option value="">Todos</option>
@@ -122,12 +122,31 @@
       if (descricao) params.set("descricao", descricao);
       if (procedimentoSus) params.set("procedimento_sus", procedimentoSus);
       if (armazem) params.set("armazem", armazem);
-      if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
 
       return params;
     }
 
-    iniciarFiltroArmazemCondicional("filtroArmazem", "blocoFiltroArmazem");
+    // produtos eh excecao: mostra o catalogo pra todo mundo, sem restringir pelo armazem do
+    // usuario logado como o resto do sistema - o filtro de armazem fica sempre disponivel, com a
+    // lista completa de armazens, pra quem quiser estreitar a busca manualmente
+    async function iniciarFiltroArmazemProdutos() {
+      try {
+        const resp = await fetch("/api/armazens");
+        const armazens = await resp.json();
+        const select = document.getElementById("filtroArmazem");
+
+        armazens.forEach((item) => {
+          const opcao = document.createElement("option");
+          opcao.value = item.nome;
+          opcao.textContent = item.nome;
+          select.appendChild(opcao);
+        });
+      } catch (erro) {
+        console.error("Erro ao carregar armazéns do filtro:", erro);
+      }
+    }
+
+    iniciarFiltroArmazemProdutos();
 
     function renderizarProdutos(dados) {
       const container = document.getElementById("areaProdutos");
