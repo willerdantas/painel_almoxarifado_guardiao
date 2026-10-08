@@ -16,7 +16,7 @@ try:
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import cm
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
 
     REPORTLAB_DISPONIVEL = True
 except ImportError:
@@ -1395,7 +1395,11 @@ def _montar_pdf_relatorio(titulo, linhas_cabecalho, blocos):
         bottomMargin=1.3 * cm,
     )
     estilos = getSampleStyleSheet()
-    estilo_celula = ParagraphStyle("celulaRelatorio", parent=estilos["Normal"], fontSize=7, leading=9)
+    # splitLongWords=0: sem isso, um numero formatado (ex.: "1.629.076,90") que nao cabe
+    # inteiro na coluna é quebrado no meio caractere a caractere (sem espaço pra quebrar
+    # "de verdade") - com as colunas numericas largas o suficiente (ver _bloco_pdf_consumo_resumo/
+    # _gerar_pdf_consumo_detalhado), isso nunca deveria disparar mesmo, mas deixa explicito
+    estilo_celula = ParagraphStyle("celulaRelatorio", parent=estilos["Normal"], fontSize=7, leading=9, splitLongWords=0)
     estilo_cabecalho_tabela = ParagraphStyle(
         "cabecalhoTabelaRelatorio", parent=estilo_celula, fontName="Helvetica-Bold", textColor=colors.white
     )
@@ -1406,9 +1410,18 @@ def _montar_pdf_relatorio(titulo, linhas_cabecalho, blocos):
         elementos.append(Paragraph(linha, estilos["Normal"]))
     elementos.append(Spacer(1, 12))
 
+    # cada pedaco (chunk de LINHAS_POR_BLOCO_PDF linhas) e cada novo bloco (ex.: "Produtos do
+    # Hospital" depois de "Produtos do CD") comeca em pagina nova - sem isso, o fim de um pedaco
+    # e o cabecalho colorido do pedaco/bloco seguinte podiam cair na mesma pagina, dando a
+    # impressao de "dois cabecalhos" numa pagina so
+    primeira_unidade = True
+
     for bloco in blocos:
         if bloco.get("subtitulo"):
+            if not primeira_unidade:
+                elementos.append(PageBreak())
             elementos.append(Paragraph(bloco["subtitulo"], estilo_subtitulo))
+            primeira_unidade = False
 
         cabecalho_formatado = [Paragraph(str(c), estilo_cabecalho_tabela) for c in bloco["cabecalho_tabela"]]
         largura_colunas = bloco["largura_colunas"]
@@ -1416,7 +1429,11 @@ def _montar_pdf_relatorio(titulo, linhas_cabecalho, blocos):
             bloco["linhas_tabela"][i : i + LINHAS_POR_BLOCO_PDF] for i in range(0, len(bloco["linhas_tabela"]), LINHAS_POR_BLOCO_PDF)
         ]
 
-        for pedaco in pedacos or [[]]:
+        for indice_pedaco, pedaco in enumerate(pedacos or [[]]):
+            if not primeira_unidade and indice_pedaco > 0:
+                elementos.append(PageBreak())
+            primeira_unidade = False
+
             corpo_formatado = [[Paragraph(str(valor), estilo_celula) for valor in linha] for linha in pedaco]
             dados_bloco = [cabecalho_formatado] + corpo_formatado
             tabela = Table(dados_bloco, colWidths=largura_colunas, repeatRows=1)
@@ -1450,15 +1467,17 @@ def _montar_pdf_relatorio(titulo, linhas_cabecalho, blocos):
     return buffer.getvalue()
 
 
-def _gerar_pdf_consumo_resumo(args):
-    resumo = _dados_consumo_resumo(args)
+def _bloco_pdf_consumo_resumo(titulo, resumo):
     mostrar_media_mensal = resumo["meses_completos"] > 0
 
+    # colunas numericas (Quantidade/Valor Total/Médias) largas o suficiente pra nao quebrar linha
+    # na linha "Total Geral", onde o numero somado de todos os produtos fica bem maior que o de
+    # qualquer item individual
     cabecalho_tabela = ["Cód. Seplag", "Cód. Almox", "Cód. Produto", "Produto", "Descrição", "Quantidade", "Valor Total", "Dias com Saída", "Média Diária"]
-    larguras = [1.8 * cm, 1.8 * cm, 1.8 * cm, 4.8 * cm, 6.5 * cm, 2.0 * cm, 2.2 * cm, 1.9 * cm, 1.9 * cm]
+    larguras = [1.8 * cm, 1.8 * cm, 1.8 * cm, 4.8 * cm, 6.5 * cm, 2.3 * cm, 2.7 * cm, 1.9 * cm, 2.1 * cm]
     if mostrar_media_mensal:
         cabecalho_tabela.append("Média Mensal")
-        larguras.append(1.9 * cm)
+        larguras.append(2.1 * cm)
 
     linhas_tabela = []
     for item in resumo["produtos"]:
@@ -1481,23 +1500,56 @@ def _gerar_pdf_consumo_resumo(args):
     if mostrar_media_mensal:
         linha_total.append("")
 
+    return {
+        "subtitulo": titulo,
+        "cabecalho_tabela": cabecalho_tabela,
+        "linhas_tabela": linhas_tabela,
+        "largura_colunas": larguras,
+        "linha_total": linha_total,
+    }
+
+
+def _linhas_resumo_pdf_consumo(resumo):
+    # mesmas informacoes da linha "Resumo" (badges) da tela de consumo.html, exibidas no pdf
+    # entre o cabecalho (filtros aplicados) e as tabelas de "Produtos do CD"/"Produtos do Hospital"
+    linha = (
+        f"<b>Resumo:</b> Itens Únicos: {resumo['itens_unicos']} · "
+        f"Qtde. Total: {_formatar_quantidade_pdf(resumo['quantidade_total'])} · "
+        f"Valor Total: {_formatar_moeda_pdf(resumo['valor_total'])}"
+    )
+    return [linha]
+
+
+def _dados_consumo_resumo_por_origem(args):
+    # resumo "cd" e "hospital" separados - usado pelo pdf/csv/planilha de resumo, que agora
+    # separa os itens por origem (mesmo criterio de origem usado no resto da tela de consumo)
+    args_dict = args.to_dict() if hasattr(args, "to_dict") else dict(args)
+    resumo_cd = _dados_consumo_resumo({**args_dict, "origem": "cd"})
+    resumo_hospital = _dados_consumo_resumo({**args_dict, "origem": "hospital"})
+    return resumo_cd, resumo_hospital
+
+
+def _gerar_pdf_consumo_resumo(args):
+    resumo_total = _dados_consumo_resumo(args)
+    resumo_cd, resumo_hospital = _dados_consumo_resumo_por_origem(args)
+
+    linhas_cabecalho = _montar_cabecalho_pdf_consumo(args) + _linhas_resumo_pdf_consumo(resumo_total)
+
     return _montar_pdf_relatorio(
         "Relatório de Resumo de Consumo",
-        _montar_cabecalho_pdf_consumo(args),
+        linhas_cabecalho,
         [
-            {
-                "cabecalho_tabela": cabecalho_tabela,
-                "linhas_tabela": linhas_tabela,
-                "largura_colunas": larguras,
-                "linha_total": linha_total,
-            }
+            _bloco_pdf_consumo_resumo("Produtos do CD", resumo_cd),
+            _bloco_pdf_consumo_resumo("Produtos do Hospital", resumo_hospital),
         ],
     )
 
 
 def _gerar_pdf_consumo_detalhado(linhas, args):
+    # Quantidade/Valor Total mais largos pelo mesmo motivo do bloco de resumo: a linha
+    # "Total Geral" soma tudo e pode gerar um numero bem maior que qualquer item individual
     cabecalho_tabela = ["Cód. Seplag", "Cód. Almox", "Cód. Produto", "Produto", "Descrição", "Lote", "Tipo de Movimentação", "Quantidade", "Valor Unitário", "Valor Total", "Dt. Movimentação"]
-    larguras = [1.5 * cm, 1.5 * cm, 1.5 * cm, 4.0 * cm, 5.5 * cm, 1.8 * cm, 2.6 * cm, 1.6 * cm, 1.8 * cm, 1.8 * cm, 2.0 * cm]
+    larguras = [1.5 * cm, 1.5 * cm, 1.5 * cm, 4.0 * cm, 5.5 * cm, 1.8 * cm, 2.6 * cm, 2.0 * cm, 1.8 * cm, 2.3 * cm, 2.0 * cm]
 
     linhas_tabela = []
     total_quantidade = 0.0
@@ -1590,14 +1642,26 @@ def _escrever_csv(cabecalho, linhas):
     return "﻿" + buffer.getvalue()
 
 
+_CARACTERES_ILEGAIS_XLSX_RE = re.compile(r"[\000-\010]|[\013-\014]|[\016-\037]")
+
+
+def _sanitizar_linha_xlsx(linha):
+    # remove caracteres de controle que o openpyxl rejeita (IllegalCharacterError) - algumas
+    # descricoes de produto vem com esses caracteres embutidos vindos da base
+    return [
+        _CARACTERES_ILEGAIS_XLSX_RE.sub("", valor) if isinstance(valor, str) else valor
+        for valor in linha
+    ]
+
+
 def _escrever_xlsx(cabecalho, linhas):
     # planilha .xlsx com o mesmo cabecalho/linhas do csv (mesmos valores ja formatados em
     # _formatar_quantidade_pdf) - so troca o formato do arquivo, botao "Planilha" ao lado do "CSV"
     wb = Workbook()
     ws = wb.active
-    ws.append(cabecalho)
+    ws.append(_sanitizar_linha_xlsx(cabecalho))
     for linha in linhas:
-        ws.append(linha)
+        ws.append(_sanitizar_linha_xlsx(linha))
 
     fonte_cabecalho = Font(bold=True, color="FFFFFF")
     preenchimento_cabecalho = PatternFill(start_color="1C2B3A", end_color="1C2B3A", fill_type="solid")
@@ -1614,8 +1678,53 @@ def _escrever_xlsx(cabecalho, linhas):
     return buffer.getvalue()
 
 
-def _linhas_consumo_resumo(args):
-    resumo = _dados_consumo_resumo(args)
+def _escrever_csv_blocos(blocos):
+    # blocos: lista de (titulo, cabecalho, linhas) - usado quando a planilha precisa separar
+    # secoes (ex.: Produtos do CD / Produtos do Hospital) dentro do mesmo arquivo
+    buffer = io.StringIO()
+    escritor = csv.writer(buffer, delimiter=";")
+    for indice, (titulo, cabecalho, linhas) in enumerate(blocos):
+        if indice > 0:
+            escritor.writerow([])
+        escritor.writerow([titulo])
+        escritor.writerow(cabecalho)
+        escritor.writerows(linhas)
+    return "﻿" + buffer.getvalue()
+
+
+def _escrever_xlsx_blocos(blocos):
+    # mesma ideia do _escrever_csv_blocos, em .xlsx - cada bloco vira um titulo em negrito +
+    # cabecalho colorido + linhas, com uma linha em branco separando um bloco do outro
+    wb = Workbook()
+    ws = wb.active
+    fonte_titulo = Font(bold=True, size=12)
+    fonte_cabecalho = Font(bold=True, color="FFFFFF")
+    preenchimento_cabecalho = PatternFill(start_color="1C2B3A", end_color="1C2B3A", fill_type="solid")
+
+    for indice, (titulo, cabecalho, linhas) in enumerate(blocos):
+        if indice > 0:
+            ws.append([])
+        ws.append([titulo])
+        ws.cell(row=ws.max_row, column=1).font = fonte_titulo
+
+        ws.append(_sanitizar_linha_xlsx(cabecalho))
+        for celula in ws[ws.max_row]:
+            celula.font = fonte_cabecalho
+            celula.fill = preenchimento_cabecalho
+
+        for linha in linhas:
+            ws.append(_sanitizar_linha_xlsx(linha))
+
+    for coluna in ws.columns:
+        maior = max((len(str(celula.value)) for celula in coluna if celula.value is not None), default=10)
+        ws.column_dimensions[coluna[0].column_letter].width = min(maior + 2, 60)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def _linhas_consumo_resumo(resumo):
     mostrar_media_mensal = resumo["meses_completos"] > 0
 
     cabecalho = ["Cód. Seplag", "Cód. Almox", "Cód. Produto", "Produto", "Descrição", "Quantidade", "Valor Total", "Dias com Saída", "Média Diária"]
@@ -1677,7 +1786,13 @@ def api_consumo_csv():
         conteudo_csv = _escrever_csv(*_linhas_consumo_detalhado(linhas))
         nome_arquivo = f"consumo{_sufixo_origem(request.args)}.csv"
     else:
-        conteudo_csv = _escrever_csv(*_linhas_consumo_resumo(request.args))
+        resumo_cd, resumo_hospital = _dados_consumo_resumo_por_origem(request.args)
+        conteudo_csv = _escrever_csv_blocos(
+            [
+                ("Produtos do CD", *_linhas_consumo_resumo(resumo_cd)),
+                ("Produtos do Hospital", *_linhas_consumo_resumo(resumo_hospital)),
+            ]
+        )
         nome_arquivo = "resumo_consumo.csv"
 
     return Response(
@@ -1703,7 +1818,13 @@ def api_consumo_xlsx():
         xlsx_bytes = _escrever_xlsx(*_linhas_consumo_detalhado(linhas))
         nome_arquivo = f"consumo{_sufixo_origem(request.args)}.xlsx"
     else:
-        xlsx_bytes = _escrever_xlsx(*_linhas_consumo_resumo(request.args))
+        resumo_cd, resumo_hospital = _dados_consumo_resumo_por_origem(request.args)
+        xlsx_bytes = _escrever_xlsx_blocos(
+            [
+                ("Produtos do CD", *_linhas_consumo_resumo(resumo_cd)),
+                ("Produtos do Hospital", *_linhas_consumo_resumo(resumo_hospital)),
+            ]
+        )
         nome_arquivo = "resumo_consumo.xlsx"
 
     return Response(

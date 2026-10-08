@@ -618,6 +618,15 @@ body {
   color: var(--azul-escuro);
 }
 
+/* rotulo "CD"/"Hospital" na frente de cada linha de badges secundarios do resumo
+   (consumo.html), no lugar do h2 que so aparece na primeira linha */
+.rotulo-origem-resumo {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--azul-escuro);
+  min-width: 56px;
+}
+
 .secao-pedidos h2 {
   font-size: 16px;
   color: var(--azul-escuro);

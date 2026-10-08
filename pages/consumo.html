@@ -82,14 +82,23 @@
         <div class="secao-cabecalho secao-cabecalho-relatorio" id="cabecalhoResumo">
           <h2>Resumo</h2>
           <span class="contador-secundario" id="resumoItensUnicos">Itens Únicos: 0</span>
-          <span class="contador-secundario" id="resumoQuantidadeMovimentacoes">Movimentações: 0</span>
           <span class="contador-secundario" id="resumoQuantidadeTotal">Qtde. Total: 0</span>
           <span class="contador-secundario" id="resumoValorTotal">Valor Total: R$ 0,00</span>
-          <span class="contador-secundario" id="resumoMediaDiaria">Média Diária: 0</span>
-          <span class="contador-secundario oculto" id="resumoMediaMensal">Média Mensal: 0</span>
           <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoGerarRelatorioResumo">Gerar Relatório</button>
           <button type="button" class="botao-resetar" id="botaoCsvResumo">CSV</button>
           <button type="button" class="botao-resetar" id="botaoXlsxResumo">Planilha</button>
+        </div>
+        <div class="secao-cabecalho secao-cabecalho-relatorio" id="cabecalhoResumoCd">
+          <span class="rotulo-origem-resumo">CD</span>
+          <span class="contador-secundario" id="resumoCdItensUnicos">Itens Únicos: 0</span>
+          <span class="contador-secundario" id="resumoCdQuantidadeTotal">Qtde. Total: 0</span>
+          <span class="contador-secundario" id="resumoCdValorTotal">Valor Total: R$ 0,00</span>
+        </div>
+        <div class="secao-cabecalho secao-cabecalho-relatorio" id="cabecalhoResumoHospital">
+          <span class="rotulo-origem-resumo">Hospital</span>
+          <span class="contador-secundario" id="resumoHospitalItensUnicos">Itens Únicos: 0</span>
+          <span class="contador-secundario" id="resumoHospitalQuantidadeTotal">Qtde. Total: 0</span>
+          <span class="contador-secundario" id="resumoHospitalValorTotal">Valor Total: R$ 0,00</span>
         </div>
       </section>
 
@@ -181,33 +190,33 @@
       return params;
     }
 
-    function renderizarResumo(resumo) {
-      document.getElementById("resumoItensUnicos").textContent = `Itens Únicos: ${resumo.itens_unicos ?? 0}`;
-      document.getElementById("resumoQuantidadeMovimentacoes").textContent = `Movimentações: ${resumo.quantidade_movimentacoes ?? 0}`;
-      document.getElementById("resumoQuantidadeTotal").textContent = `Qtde. Total: ${formatarQuantidade(resumo.quantidade_total)}`;
-      document.getElementById("resumoValorTotal").textContent = `Valor Total: ${formatarMoeda(resumo.valor_total)}`;
-      document.getElementById("resumoMediaDiaria").textContent = `Média Diária: ${formatarQuantidade(resumo.media_diaria)}`;
-
-      // media mensal so faz sentido (e so aparece) quando o periodo filtrado cobre 1+ mes inteiro
-      const badgeMediaMensal = document.getElementById("resumoMediaMensal");
-      if (Number(resumo.meses_completos) > 0) {
-        badgeMediaMensal.textContent = `Média Mensal: ${formatarQuantidade(resumo.media_mensal)}`;
-        badgeMediaMensal.classList.remove("oculto");
-      } else {
-        badgeMediaMensal.classList.add("oculto");
-      }
+    // sufixo: "" (linha 1, total combinado), "Cd" (linha 2) ou "Hospital" (linha 3) - cada linha
+    // tem o mesmo conjunto de badges, so trocando o prefixo do id
+    function renderizarResumo(resumo, sufixo) {
+      document.getElementById(`resumo${sufixo}ItensUnicos`).textContent = `Itens Únicos: ${resumo.itens_unicos ?? 0}`;
+      document.getElementById(`resumo${sufixo}QuantidadeTotal`).textContent = `Qtde. Total: ${formatarQuantidade(resumo.quantidade_total)}`;
+      document.getElementById(`resumo${sufixo}ValorTotal`).textContent = `Valor Total: ${formatarMoeda(resumo.valor_total)}`;
     }
 
-    async function buscarResumo() {
+    async function buscarResumoOrigem(origem, sufixo) {
       const params = montarQueryFiltros();
+      if (origem) params.set("origem", origem);
 
       try {
         const resp = await fetch(`/api/consumo_resumo?${params.toString()}`);
         const resumo = await resp.json();
-        renderizarResumo(resumo);
+        renderizarResumo(resumo, sufixo);
       } catch (erro) {
-        console.error("Erro ao carregar resumo:", erro);
+        console.error(`Erro ao carregar resumo (${sufixo || "total"}):`, erro);
       }
+    }
+
+    async function buscarResumo() {
+      await Promise.all([
+        buscarResumoOrigem(null, ""),
+        buscarResumoOrigem("cd", "Cd"),
+        buscarResumoOrigem("hospital", "Hospital"),
+      ]);
     }
 
     function renderizarMovimentacoes(dados, containerId) {
