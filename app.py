@@ -3135,6 +3135,20 @@ def api_estoque():
         return jsonify({"erro": str(erro)}), 500
 
 
+@app.route("/api/estoque_valor_total")
+def api_estoque_valor_total():
+    # soma de valor_total (quantidade * custo medio) dos produtos que batem com os filtros atuais
+    # - usado pelos badges de "Valor Total"/"Valor Total CD"/"Valor Total Hospital" na sessao
+    # "Ações" de estoque.html (origem segue o mesmo padrao "cd"/"hospital" do resto da tela)
+    base_from, params = _filtros_estoque(request.args)
+    sql = f"""
+        SELECT COALESCE(SUM(est.total * et.customedio), 0) AS valor_total
+        {base_from}
+    """
+    resultado = run_query(sql, params)[0]
+    return jsonify({"valor_total": float(resultado["valor_total"] or 0)})
+
+
 def _dados_estoque_sem_paginacao(args, origem):
     # mesma consulta de /api/estoque, sem paginar - usado no relatorio de posicao de estoque
     # (pdf), que precisa da lista inteira de uma vez, sempre com origem fixa (cd ou hospital)

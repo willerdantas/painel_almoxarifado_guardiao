@@ -78,10 +78,24 @@
         </form>
       </section>
 
+      <div class="linha-cards-painel">
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="valorTotalEstoque">R$ 0,00</span>
+          <span class="contagem-rotulo">Valor Total</span>
+        </div>
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="valorTotalEstoqueCd">R$ 0,00</span>
+          <span class="contagem-rotulo">Valor Total CD</span>
+        </div>
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="valorTotalEstoqueHospital">R$ 0,00</span>
+          <span class="contagem-rotulo">Valor Total Hospital</span>
+        </div>
+      </div>
+
       <section class="cartao secao-pedidos">
         <div class="secao-cabecalho">
-          <h2>Ações</h2>
-          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoConsumo">Consumo</button>
+          <button type="button" class="botao-filtrar" id="botaoConsumo">Consumo</button>
           <div class="campo-filtro campo-curto">
             <input type="date" id="filtroDataPosicaoEstoque" />
           </div>
@@ -674,9 +688,32 @@
       }
     }
 
+    // valor total (quantidade * custo medio) dos produtos que batem com os filtros atuais - mesmo
+    // criterio de origem (cd/hospital) usado nas duas listas de produtos, so que como um numero
+    // so (soma), sem paginacao. cada card so mostra o numero - o rotulo ja esta fixo no html
+    async function buscarValorEstoqueOrigem(origem, sufixo) {
+      const params = montarQueryFiltros();
+      if (origem) params.set("origem", origem);
+
+      try {
+        const resp = await fetch(`/api/estoque_valor_total?${params.toString()}`);
+        const resultado = await resp.json();
+        document.getElementById(`valorTotalEstoque${sufixo}`).textContent = formatarMoeda(resultado.valor_total);
+      } catch (erro) {
+        console.error(`Erro ao carregar valor total (${origem || "total"}):`, erro);
+      }
+    }
+
+    function buscarValorTotalEstoque() {
+      buscarValorEstoqueOrigem(null, "");
+      buscarValorEstoqueOrigem("cd", "Cd");
+      buscarValorEstoqueOrigem("hospital", "Hospital");
+    }
+
     function buscarTudo() {
       buscarProdutos("cd", 1);
       buscarProdutos("hospital", 1);
+      buscarValorTotalEstoque();
     }
 
     document.getElementById("formFiltros").addEventListener("submit", (ev) => {
