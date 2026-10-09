@@ -3778,6 +3778,10 @@ def api_aquisicoes():
             JOIN public.estoque e ON e.lote = lt.lote
             JOIN public.armazem arm_e ON arm_e.armazem = e.armazem
             WHERE arm_e.tipoarmazem = 'C'
+            -- so lote de origem hospital (fornecedor 13276609 = CENTRO DE DISTRIBUICAO SESA / C.D
+            -- SESA eh excluido) - mesmo criterio "cd"/"hospital" usado em consumo.html/estoque.html;
+            -- aquisicoes eh so pra reposicao feita pelo hospital, CD ja se reabastece por fora disso
+            AND (lt.fornecedor IS NULL OR lt.fornecedor <> 13276609)
             {filtro_armazem_usuario}
             GROUP BY lt.produto
             HAVING SUM(e.quantidade) > 0
@@ -4044,20 +4048,20 @@ def api_atas_contratos():
         """)
         params.append(f"%{produto}%")
     if armazem:
-        # associa item do contrato -> armazem atraves do que de fato foi recebido contra ele:
-        # pedidoitem -> pedidodestaque (empenho) -> entradaitem (entrada que gerou o lote) ->
-        # estoque (lote + armazem onde esse lote esta). so pega contrato que ja teve entrada
-        # recebida nesse armazem especifico
+        # associa item do contrato -> armazem pelo produto, via estoquearmazem (tabela de
+        # parametrizacao/registro produto x armazem, nao o estoque fisico por lote) - restrito a
+        # armazem tipo C (mesmo universo do dropdown, ver /api/armazens). SEM exigir quantidade >
+        # 0: o produto estar associado aquele armazem ja basta, mesmo que esteja zerado no momento
         condicoes.append("""
             EXISTS (
                 SELECT 1
                 FROM public.pedidoitem pi
-                JOIN public.pedidodestaque pd ON pd.pedidoitem = pi.pedidoitem
-                JOIN public.entradaitem ei ON ei.pedidodestaque = pd.pedidodestaque
-                JOIN public.estoque e ON e.estoque = ei.estoque
-                JOIN public.armazem arm ON arm.armazem = e.armazem
+                JOIN public.estoquearmazem ea ON ea.produto = pi.produto
+                JOIN public.armazem arm ON arm.armazem = ea.armazem
                 LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
-                WHERE pi.pedidocabecalho = pc.pedidocabecalho AND pes_arm.nome = %s
+                WHERE pi.pedidocabecalho = pc.pedidocabecalho
+                AND pes_arm.nome = %s
+                AND arm.tipoarmazem = 'C'
             )
         """)
         params.append(armazem)
