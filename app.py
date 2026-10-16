@@ -944,6 +944,39 @@ def api_estoque_armazens():
     return _consulta_generica(sql, params)
 
 
+@app.route("/api/aquisicoes_armazens")
+def api_aquisicoes_armazens():
+    # armazens tipo C que tem pelo menos um produto com o limite escolhido (tipo_alerta)
+    # insuficiente - usado pra popular o filtro de armazem em aquisicoes.html (em vez da lista
+    # cheia de armazens tipo C, so quem realmente tem produto na lista). mesmo criterio
+    # "insuficiente" (e o mesmo default) de /api/aquisicoes. restrito aos armazens do usuario
+    # logado quando ele nao eh administrador
+    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    limite_alerta_por_tipo = {
+        "minimo": "ea.estoqueminimo",
+        "seguranca": "ea.estoqueseguranca",
+        "ressuprimento": SQL_PONTO_RESSUPRIMENTO_180D,
+    }
+    limite_alerta = limite_alerta_por_tipo.get(request.args.get("tipo_alerta"), SQL_PONTO_RESSUPRIMENTO_180D)
+
+    condicoes = ["arm.tipoarmazem = 'C'", "ea.estoqueminimo > 0", f"ea.quantidade < {limite_alerta}"]
+    params = []
+    if usuario_logado:
+        condicoes.append(f"arm.armazem IN ({SQL_ARMAZENS_DO_USUARIO})")
+        params.append(usuario_logado)
+    where = " AND ".join(condicoes)
+
+    sql = f"""
+        SELECT DISTINCT arm.armazem, COALESCE(pes.nome, arm.sigla) AS nome
+        FROM public.estoquearmazem ea
+        JOIN public.armazem arm ON arm.armazem = ea.armazem
+        LEFT JOIN public.pessoa pes ON pes.pessoa = arm.pessoa
+        WHERE {where}
+        ORDER BY nome
+    """
+    return _consulta_generica(sql, params)
+
+
 @app.route("/api/unidades")
 def api_unidades():
     sql = """
@@ -3147,6 +3180,26 @@ def _filtros_estoque(args):
     return base_from, params_completo
 
 
+#  colunas que o cabecalho da tabela de produtos (estoque.html) deixa ordenar, com as setas
+# ascendente/descendente - chave eh o que o front manda em "ordenar_por", valor eh o nome da
+# coluna dentro da CTE "filtrado" (nomes fixos, nunca interpolados direto do usuario - evita
+# SQL injection no ORDER BY)
+COLUNAS_ORDENACAO_ESTOQUE = {
+    "cod_seplag": "cod_seplag",
+    "cod_almox": "cod_almox",
+    "cod_produto": "cod_produto",
+    "nome_produto": "nome_produto",
+    "descricao_produto": "descricao_produto",
+    "classe": "classe",
+    "sub_grupo": "sub_grupo",
+    "apresentacao": "apresentacao",
+    "procedimento_sus": "procedimento_sus",
+    "total_estoque": "total_estoque",
+    "custo_medio": "custo_medio",
+    "valor_total": "valor_total",
+}
+
+
 @app.route("/api/estoque")
 def api_estoque():
     base_from, params_completo = _filtros_estoque(request.args)
@@ -3157,6 +3210,9 @@ def api_estoque():
 
     tamanho_pagina = 10
     offset = (pagina - 1) * tamanho_pagina
+
+    coluna_ordenacao = COLUNAS_ORDENACAO_ESTOQUE.get(request.args.get("ordenar_por"), "cod_produto")
+    direcao_ordenacao = "DESC" if request.args.get("ordenar_direcao") == "desc" else "ASC"
 
     try:
         # total e dados numa unica passada: o JOIN pesado (base_from) roda uma vez so, numa CTE
@@ -3187,8 +3243,12 @@ def api_estoque():
                 (SELECT count(*) FILTER (WHERE COALESCE(TRIM(cod_almox), '') <> '') FROM filtrado) AS total_cod_almox,
                 (SELECT count(*) FILTER (WHERE COALESCE(TRIM(procedimento_sus), '') <> '') FROM filtrado) AS total_procedimento_sus,
                 COALESCE((
-                    SELECT json_agg(pagina.* ORDER BY pagina.cod_produto)
-                    FROM (SELECT * FROM filtrado ORDER BY cod_produto LIMIT %s OFFSET %s) pagina
+                    SELECT json_agg(pagina.* ORDER BY pagina.{coluna_ordenacao} {direcao_ordenacao} NULLS LAST)
+                    FROM (
+                        SELECT * FROM filtrado
+                        ORDER BY {coluna_ordenacao} {direcao_ordenacao} NULLS LAST
+                        LIMIT %s OFFSET %s
+                    ) pagina
                 ), '[]'::json) AS dados_json
         """
         resultado = run_query(sql_dados, params_completo + [tamanho_pagina, offset])[0]
@@ -4095,6 +4155,22 @@ def api_pagamentos():
     return _consulta_generica("SELECT 1 AS placeholder LIMIT 0")
 
 
+# colunas que o cabecalho da tabela de atas/contratos deixa ordenar (setas ascendente/descendente)
+# - chave eh o que o front manda em "ordenar_por", valor eh a coluna/expressao real pro ORDER BY
+# (sempre a coluna de data crua, nunca o to_char formatado - texto "DD-MM-YY" nao ordena certo
+# como data). nomes fixos, nunca interpolados direto do usuario - evita SQL injection no ORDER BY
+COLUNAS_ORDENACAO_ATAS_CONTRATOS = {
+    "cnpj": "pj.cnpj",
+    "fornecedor": "pes.nome",
+    "nome_fantasia": "pj.nomefantasia",
+    "num_ata": "pc.numeroata",
+    "num_contrato": "pc.numerocontrato",
+    "data_inicio": "pc.datainicio",
+    "data_fim": "ult.efetivo",
+    "prazo": "ult.efetivo",
+}
+
+
 @app.route("/api/atas_contratos")
 def api_atas_contratos():
     # TODO homem: status/modalidade ainda nao tem mapeamento definido (statuspedido/modalidadelicitacao
@@ -4231,9 +4307,14 @@ def api_atas_contratos():
     tamanho_pagina = 10
     offset = (pagina - 1) * tamanho_pagina
 
+    # setas do cabecalho (ordenar_por/ordenar_direcao) tem prioridade sobre a ordenacao padrao -
     # validos: prazo do menor pro maior (vence antes primeiro). vencidos: data de vencimento do
     # mais atual (venceu a pouco tempo) pro mais antigo. sem situacao: ordem antiga (datainicio)
-    if situacao == "validos":
+    coluna_ordenacao = COLUNAS_ORDENACAO_ATAS_CONTRATOS.get(request.args.get("ordenar_por"))
+    if coluna_ordenacao:
+        direcao_ordenacao = "DESC" if request.args.get("ordenar_direcao") == "desc" else "ASC"
+        ordenacao = f"{coluna_ordenacao} {direcao_ordenacao} NULLS LAST"
+    elif situacao == "validos":
         ordenacao = "ult.efetivo ASC NULLS LAST"
     elif situacao == "vencidos":
         ordenacao = "ult.efetivo DESC NULLS LAST"

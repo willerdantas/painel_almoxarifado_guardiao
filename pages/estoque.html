@@ -212,6 +212,26 @@
       return !armazem || armazem === "ALMOXARIFADO DE MATERIAL E TECNOLOGIA HOSPITALAR";
     }
 
+    // ordenacao do cabecalho (setas ▲/▼ por campo) - estado global, vale pras duas listas (CD e
+    // Hospital) ao mesmo tempo, igual os filtros. campo nulo = ordem padrao do backend (cod_produto)
+    let ordenarPor = null;
+    let ordenarDirecao = "asc";
+
+    function celulaOrdenavel(rotulo, campo, estiloExtra = "") {
+      const ativoAsc = ordenarPor === campo && ordenarDirecao === "asc";
+      const ativoDesc = ordenarPor === campo && ordenarDirecao === "desc";
+      return `
+        <th${estiloExtra}>
+          <span class="cabecalho-ordenavel">
+            ${rotulo}
+            <span class="botoes-ordenar">
+              <button type="button" class="botao-ordenar${ativoAsc ? " ativo" : ""}" data-campo="${campo}" data-direcao="asc" title="Ordenar ${rotulo} crescente">▲</button>
+              <button type="button" class="botao-ordenar${ativoDesc ? " ativo" : ""}" data-campo="${campo}" data-direcao="desc" title="Ordenar ${rotulo} decrescente">▼</button>
+            </span>
+          </span>
+        </th>`;
+    }
+
     function renderizarProdutos(dados, prefixo) {
       const container = document.getElementById(`areaProdutos${prefixo}`);
       const estiloProcedimentoSus = deveExibirProcedimentoSus() ? "" : ' style="display:none"';
@@ -259,22 +279,30 @@
         <table class="tabela-dados">
           <thead>
             <tr>
-              <th>Cód. Seplag</th>
-              <th>Cód. Almox</th>
-              <th>Cód. Produto</th>
-              <th>Nome do Produto</th>
-              <th>Descrição</th>
-              <th>Classe</th>
-              <th>Sub Grupo</th>
-              <th>Apresentação</th>
-              <th${estiloProcedimentoSus}>Procedimento SUS</th>
-              <th>Total em Estoque</th>
-              <th>Custo Médio</th>
-              <th>Valor Total</th>
+              ${celulaOrdenavel("Cód. Seplag", "cod_seplag")}
+              ${celulaOrdenavel("Cód. Almox", "cod_almox")}
+              ${celulaOrdenavel("Cód. Produto", "cod_produto")}
+              ${celulaOrdenavel("Nome do Produto", "nome_produto")}
+              ${celulaOrdenavel("Descrição", "descricao_produto")}
+              ${celulaOrdenavel("Classe", "classe")}
+              ${celulaOrdenavel("Sub Grupo", "sub_grupo")}
+              ${celulaOrdenavel("Apresentação", "apresentacao")}
+              ${celulaOrdenavel("Procedimento SUS", "procedimento_sus", estiloProcedimentoSus)}
+              ${celulaOrdenavel("Total em Estoque", "total_estoque")}
+              ${celulaOrdenavel("Custo Médio", "custo_medio")}
+              ${celulaOrdenavel("Valor Total", "valor_total")}
             </tr>
           </thead>
           <tbody>${linhas}</tbody>
         </table>`;
+
+      container.querySelectorAll(".botao-ordenar").forEach((botao) => {
+        botao.addEventListener("click", () => {
+          ordenarPor = botao.dataset.campo;
+          ordenarDirecao = botao.dataset.direcao;
+          buscarTudo();
+        });
+      });
 
       container.querySelectorAll(".botao-lotes").forEach((botao) => {
         botao.addEventListener("click", (ev) => {
@@ -672,6 +700,10 @@
       const params = montarQueryFiltros();
       params.set("origem", origem);
       params.set("pagina", pagina);
+      if (ordenarPor) {
+        params.set("ordenar_por", ordenarPor);
+        params.set("ordenar_direcao", ordenarDirecao);
+      }
 
       const prefixo = origem === "cd" ? "Cd" : "Hospital";
       const container = document.getElementById(`areaProdutos${prefixo}`);
