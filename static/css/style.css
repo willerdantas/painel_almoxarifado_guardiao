@@ -1059,6 +1059,38 @@ table.tabela-dados th {
   white-space: nowrap;
 }
 
+/* cabecalho ordenavel (estoque.html): rotulo + par de setas ▲/▼ por coluna */
+.cabecalho-ordenavel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.botoes-ordenar {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.botao-ordenar {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: #9fb0c3;
+  font-size: 8px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.botao-ordenar:hover {
+  color: var(--branco);
+}
+
+.botao-ordenar.ativo {
+  color: #f2c94c;
+}
+
 table.tabela-dados td {
   padding: 9px 12px;
   border-bottom: 1px solid var(--cinza-borda);

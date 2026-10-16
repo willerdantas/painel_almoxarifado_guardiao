@@ -152,7 +152,31 @@
       return params;
     }
 
-    iniciarFiltroArmazemCondicional("filtroArmazem", "blocoFiltroArmazem");
+    // dropdown de armazem so com quem de fato tem produto insuficiente na lista (nao a lista
+    // cheia de armazens tipo C) - se o usuario logado cair num unico armazem dessa lista (via
+    // armazemfunc), filtra por ele automaticamente em vez de comecar em "Todos"
+    async function iniciarFiltroArmazemAquisicoes() {
+      try {
+        const query = identificacaoLogada() ? `?usuario_logado=${encodeURIComponent(identificacaoLogada())}` : "";
+        const resp = await fetch(`/api/aquisicoes_armazens${query}`);
+        const armazens = await resp.json();
+        const select = document.getElementById("filtroArmazem");
+
+        armazens.forEach((item) => {
+          const opcao = document.createElement("option");
+          opcao.value = item.nome;
+          opcao.textContent = item.nome;
+          select.appendChild(opcao);
+        });
+
+        if (armazens.length > 0) document.getElementById("blocoFiltroArmazem").classList.remove("oculto");
+        if (armazens.length === 1) select.value = armazens[0].nome;
+      } catch (erro) {
+        console.error("Erro ao carregar armazéns do filtro:", erro);
+      }
+
+      buscarTudo();
+    }
 
     const NUMERO_COLUNAS = 12;
 
@@ -881,7 +905,7 @@
       }
     });
 
-    buscarTudo();
+    iniciarFiltroArmazemAquisicoes();
   </script>
 </body>
 </html>

@@ -22,7 +22,7 @@
         </div>
       </div>
 
-      <section class="cartao secao-pedidos">
+      <section class="cartao secao-pedidos" id="secaoPerfisAcesso">
         <div class="secao-cabecalho">
           <h2>Perfis de Acesso</h2>
           <button type="button" class="botao-filtrar" id="botaoNovoPerfil">+ Novo Perfil</button>
@@ -56,7 +56,7 @@
         </div>
       </section>
 
-      <section class="cartao secao-pedidos">
+      <section class="cartao secao-pedidos" id="secaoUsuarios">
         <div class="secao-cabecalho">
           <h2>Usuários</h2>
         </div>
@@ -96,6 +96,18 @@
   <script>
     protegerPagina();
     iniciarMenu("cadastro");
+
+    // Perfis de Acesso e Usuários mexem em quem pode fazer o que no sistema - mesmo que o
+    // perfil do usuário tenha acesso a esta página (por causa do Calendário de Distribuição,
+    // outra seção dela), essas duas seções ficam visíveis só pra administrador. O backend
+    // também bloqueia essas rotas pra quem não é admin (ver _resposta_se_nao_administrador)
+    const souAdministrador = localStorage.getItem("administrador") === "true";
+    if (!souAdministrador) {
+      // oculto (nao remove): o resto do script ainda tem addEventListener em cima de elementos
+      // dessas duas secoes mais embaixo - remover do DOM quebraria essas linhas
+      document.getElementById("secaoPerfisAcesso").classList.add("oculto");
+      document.getElementById("secaoUsuarios").classList.add("oculto");
+    }
 
     let listaPerfis = [];
     let listaPaginasSistema = [];
@@ -173,7 +185,7 @@
         const resp = await fetch(url, {
           method: metodo,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ nome, administrador, paginas }),
+          body: JSON.stringify({ nome, administrador, paginas, usuario_logado: identificacaoLogada() }),
         });
         const dado = await resp.json();
         if (!dado.ok) {
@@ -191,7 +203,7 @@
     async function excluirPerfil(sistemaperfil) {
       if (!confirm("Excluir este perfil?")) return;
       try {
-        const resp = await fetch(`/api/perfis/${sistemaperfil}`, { method: "DELETE" });
+        const resp = await fetch(`/api/perfis/${sistemaperfil}?usuario_logado=${encodeURIComponent(identificacaoLogada())}`, { method: "DELETE" });
         const dado = await resp.json();
         if (!dado.ok) {
           alert(dado.msg || "Erro ao excluir perfil");
@@ -206,7 +218,7 @@
     async function carregarPerfis() {
       const area = document.getElementById("areaPerfis");
       try {
-        const resp = await fetch("/api/perfis");
+        const resp = await fetch(`/api/perfis?usuario_logado=${encodeURIComponent(identificacaoLogada())}`);
         listaPerfis = await resp.json();
 
         if (listaPerfis.length === 0) {
@@ -295,7 +307,12 @@
         const resp = await fetch("/api/usuarios_sistema", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ identificacao, sistemaperfil: Number(sistemaperfil), tela_padrao: selectTela.value || null }),
+          body: JSON.stringify({
+            identificacao,
+            sistemaperfil: Number(sistemaperfil),
+            tela_padrao: selectTela.value || null,
+            usuario_logado: identificacaoLogada(),
+          }),
         });
         const dado = await resp.json();
         if (!dado.ok) {
@@ -315,7 +332,7 @@
         const resp = await fetch("/api/usuarios_sistema/resetar_senha", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ identificacao }),
+          body: JSON.stringify({ identificacao, usuario_logado: identificacaoLogada() }),
         });
         const dado = await resp.json();
         if (!dado.ok) {
@@ -336,7 +353,7 @@
       }
 
       try {
-        const resp = await fetch(`/api/usuarios_sistema?termo=${encodeURIComponent(termo)}`);
+        const resp = await fetch(`/api/usuarios_sistema?termo=${encodeURIComponent(termo)}&usuario_logado=${encodeURIComponent(identificacaoLogada())}`);
         const usuarios = await resp.json();
 
         if (usuarios.length === 0) {
@@ -479,15 +496,18 @@
       }
     }
 
-    let temporizadorBusca;
-    document.getElementById("buscaUsuario").addEventListener("input", (ev) => {
-      clearTimeout(temporizadorBusca);
-      const termo = ev.target.value.trim();
-      temporizadorBusca = setTimeout(() => buscarUsuarios(termo), 300);
-    });
+    if (souAdministrador) {
+      let temporizadorBusca;
+      document.getElementById("buscaUsuario").addEventListener("input", (ev) => {
+        clearTimeout(temporizadorBusca);
+        const termo = ev.target.value.trim();
+        temporizadorBusca = setTimeout(() => buscarUsuarios(termo), 300);
+      });
 
-    carregarPaginasCheckbox();
-    carregarPerfis();
+      carregarPaginasCheckbox();
+      carregarPerfis();
+    }
+
     carregarArmazensCentrais();
   </script>
 </body>
