@@ -45,7 +45,7 @@
             <div class="sugestoes" id="sugestoesNomeProduto"></div>
           </div>
 
-          <div class="campo-filtro campo-autocompletar campo-largo">
+          <div class="campo-filtro campo-autocompletar campo-largo-fixo">
             <label for="filtroDescricao">Descrição</label>
             <input type="text" id="filtroDescricao" placeholder="Ex.: ATOXICO, APIROGENICO" autocomplete="off" />
             <div class="sugestoes" id="sugestoesDescricao"></div>
@@ -56,7 +56,13 @@
             <input type="text" id="filtroLote" placeholder="Ex.: 2026A01" />
           </div>
 
-          <div class="campo-filtro campo-autocompletar campo-largo">
+          <div class="campo-filtro campo-autocompletar campo-largo-fixo">
+            <label for="filtroClasse">Classe</label>
+            <input type="text" id="filtroClasse" placeholder="Ex.: Material Hospitalar" autocomplete="off" />
+            <div class="sugestoes" id="sugestoesClasse"></div>
+          </div>
+
+          <div class="campo-filtro campo-autocompletar campo-largo-fixo">
             <label for="filtroSubgrupo">Subgrupo</label>
             <input type="text" id="filtroSubgrupo" placeholder="Ex.: Agulhas" autocomplete="off" />
             <div class="sugestoes" id="sugestoesSubgrupo"></div>
@@ -150,6 +156,7 @@
       const nomeProduto = document.getElementById("filtroNomeProduto").value.trim();
       const lote = document.getElementById("filtroLote").value.trim();
       const descricao = document.getElementById("filtroDescricao").value.trim();
+      const classe = document.getElementById("filtroClasse").value.trim();
       const subgrupo = document.getElementById("filtroSubgrupo").value.trim();
       const armazem = document.getElementById("filtroArmazem").value;
 
@@ -159,6 +166,7 @@
       if (nomeProduto) params.set("nome_produto", nomeProduto);
       if (lote) params.set("lote", lote);
       if (descricao) params.set("descricao", descricao);
+      if (classe) params.set("classe", classe);
       if (subgrupo) params.set("subgrupo", subgrupo);
       if (armazem) params.set("armazem", armazem);
       if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
@@ -725,6 +733,7 @@
     document.getElementById("formFiltros").addEventListener("submit", (ev) => {
       ev.preventDefault();
       esconderSugestoes();
+      esconderSugestoesClasse();
       esconderSugestoesSubgrupo();
       esconderSugestoesDescricao();
       buscarTudo();
@@ -733,6 +742,7 @@
     document.getElementById("botaoResetarFiltros").addEventListener("click", () => {
       document.getElementById("formFiltros").reset();
       esconderSugestoes();
+      esconderSugestoesClasse();
       esconderSugestoesSubgrupo();
       esconderSugestoesDescricao();
       buscarTudo();
@@ -785,6 +795,55 @@
       }
 
       temporizadorSugestao = setTimeout(() => buscarSugestoes(termo), 250);
+    });
+
+    // sugestao de classe enquanto digita, com debounce pra nao martelar a api a cada tecla
+    const campoClasse = document.getElementById("filtroClasse");
+    const caixaSugestoesClasse = document.getElementById("sugestoesClasse");
+    let temporizadorSugestaoClasse = null;
+
+    function esconderSugestoesClasse() {
+      caixaSugestoesClasse.innerHTML = "";
+      caixaSugestoesClasse.classList.remove("aberto");
+    }
+
+    async function buscarSugestoesClasse(termo) {
+      try {
+        const resp = await fetch(`/api/classes_sugestoes?termo=${encodeURIComponent(termo)}`);
+        const dados = await resp.json();
+
+        if (!Array.isArray(dados) || dados.length === 0) {
+          esconderSugestoesClasse();
+          return;
+        }
+
+        caixaSugestoesClasse.innerHTML = dados
+          .map((item) => `<div class="item-sugestao" data-nome="${item.classe}">${item.classe}</div>`)
+          .join("");
+        caixaSugestoesClasse.classList.add("aberto");
+
+        caixaSugestoesClasse.querySelectorAll(".item-sugestao").forEach((item) => {
+          item.addEventListener("click", () => {
+            campoClasse.value = item.dataset.nome;
+            esconderSugestoesClasse();
+            buscarTudo();
+          });
+        });
+      } catch (erro) {
+        esconderSugestoesClasse();
+      }
+    }
+
+    campoClasse.addEventListener("input", () => {
+      const termo = campoClasse.value.trim();
+      clearTimeout(temporizadorSugestaoClasse);
+
+      if (!termo) {
+        esconderSugestoesClasse();
+        return;
+      }
+
+      temporizadorSugestaoClasse = setTimeout(() => buscarSugestoesClasse(termo), 250);
     });
 
     // sugestao de subgrupo enquanto digita, com debounce pra nao martelar a api a cada tecla
@@ -890,6 +949,7 @@
     document.addEventListener("click", (ev) => {
       if (!ev.target.closest(".campo-autocompletar")) {
         esconderSugestoes();
+        esconderSugestoesClasse();
         esconderSugestoesSubgrupo();
         esconderSugestoesDescricao();
       }

@@ -2391,6 +2391,24 @@ def api_subgrupos_sugestoes():
     return _consulta_generica(sql, [f"%{termo}%"])
 
 
+@app.route("/api/classes_sugestoes")
+def api_classes_sugestoes():
+    # nome vai digitando, essa rota devolve so um punhado pra lista de sugestao - mesmo padrao
+    # de /api/subgrupos_sugestoes
+    termo = request.args.get("termo", "").strip()
+    if not termo:
+        return jsonify([])
+
+    sql = """
+        SELECT DISTINCT descricao AS classe
+        FROM public.classe
+        WHERE descricao ILIKE %s
+        ORDER BY descricao
+        LIMIT 10
+    """
+    return _consulta_generica(sql, [f"%{termo}%"])
+
+
 @app.route("/api/procedimentos_sus_sugestoes")
 def api_procedimentos_sus_sugestoes():
     # nome vai digitando, essa rota devolve so um punhado pra lista de sugestao - valor vem direto
@@ -3031,6 +3049,7 @@ def _filtros_estoque(args):
     nome_produto = args.get("nome_produto")
     descricao = args.get("descricao")
     lote = args.get("lote")
+    classe = args.get("classe")
     subgrupo = args.get("subgrupo")
     usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
     armazem = args.get("armazem")
@@ -3059,6 +3078,9 @@ def _filtros_estoque(args):
             "EXISTS (SELECT 1 FROM public.lote lt WHERE lt.produto = p.produto AND lt.lotefornecedor ILIKE %s)"
         )
         params.append(f"%{lote}%")
+    if classe:
+        condicoes.append("c.descricao ILIKE %s")
+        params.append(f"%{classe}%")
     if subgrupo:
         condicoes.append("sg.descricao ILIKE %s")
         params.append(f"%{subgrupo}%")
@@ -3758,6 +3780,7 @@ def api_aquisicoes():
     nome_produto = request.args.get("nome_produto")
     descricao = request.args.get("descricao")
     lote = request.args.get("lote")
+    classe = request.args.get("classe")
     subgrupo = request.args.get("subgrupo")
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
     armazem = request.args.get("armazem")
@@ -3798,6 +3821,9 @@ def api_aquisicoes():
             "EXISTS (SELECT 1 FROM public.lote lt WHERE lt.produto = p.produto AND lt.lotefornecedor ILIKE %s)"
         )
         params.append(f"%{lote}%")
+    if classe:
+        condicoes.append("c.descricao ILIKE %s")
+        params.append(f"%{classe}%")
     if subgrupo:
         condicoes.append("sg.descricao ILIKE %s")
         params.append(f"%{subgrupo}%")

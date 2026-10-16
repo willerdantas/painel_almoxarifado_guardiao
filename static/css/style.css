@@ -504,6 +504,14 @@ body {
   flex: 2 1 280px;
 }
 
+/* variante de .campo-largo sem flex-grow - usada quando varios campos precisam ficar com
+   exatamente o mesmo tamanho entre si (ex.: Descrição/Classe/Subgrupo em estoque.html e
+   aquisicoes.html), onde flex-grow deixaria cada um com largura diferente dependendo de quantos
+   campos caem na mesma linha */
+.campo-largo-fixo {
+  flex: 0 1 280px;
+}
+
 .grupo-botoes-filtro {
   display: flex;
   gap: 8px;
