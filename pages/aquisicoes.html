@@ -318,7 +318,7 @@
         linhaAcoes.after(trDetalhe);
 
         try {
-          const params = new URLSearchParams({ produto: linhaProduto.dataset.produto });
+          const params = new URLSearchParams({ produto: linhaProduto.dataset.produto, situacao: "validos" });
           const resp = await fetch(`/api/estoque_contratos?${params.toString()}`);
           const contratos = await resp.json();
           trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}">${montarTabelaContratos(contratos)}</td>`;
@@ -529,10 +529,11 @@
           <td>${item.numero ?? ""}</td>
           <td>${item.aditivo ?? ""}</td>
           <td>${item.data_inicio ?? ""}</td>
-          <td>${item.data_fim ?? ""}</td>
           <td>${formatarCnpj(item.cnpj)}</td>
           <td class="celula-quebra">${item.fornecedor ?? ""}</td>
           <td class="celula-quebra">${item.nome_fantasia ?? ""}</td>
+          <td>${item.data_fim ?? ""}</td>
+          <td>${item.prazo ?? ""}</td>
           <td>${formatarQuantidade(item.quantidade_total)}</td>
           <td>${formatarMoeda(item.valor_unitario)}</td>
           <td>${formatarQuantidade(item.saldo)}</td>
@@ -550,10 +551,11 @@
                 <th>Número</th>
                 <th>Aditivo</th>
                 <th>Dt. Ini</th>
-                <th>Dt. Fim</th>
                 <th>CNPJ</th>
                 <th>Fornecedor</th>
                 <th>Nome Fantasia</th>
+                <th>Dt. Fim</th>
+                <th>Prazo</th>
                 <th>Quantidade Total</th>
                 <th>Valor Unitário</th>
                 <th>Quantidade Remanescente</th>

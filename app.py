@@ -3533,7 +3533,11 @@ def api_estoque_contratos():
             pi.valorunitario AS valor_unitario,
             (pi.quantidade - COALESCE(pi.quantidadeentregue, 0)) AS saldo,
             to_char(pc.datainicio, 'DD-MM-YY') AS data_inicio,
-            to_char(pc.datafim, 'DD-MM-YY') AS data_fim
+            to_char(pc.datafim, 'DD-MM-YY') AS data_fim,
+            CASE
+                WHEN pc.datafim >= CURRENT_DATE THEN (pc.datafim - CURRENT_DATE)::text
+                ELSE 'Vencido'
+            END AS prazo
         FROM public.pedidoitem pi
         JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = pi.pedidocabecalho
         JOIN public.fornecedor forn ON forn.fornecedor = pc.fornecedor

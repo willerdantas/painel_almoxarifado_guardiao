@@ -581,6 +581,8 @@
           <td>${formatarCnpj(item.cnpj)}</td>
           <td class="celula-quebra">${item.fornecedor ?? ""}</td>
           <td class="celula-quebra">${item.nome_fantasia ?? ""}</td>
+          <td>${item.data_fim ?? ""}</td>
+          <td>${item.prazo ?? ""}</td>
           <td>${formatarQuantidade(item.quantidade_total)}</td>
           <td>${formatarMoeda(item.valor_unitario)}</td>
           <td>${formatarQuantidade(item.saldo)}</td>
@@ -600,6 +602,8 @@
                 <th>CNPJ</th>
                 <th>Fornecedor</th>
                 <th>Nome Fantasia</th>
+                <th>Data Fim</th>
+                <th>Prazo</th>
                 <th>Quantidade Total</th>
                 <th>Valor Unitário</th>
                 <th>Saldo</th>
