@@ -724,9 +724,32 @@ def _usuario_eh_administrador(usuario_logado):
     return bool(linhas and linhas[0]["administrador"])
 
 
+# perfis que, mesmo sem ser administrador (nao ganham acesso as paginas/telas de admin), devem
+# enxergar todos os armazens sem a restricao de armazemfunc - Compras e Contratos lidam com
+# contrato/ata de todos os armazens no dia a dia, diferente dos perfis operacionais (estoquista,
+# separador, distribuidor etc.) que so devem ver o(s) armazem(ns) deles
+PERFIS_SEM_RESTRICAO_ARMAZEM = {"Compras", "Contratos"}
+
+
+def _usuario_sem_restricao_armazem(usuario_logado):
+    if not usuario_logado:
+        return False
+    linhas = run_query("""
+        SELECT sp.administrador, sp.nome
+        FROM sist_logistica.sistemausuario su
+        JOIN sist_logistica.sistemaperfil sp ON sp.sistemaperfil = su.sistemaperfil
+        WHERE su.identificacao = %s
+    """, [usuario_logado])
+    if not linhas:
+        return False
+    linha = linhas[0]
+    return bool(linha["administrador"]) or linha["nome"] in PERFIS_SEM_RESTRICAO_ARMAZEM
+
+
 def _usuario_para_filtro_armazem(usuario_logado):
-    # quem tem perfil administrador enxerga tudo, sem restricao de armazem
-    if not usuario_logado or _usuario_eh_administrador(usuario_logado):
+    # quem tem perfil administrador ou um dos PERFIS_SEM_RESTRICAO_ARMAZEM enxerga tudo, sem
+    # restricao de armazem
+    if not usuario_logado or _usuario_sem_restricao_armazem(usuario_logado):
         return None
     return usuario_logado
 
@@ -3044,8 +3067,11 @@ def _filtros_estoque(args):
 
     # filtro de armazem (usuario logado e/ou selecao manual) vem antes na string SQL (dentro da
     # subquery), entao os parametros dele precisam ir antes dos outros na lista - por isso um
-    # params_completo separado
-    filtro_armazem_usuario, params_armazem = _fragmento_filtro_armazem("e.armazem", usuario_logado, armazem)
+    # params_completo separado. associacao produto x armazem agora passa por estoquearmazem (tabela
+    # de registro/parametrizacao, a mesma usada em abastecimento/aquisicoes) em vez do armazem onde
+    # o lote fisico (estoque.armazem) por acaso esta - a quantidade exibida/somada continua vindo do
+    # lote (precisa disso pra manter a quebra CD/Hospital, que so existe no nivel de lote/fornecedor)
+    filtro_armazem_usuario, params_armazem = _fragmento_filtro_armazem("ea.armazem", usuario_logado, armazem)
     params_completo = params_armazem + params
 
     filtro_origem = ""
@@ -3060,6 +3086,7 @@ def _filtros_estoque(args):
             SELECT lt.produto, SUM(e.quantidade) AS total
             FROM public.lote lt
             JOIN public.estoque e ON e.lote = lt.lote
+            JOIN public.estoquearmazem ea ON ea.produto = lt.produto AND ea.armazem = e.armazem
             WHERE 1=1
             {filtro_armazem_usuario}
             {filtro_origem}
