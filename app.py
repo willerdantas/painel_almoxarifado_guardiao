@@ -3668,13 +3668,29 @@ def api_estoque_abastecimento():
         JOIN public.armazem arm ON arm.armazem = ea.armazem
         LEFT JOIN public.pessoa pes ON pes.pessoa = arm.pessoa
         WHERE ea.produto = %s AND arm.tipoarmazem = 'C' {filtro_armazem}
+        -- so armazem com estoque atual (ea.quantidade > 0) ou que ja teve alguma movimentacao
+        -- (linha em estoque, mesmo zerada hoje - so existe se algum dia entrou lote ali) -
+        -- estoquearmazem tem linha "zerada parada" pra muito produto/armazem que nunca teve
+        -- nenhuma atividade de verdade, so ruido pra quem olha abastecimento
+        AND (
+            ea.quantidade > 0
+            OR EXISTS (
+                SELECT 1 FROM public.estoque e
+                JOIN public.lote lt ON lt.lote = e.lote
+                WHERE lt.produto = ea.produto AND e.armazem = ea.armazem
+            )
+        )
         ORDER BY nome_armazem
     """
-    # saldo em contrato = quanto ainda falta entregar (quantidade - quantidadeentregue) somado de
-    # todo pedidoitem desse produto, so contando familias (numeroidentificacao) ainda validas hoje
-    # (datafim do aditivo mais recente > hoje) - mesma nocao de "valido" usada em atas_contratos
-    sql_saldo_contrato = """
-        SELECT COALESCE(SUM(pi.quantidade - COALESCE(pi.quantidadeentregue, 0)), 0) AS saldo_contrato
+    # saldo de ata e saldo de contrato, separados (atapreco = 'S' eh ata, 'N' eh contrato - mesmo
+    # criterio usado em atas_contratos.html) - quanto ainda falta entregar (quantidade -
+    # quantidadeentregue) somado de todo pedidoitem desse produto, so contando familias
+    # (numeroidentificacao) ainda validas hoje (datafim do aditivo mais recente > hoje) - mesma
+    # nocao de "valido" usada em atas_contratos
+    sql_saldo_ata_contrato = """
+        SELECT
+            COALESCE(SUM(pi.quantidade - COALESCE(pi.quantidadeentregue, 0)) FILTER (WHERE pc.atapreco = 'S'), 0) AS saldo_ata,
+            COALESCE(SUM(pi.quantidade - COALESCE(pi.quantidadeentregue, 0)) FILTER (WHERE pc.atapreco = 'N'), 0) AS saldo_contrato
         FROM public.pedidoitem pi
         JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = pi.pedidocabecalho
         WHERE pi.produto = %s
@@ -3690,19 +3706,26 @@ def api_estoque_abastecimento():
     """
     try:
         linhas = run_query(sql, [produto] + params_armazem)
-        saldo_contrato = run_query(sql_saldo_contrato, [produto])[0]["saldo_contrato"]
+        saldo_ata_contrato = run_query(sql_saldo_ata_contrato, [produto])[0]
+        saldo_ata = saldo_ata_contrato["saldo_ata"]
+        saldo_contrato = saldo_ata_contrato["saldo_contrato"]
 
+        # minimo/seguranca/ressuprimento OK consideram so o que ta de fato em estoque agora -
+        # saldo de ata/contrato fica so como informacao a parte (o que ainda falta ser entregue
+        # nao eh estoque, e contar ele aqui mascarava alerta de reposicao que ja deveria estar
+        # disparado)
         for linha in linhas:
-            total_disponivel = float(linha["total_estoque"]) + float(saldo_contrato)
+            total_estoque = float(linha["total_estoque"])
+            linha["saldo_ata"] = saldo_ata
             linha["saldo_contrato"] = saldo_contrato
-            linha["minimo_ok"] = total_disponivel >= float(linha["estoque_minimo"])
-            linha["seguranca_ok"] = total_disponivel >= float(linha["estoque_seguranca"])
-            linha["ressuprimento_ok"] = total_disponivel >= float(linha["ponto_ressuprimento"])
+            linha["minimo_ok"] = total_estoque >= float(linha["estoque_minimo"])
+            linha["seguranca_ok"] = total_estoque >= float(linha["estoque_seguranca"])
+            linha["ressuprimento_ok"] = total_estoque >= float(linha["ponto_ressuprimento"])
 
-        # produto nunca estocado em nenhum armazem (sem linha em estoquearmazem) mas com saldo em
-        # contrato: sem essa linha extra o saldo em contrato nunca apareceria pra esse produto,
-        # mesmo tendo quantidade pra receber
-        if not linhas and float(saldo_contrato) > 0:
+        # produto nunca estocado em nenhum armazem (sem linha em estoquearmazem) mas com saldo de
+        # ata/contrato: sem essa linha extra o saldo nunca apareceria pra esse produto, mesmo
+        # tendo quantidade pra receber
+        if not linhas and (float(saldo_ata) > 0 or float(saldo_contrato) > 0):
             linhas.append({
                 "nome_armazem": "Sem armazém configurado",
                 "total_estoque": 0,
@@ -3710,6 +3733,7 @@ def api_estoque_abastecimento():
                 "estoque_seguranca": 0,
                 "ponto_ressuprimento": 0,
                 "autonomia_dias": None,
+                "saldo_ata": saldo_ata,
                 "saldo_contrato": saldo_contrato,
                 "minimo_ok": True,
                 "seguranca_ok": True,
@@ -3725,8 +3749,9 @@ def api_estoque_abastecimento():
 def api_aquisicoes():
     # igual a /api/estoque (mesmos filtros, mesma paginacao), mas so lista produto que tem pelo
     # menos um armazem onde o limite escolhido (tipo_alerta) ta configurado (estoqueminimo > 0) e
-    # NAO esta sendo atendido (estoque daquele armazem + saldo em contrato do produto < limite) -
-    # mesma regra de "insuficiente" usada no sinalizador ⚠ de /api/estoque_abastecimento
+    # NAO esta sendo atendido (estoque daquele armazem < limite, sem somar saldo em contrato - mesma
+    # regra de "insuficiente" usada no sinalizador ⚠ de /api/estoque_abastecimento: o que ainda
+    # falta entregar nao conta como estoque)
     cod_seplag = request.args.get("cod_seplag")
     cod_almox = request.args.get("cod_almox")
     cod_produto = request.args.get("cod_produto")
@@ -3736,6 +3761,7 @@ def api_aquisicoes():
     subgrupo = request.args.get("subgrupo")
     usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
     armazem = request.args.get("armazem")
+    origem = request.args.get("origem")
     # qual limite usar pra decidir "insuficiente": estoque minimo (30d), estoque de seguranca
     # (90d) ou ponto de ressuprimento (180d, default - mesmo criterio de antes dessa opcao existir)
     limite_alerta_por_tipo = {
@@ -3783,12 +3809,11 @@ def api_aquisicoes():
             SELECT 1
             FROM public.estoquearmazem ea
             JOIN public.armazem arm_ea ON arm_ea.armazem = ea.armazem
-            LEFT JOIN saldo_por_produto sp ON sp.produto = ea.produto
             WHERE ea.produto = p.produto
             AND arm_ea.tipoarmazem = 'C'
             {filtro_armazem_ea}
             AND ea.estoqueminimo > 0
-            AND (ea.quantidade + COALESCE(sp.saldo, 0)) < {limite_alerta}
+            AND ea.quantidade < {limite_alerta}
         )
     """)
 
@@ -3801,6 +3826,15 @@ def api_aquisicoes():
     filtro_armazem_usuario, params_armazem_usuario = _fragmento_filtro_armazem("e.armazem", usuario_logado, armazem)
     params_completo = params_armazem_usuario + params + params_armazem_ea
 
+    # origem do lote (fornecedor 13276609 = CENTRO DE DISTRIBUICAO SESA / C.D SESA): mesmo criterio
+    # "cd"/"hospital" usado em consumo.html/estoque.html - separa "Produtos do CD" de "Produtos do
+    # Hospital" em vez de so excluir o CD, pra aquisicoes seguir a mesma divisao do resto do sistema
+    filtro_origem = ""
+    if origem == "cd":
+        filtro_origem = "AND lt.fornecedor = 13276609"
+    elif origem == "hospital":
+        filtro_origem = "AND (lt.fornecedor IS NULL OR lt.fornecedor <> 13276609)"
+
     base_from = f"""
         FROM public.produto p
         JOIN (
@@ -3809,10 +3843,7 @@ def api_aquisicoes():
             JOIN public.estoque e ON e.lote = lt.lote
             JOIN public.armazem arm_e ON arm_e.armazem = e.armazem
             WHERE arm_e.tipoarmazem = 'C'
-            -- so lote de origem hospital (fornecedor 13276609 = CENTRO DE DISTRIBUICAO SESA / C.D
-            -- SESA eh excluido) - mesmo criterio "cd"/"hospital" usado em consumo.html/estoque.html;
-            -- aquisicoes eh so pra reposicao feita pelo hospital, CD ja se reabastece por fora disso
-            AND (lt.fornecedor IS NULL OR lt.fornecedor <> 13276609)
+            {filtro_origem}
             {filtro_armazem_usuario}
             GROUP BY lt.produto
             HAVING SUM(e.quantidade) > 0
@@ -3829,22 +3860,7 @@ def api_aquisicoes():
 
     try:
         sql_dados = f"""
-            WITH saldo_por_produto AS MATERIALIZED (
-                SELECT pi.produto, COALESCE(SUM(pi.quantidade - COALESCE(pi.quantidadeentregue, 0)), 0) AS saldo
-                FROM public.pedidoitem pi
-                JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = pi.pedidocabecalho
-                WHERE EXISTS (
-                    SELECT 1 FROM public.pedidocabecalho pc_latest
-                    WHERE pc_latest.numeroidentificacao = pc.numeroidentificacao
-                    AND pc_latest.numeroaditivo = (
-                        SELECT MAX(pc2.numeroaditivo) FROM public.pedidocabecalho pc2
-                        WHERE pc2.numeroidentificacao = pc.numeroidentificacao
-                    )
-                    AND pc_latest.datafim > CURRENT_DATE
-                )
-                GROUP BY pi.produto
-            ),
-            filtrado AS MATERIALIZED (
+            WITH filtrado AS MATERIALIZED (
                 SELECT
                     p.codigoreferencia AS cod_seplag,
                     p.codigo AS cod_almox,
@@ -4038,6 +4054,7 @@ def api_atas_contratos():
     numero_ata_contrato = request.args.get("numero_ata_contrato")
     cnpj = request.args.get("cnpj")
     fornecedor = request.args.get("fornecedor")
+    cod_seplag = request.args.get("cod_seplag")
     produto = request.args.get("produto")
     armazem = request.args.get("armazem")
     # tipopedido: codigo de 1 letra - A = ARP, C = Aquisição, I = Imobilizados, S = Serviços
@@ -4069,6 +4086,15 @@ def api_atas_contratos():
     if fornecedor:
         condicoes.append("pes.nome ILIKE %s")
         params.append(f"%{fornecedor}%")
+    if cod_seplag:
+        condicoes.append("""
+            EXISTS (
+                SELECT 1 FROM public.pedidoitem pi
+                JOIN public.produto p ON p.produto = pi.produto
+                WHERE pi.pedidocabecalho = pc.pedidocabecalho AND p.codigoreferencia ILIKE %s
+            )
+        """)
+        params.append(f"%{cod_seplag}%")
     if produto:
         condicoes.append("""
             EXISTS (
@@ -4241,6 +4267,7 @@ def api_atas_contratos_itens():
 
     sql = """
         SELECT
+            p.codigoreferencia AS cod_seplag,
             p.nome AS nome_produto,
             p.descricao AS descricao_produto,
             pi.quantidade AS quantidade,
@@ -4260,6 +4287,60 @@ def api_atas_contratos_itens():
         ORDER BY pi.item
     """
     return _consulta_generica(sql, [pedidocabecalho])
+
+
+@app.route("/api/atas_contratos_pedidos")
+def api_atas_contratos_pedidos():
+    # "pedidos" feitos contra essa ata/contrato (botao Consumo, ao lado de Aditivos) - agrupados
+    # por data de destaque (empenho): numeroempenho quase nunca eh preenchido (so 7 de ~100 mil
+    # linhas tem), entao nao da pra agrupar por ele; datadestaque sim agrupa varios produtos
+    # destacados no mesmo dia, que eh o que de fato representa "um pedido" nessa base. escopo eh a
+    # familia inteira (numeroidentificacao), igual Aditivos - um pedido pode ter sido feito contra
+    # qualquer aditivo da ata/contrato, nao so a linha base
+    identificacao = request.args.get("identificacao")
+    if not identificacao:
+        return jsonify([])
+
+    sql = """
+        SELECT
+            to_char(pd.datadestaque, 'DD-MM-YY') AS data_pedido,
+            to_char(pd.datadestaque, 'YYYY-MM-DD') AS data_pedido_iso,
+            count(*) AS quantidade_itens,
+            SUM(pd.quantidade * pd.valorunitario) AS valor_total
+        FROM public.pedidodestaque pd
+        JOIN public.pedidoitem pi ON pi.pedidoitem = pd.pedidoitem
+        JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = pi.pedidocabecalho
+        WHERE pc.numeroidentificacao = %s
+        GROUP BY pd.datadestaque
+        ORDER BY pd.datadestaque DESC
+    """
+    return _consulta_generica(sql, [identificacao])
+
+
+@app.route("/api/atas_contratos_pedido_itens")
+def api_atas_contratos_pedido_itens():
+    # itens (produtos destacados) de um "pedido" especifico - mesma data de destaque, dentro da
+    # mesma familia (numeroidentificacao) - ver /api/atas_contratos_pedidos
+    identificacao = request.args.get("identificacao")
+    data_pedido = request.args.get("data_pedido")
+    if not identificacao or not data_pedido:
+        return jsonify([])
+
+    sql = """
+        SELECT
+            p.codigoreferencia AS cod_seplag,
+            p.nome AS nome_produto,
+            pd.quantidade AS quantidade,
+            pd.valorunitario AS valor_unitario,
+            (pd.quantidade * pd.valorunitario) AS subtotal
+        FROM public.pedidodestaque pd
+        JOIN public.pedidoitem pi ON pi.pedidoitem = pd.pedidoitem
+        JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = pi.pedidocabecalho
+        JOIN public.produto p ON p.produto = pd.produto
+        WHERE pc.numeroidentificacao = %s AND pd.datadestaque = %s
+        ORDER BY p.nome
+    """
+    return _consulta_generica(sql, [identificacao, data_pedido])
 
 
 # base compartilhada pelas telas de dashboard de atas/contratos - mesmo esqueleto (LATERAL com o

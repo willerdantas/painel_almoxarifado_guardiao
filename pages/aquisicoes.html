@@ -87,15 +87,26 @@
         </form>
       </section>
 
-      <section class="cartao secao-pedidos">
+      <section class="cartao secao-pedidos" id="secaoProdutosCd">
         <div class="secao-cabecalho">
-          <h2>Produtos com Ponto de Ressuprimento Insuficiente</h2>
-          <span class="contador-secao" id="contadorProdutos">0</span>
+          <h2>Produtos do CD</h2>
+          <span class="contador-secao" id="contadorProdutosCd">0</span>
         </div>
-        <div id="areaProdutos">
+        <div id="areaProdutosCd">
           <p class="msg-vazio">Carregando dado, aguenta ai...</p>
         </div>
-        <div class="paginacao" id="areaPaginacao"></div>
+        <div class="paginacao" id="areaPaginacaoCd"></div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Produtos do Hospital</h2>
+          <span class="contador-secao" id="contadorProdutosHospital">0</span>
+        </div>
+        <div id="areaProdutosHospital">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+        <div class="paginacao" id="areaPaginacaoHospital"></div>
       </section>
     </main>
   </div>
@@ -106,8 +117,6 @@
     // caverna so abre pra quem tem crachá
     protegerPagina();
     iniciarMenu("aquisicoes");
-
-    let paginaAtual = 1;
 
     function montarQueryFiltros() {
       const params = new URLSearchParams();
@@ -147,8 +156,8 @@
       return !armazem || armazem === "ALMOXARIFADO DE MATERIAL E TECNOLOGIA HOSPITALAR";
     }
 
-    function renderizarProdutos(dados) {
-      const container = document.getElementById("areaProdutos");
+    function renderizarProdutos(dados, prefixo) {
+      const container = document.getElementById(`areaProdutos${prefixo}`);
       const estiloProcedimentoSus = deveExibirProcedimentoSus() ? "" : ' style="display:none"';
 
       if (!Array.isArray(dados) || dados.length === 0) {
@@ -435,6 +444,7 @@
         <tr>
           <td>${item.nome_armazem ?? ""}</td>
           <td>${formatarQuantidade(item.total_estoque)}</td>
+          <td>${formatarQuantidade(item.saldo_ata)}</td>
           <td>${formatarQuantidade(item.saldo_contrato)}</td>
           <td>${marcarSuficiencia(item.estoque_minimo, item.minimo_ok)}</td>
           <td>${marcarSuficiencia(item.estoque_seguranca, item.seguranca_ok)}</td>
@@ -452,7 +462,8 @@
               <tr>
                 <th>Armazém</th>
                 <th>Total em Estoque</th>
-                <th>Saldo em Contrato</th>
+                <th>Saldo de Ata</th>
+                <th>Saldo de Contrato</th>
                 <th>Estoque Mínimo (30d)</th>
                 <th>Estoque de Segurança (90d)</th>
                 <th>Ponto de Ressuprimento (180d)</th>
@@ -567,8 +578,8 @@
     }
 
     // paginador compacto: anterior, um punhado de numeros perto da atual, proxima
-    function renderizarPaginacao(total, pagina, tamanhoPagina) {
-      const area = document.getElementById("areaPaginacao");
+    function renderizarPaginacao(total, pagina, tamanhoPagina, areaId, aoTrocarPagina) {
+      const area = document.getElementById(areaId);
       const totalPaginas = Math.max(Math.ceil(total / tamanhoPagina), 1);
 
       if (totalPaginas <= 1) {
@@ -590,29 +601,49 @@
       area.innerHTML = botoes;
 
       area.querySelectorAll(".botao-pagina").forEach((botao) => {
-        botao.addEventListener("click", () => buscarProdutos(Number(botao.dataset.pagina)));
+        botao.addEventListener("click", () => aoTrocarPagina(Number(botao.dataset.pagina)));
       });
     }
 
-    async function buscarProdutos(pagina) {
-      paginaAtual = pagina;
+    // origem: "cd" ou "hospital" - cada lista (produtos do CD / produtos do hospital, separadas
+    // pelo fornecedor do lote) eh buscada e paginada de forma independente. "Produtos do CD" some
+    // da tela quando nao tem nenhum item do CD pros filtros atuais
+    async function buscarProdutos(origem, pagina) {
       const params = montarQueryFiltros();
+      params.set("origem", origem);
       params.set("pagina", pagina);
 
-      const container = document.getElementById("areaProdutos");
+      const prefixo = origem === "cd" ? "Cd" : "Hospital";
+      const container = document.getElementById(`areaProdutos${prefixo}`);
       container.innerHTML = '<p class="msg-vazio">Carregando dado, aguenta ai...</p>';
 
       try {
         const resp = await fetch(`/api/aquisicoes?${params.toString()}`);
         const resultado = await resp.json();
+        const total = resultado.total ?? 0;
 
-        document.getElementById("contadorProdutos").textContent = resultado.total ?? 0;
-        renderizarProdutos(resultado.dados);
-        renderizarPaginacao(resultado.total ?? 0, resultado.pagina ?? pagina, resultado.tamanho_pagina ?? 10);
+        if (origem === "cd") {
+          document.getElementById("secaoProdutosCd").classList.toggle("oculto", total === 0);
+        }
+
+        document.getElementById(`contadorProdutos${prefixo}`).textContent = total;
+        renderizarProdutos(resultado.dados, prefixo);
+        renderizarPaginacao(
+          total,
+          resultado.pagina ?? pagina,
+          resultado.tamanho_pagina ?? 10,
+          `areaPaginacao${prefixo}`,
+          (novaPagina) => buscarProdutos(origem, novaPagina)
+        );
       } catch (erro) {
         container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${erro}</p>`;
-        document.getElementById("areaPaginacao").innerHTML = "";
+        document.getElementById(`areaPaginacao${prefixo}`).innerHTML = "";
       }
+    }
+
+    function buscarTudo() {
+      buscarProdutos("cd", 1);
+      buscarProdutos("hospital", 1);
     }
 
     document.getElementById("formFiltros").addEventListener("submit", (ev) => {
@@ -620,7 +651,7 @@
       esconderSugestoes();
       esconderSugestoesSubgrupo();
       esconderSugestoesDescricao();
-      buscarProdutos(1);
+      buscarTudo();
     });
 
     document.getElementById("botaoResetarFiltros").addEventListener("click", () => {
@@ -628,7 +659,7 @@
       esconderSugestoes();
       esconderSugestoesSubgrupo();
       esconderSugestoesDescricao();
-      buscarProdutos(1);
+      buscarTudo();
     });
 
     // sugestao de nome enquanto digita, com debounce pra nao martelar a api a cada tecla
@@ -660,7 +691,7 @@
           item.addEventListener("click", () => {
             campoNomeProduto.value = item.dataset.nome;
             esconderSugestoes();
-            buscarProdutos(1);
+            buscarTudo();
           });
         });
       } catch (erro) {
@@ -709,7 +740,7 @@
           item.addEventListener("click", () => {
             campoSubgrupo.value = item.dataset.nome;
             esconderSugestoesSubgrupo();
-            buscarProdutos(1);
+            buscarTudo();
           });
         });
       } catch (erro) {
@@ -760,7 +791,7 @@
           item.addEventListener("click", () => {
             campoDescricao.value = item.dataset.descricao;
             esconderSugestoesDescricao();
-            buscarProdutos(1);
+            buscarTudo();
           });
         });
       } catch (erro) {
@@ -788,7 +819,7 @@
       }
     });
 
-    buscarProdutos(1);
+    buscarTudo();
   </script>
 </body>
 </html>

@@ -40,6 +40,11 @@
             <div class="sugestoes" id="sugestoesFornecedor"></div>
           </div>
 
+          <div class="campo-filtro campo-curto">
+            <label for="filtroCodSeplag">Cód. Seplag</label>
+            <input type="text" id="filtroCodSeplag" placeholder="Ex.: 371891" />
+          </div>
+
           <div class="campo-filtro campo-autocompletar campo-largo">
             <label for="filtroProduto">Produto</label>
             <input type="text" id="filtroProduto" placeholder="Ex.: Luva Cirúrgica" autocomplete="off" />
@@ -129,6 +134,7 @@
       const numeroAtaContrato = document.getElementById("filtroNumeroAtaContrato").value.trim();
       const cnpj = document.getElementById("filtroCnpj").value.trim();
       const fornecedor = document.getElementById("filtroFornecedor").value.trim();
+      const codSeplag = document.getElementById("filtroCodSeplag").value.trim();
       const produto = document.getElementById("filtroProduto").value.trim();
       const armazem = document.getElementById("filtroArmazem").value;
       const tipoPedido = document.getElementById("filtroTipoPedido").value;
@@ -138,6 +144,7 @@
       if (numeroAtaContrato) params.set("numero_ata_contrato", numeroAtaContrato);
       if (cnpj) params.set("cnpj", cnpj);
       if (fornecedor) params.set("fornecedor", fornecedor);
+      if (codSeplag) params.set("cod_seplag", codSeplag);
       if (produto) params.set("produto", produto);
       if (armazem) params.set("armazem", armazem);
       if (tipoPedido) params.set("tipo_pedido", tipoPedido);
@@ -180,7 +187,12 @@
           <td>${linha.data_inicio ?? ""}</td>
           <td>${linha.data_fim ?? ""}</td>
           <td>${linha.prazo ?? ""}</td>
-          <td><button type="button" class="botao-aditivos">Aditivos</button></td>
+          <td>
+            <div class="grupo-botoes-linha">
+              <button type="button" class="botao-aditivos">Aditivos</button>
+              <button type="button" class="botao-consumo">Consumo</button>
+            </div>
+          </td>
         </tr>
         <tr class="linha-saldo">
           <td colspan="${NUMERO_COLUNAS}">${montarBarraSaldo(linha)}</td>
@@ -210,6 +222,13 @@
         botao.addEventListener("click", (ev) => {
           const linhaContrato = ev.currentTarget.closest("tr");
           alternarDetalhe(linhaContrato, "aditivos");
+        });
+      });
+
+      container.querySelectorAll(".botao-consumo").forEach((botao) => {
+        botao.addEventListener("click", (ev) => {
+          const linhaContrato = ev.currentTarget.closest("tr");
+          alternarDetalhe(linhaContrato, "consumo");
         });
       });
 
@@ -282,6 +301,11 @@
           const resp = await fetch(`/api/atas_contratos_aditivos?identificacao=${encodeURIComponent(linhaContrato.dataset.identificacao)}`);
           const aditivos = await resp.json();
           trDetalhe.innerHTML = `<td colspan="9">${montarTabelaAditivos(aditivos)}</td>`;
+        } else if (tipo === "consumo") {
+          const resp = await fetch(`/api/atas_contratos_pedidos?identificacao=${encodeURIComponent(linhaContrato.dataset.identificacao)}`);
+          const pedidos = await resp.json();
+          trDetalhe.innerHTML = `<td colspan="9">${montarTabelaPedidos(pedidos, linhaContrato.dataset.identificacao)}</td>`;
+          ligarBotoesItensPedido(trDetalhe);
         } else {
           const resp = await fetch(`/api/atas_contratos_itens?pedidocabecalho=${encodeURIComponent(linhaContrato.dataset.pedidocabecalho)}`);
           const itens = await resp.json();
@@ -333,6 +357,118 @@
         </div>`;
     }
 
+    // "pedidos" (botao Consumo): empenhos agrupados por data de destaque dentro da familia
+    // inteira (numeroidentificacao) - cada linha e um dia em que um ou mais produtos foram
+    // destacados contra essa ata/contrato. clicar em "Itens" numa linha mostra os produtos
+    // daquele pedido especifico (nested, independente do alternarDetalhe de fora)
+    function montarTabelaPedidos(pedidos, identificacao) {
+      if (!Array.isArray(pedidos) || pedidos.length === 0) {
+        return '<p class="msg-vazio">Nenhum pedido encontrado pra essa ata/contrato.</p>';
+      }
+
+      const linhas = pedidos
+        .map(
+          (item) => `
+        <tr class="linha-pedido" data-identificacao="${identificacao}" data-data-pedido="${item.data_pedido_iso}">
+          <td>${item.data_pedido ?? ""}</td>
+          <td>${item.quantidade_itens ?? ""}</td>
+          <td>${formatarMoeda(item.valor_total)}</td>
+          <td><button type="button" class="botao-itens-pedido">Itens</button></td>
+        </tr>`
+        )
+        .join("");
+
+      return `
+        <div class="bloco-hierarquia">
+          ${SETA_HIERARQUIA}
+          <table class="tabela-lotes">
+            <thead>
+              <tr>
+                <th>Data do Pedido</th>
+                <th>Qtde. de Itens</th>
+                <th>Valor Total</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+    }
+
+    function montarTabelaItensPedido(itens) {
+      if (!Array.isArray(itens) || itens.length === 0) {
+        return '<p class="msg-vazio">Nenhum item encontrado pra esse pedido.</p>';
+      }
+
+      const linhas = itens
+        .map(
+          (item) => `
+        <tr>
+          <td>${item.cod_seplag ?? ""}</td>
+          <td class="celula-quebra">${item.nome_produto ?? ""}</td>
+          <td>${formatarQuantidade(item.quantidade)}</td>
+          <td>${formatarMoeda(item.valor_unitario)}</td>
+          <td>${formatarMoeda(item.subtotal)}</td>
+        </tr>`
+        )
+        .join("");
+
+      return `
+        <div class="bloco-hierarquia">
+          ${SETA_HIERARQUIA}
+          <table class="tabela-lotes">
+            <thead>
+              <tr>
+                <th>Cód. Seplag</th>
+                <th>Produto</th>
+                <th>Quantidade</th>
+                <th>Vl. Unitário</th>
+                <th>Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // clique em "Itens" numa linha-pedido abre uma linha logo abaixo so dela - independente do
+    // alternarDetalhe de fora (colspan de 4, da tabela de pedidos, nao de 9)
+    async function alternarItensPedido(linhaPedido) {
+      const linhaDetalhe = linhaPedido.nextElementSibling;
+
+      if (linhaDetalhe && linhaDetalhe.classList.contains("linha-detalhe-itens-pedido")) {
+        linhaDetalhe.remove();
+        return;
+      }
+
+      linhaPedido.parentElement.querySelectorAll(".linha-detalhe-itens-pedido").forEach((el) => el.remove());
+
+      const trDetalhe = document.createElement("tr");
+      trDetalhe.className = "linha-detalhe-itens-pedido";
+      trDetalhe.innerHTML = `<td colspan="4"><p class="msg-vazio">Carregando...</p></td>`;
+      linhaPedido.after(trDetalhe);
+
+      try {
+        const params = new URLSearchParams({
+          identificacao: linhaPedido.dataset.identificacao,
+          data_pedido: linhaPedido.dataset.dataPedido,
+        });
+        const resp = await fetch(`/api/atas_contratos_pedido_itens?${params.toString()}`);
+        const itens = await resp.json();
+        trDetalhe.innerHTML = `<td colspan="4">${montarTabelaItensPedido(itens)}</td>`;
+      } catch (erro) {
+        trDetalhe.innerHTML = `<td colspan="4"><p class="msg-vazio">Erro ao carregar: ${erro}</p></td>`;
+      }
+    }
+
+    function ligarBotoesItensPedido(container) {
+      container.querySelectorAll(".botao-itens-pedido").forEach((botao) => {
+        botao.addEventListener("click", (ev) => {
+          alternarItensPedido(ev.currentTarget.closest("tr"));
+        });
+      });
+    }
+
     function montarBarraSaldoItem(item) {
       return `
         <div class="barra-saldo-linha">
@@ -350,6 +486,7 @@
         .map(
           (item) => `
         <tr class="linha-item">
+          <td>${item.cod_seplag ?? ""}</td>
           <td class="celula-quebra">${item.nome_produto ?? ""}</td>
           <td class="celula-quebra">${item.descricao_produto ?? ""}</td>
           <td>${item.quantidade ?? ""}</td>
@@ -359,7 +496,7 @@
           <td></td>
         </tr>
         <tr class="linha-saldo">
-          <td colspan="7">${montarBarraSaldoItem(item)}</td>
+          <td colspan="8">${montarBarraSaldoItem(item)}</td>
         </tr>`
         )
         .join("");
@@ -370,6 +507,7 @@
           <table class="tabela-lotes">
             <thead>
               <tr>
+                <th>Cód. Seplag</th>
                 <th>Produto</th>
                 <th>Descrição</th>
                 <th>Quantidade Total</th>

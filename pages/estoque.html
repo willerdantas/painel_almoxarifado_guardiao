@@ -497,6 +497,7 @@
         <tr>
           <td>${item.nome_armazem ?? ""}</td>
           <td>${formatarQuantidade(item.total_estoque)}</td>
+          <td>${formatarQuantidade(item.saldo_ata)}</td>
           <td>${formatarQuantidade(item.saldo_contrato)}</td>
           <td>${marcarSuficiencia(item.estoque_minimo, item.minimo_ok)}</td>
           <td>${marcarSuficiencia(item.estoque_seguranca, item.seguranca_ok)}</td>
@@ -514,7 +515,8 @@
               <tr>
                 <th>Armazém</th>
                 <th>Total em Estoque</th>
-                <th>Saldo em Contrato</th>
+                <th>Saldo de Ata</th>
+                <th>Saldo de Contrato</th>
                 <th>Estoque Mínimo (30d)</th>
                 <th>Estoque de Segurança (90d)</th>
                 <th>Ponto de Ressuprimento (180d)</th>

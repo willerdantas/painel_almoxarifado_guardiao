@@ -858,7 +858,9 @@ table.tabela-dados .botao-concluir:disabled {
 }
 
 table.tabela-dados .botao-aditivos,
-table.tabela-dados .botao-itens {
+table.tabela-dados .botao-itens,
+table.tabela-dados .botao-consumo,
+table.tabela-lotes .botao-itens-pedido {
   padding: 6px 14px;
   border: 1px solid var(--vermelho);
   border-radius: 6px;
@@ -871,7 +873,9 @@ table.tabela-dados .botao-itens {
 }
 
 table.tabela-dados .botao-aditivos:hover,
-table.tabela-dados .botao-itens:hover {
+table.tabela-dados .botao-itens:hover,
+table.tabela-dados .botao-consumo:hover,
+table.tabela-lotes .botao-itens-pedido:hover {
   background: var(--vermelho);
   color: var(--branco);
 }
