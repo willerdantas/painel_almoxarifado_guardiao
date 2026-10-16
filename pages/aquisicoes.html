@@ -173,10 +173,12 @@
         return;
       }
 
+      // produto do Hospital sem ata/contrato valido fica sinalizado (fundo vermelho claro) - CD
+      // nao entra nessa regra, ja que CD nao se reabastece via ata/contrato local
       const linhas = dados
         .map(
           (linha) => `
-        <tr class="linha-produto linha-produto-com-acoes" data-produto="${linha.cod_produto}" data-nome-produto="${linha.nome_produto ?? ""}" data-cod-seplag="${linha.cod_seplag ?? ""}" data-cod-almox="${linha.cod_almox ?? ""}">
+        <tr class="linha-produto linha-produto-com-acoes${prefixo === "Hospital" && !linha.tem_contrato ? " linha-sem-contrato" : ""}" data-produto="${linha.cod_produto}" data-nome-produto="${linha.nome_produto ?? ""}" data-cod-seplag="${linha.cod_seplag ?? ""}" data-cod-almox="${linha.cod_almox ?? ""}">
           <td>${linha.cod_seplag ?? ""}</td>
           <td>${linha.cod_almox ?? ""}</td>
           <td>${linha.cod_produto ?? ""}</td>

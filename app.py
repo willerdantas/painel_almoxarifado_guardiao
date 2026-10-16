@@ -814,6 +814,28 @@ UNIDADE_PADRAO = 62438
 # passa a significar estoqueminimo > 0 (so existe ponto calculado onde tem minimo definido)
 SQL_PONTO_RESSUPRIMENTO_180D = "ROUND(ea.estoqueminimo / 30 * 180, 2)"
 
+# produto tem ata ou contrato ainda valido (familia cujo aditivo mais recente nao venceu) - mesmo
+# criterio de "valido" usado em atas_contratos.html e /api/estoque_abastecimento (saldo em
+# ata/contrato). correlacionado por p.produto, entao so funciona dentro de uma query que ja tenha
+# "produto p" no escopo - usado pra sinalizar produto do Hospital sem ata/contrato em
+# estoque.html/aquisicoes.html
+SQL_PRODUTO_TEM_CONTRATO_VALIDO = """
+    EXISTS (
+        SELECT 1 FROM public.pedidoitem pi_ctr
+        JOIN public.pedidocabecalho pc_ctr ON pc_ctr.pedidocabecalho = pi_ctr.pedidocabecalho
+        WHERE pi_ctr.produto = p.produto
+        AND EXISTS (
+            SELECT 1 FROM public.pedidocabecalho pc_latest
+            WHERE pc_latest.numeroidentificacao = pc_ctr.numeroidentificacao
+            AND pc_latest.numeroaditivo = (
+                SELECT MAX(pc2.numeroaditivo) FROM public.pedidocabecalho pc2
+                WHERE pc2.numeroidentificacao = pc_ctr.numeroidentificacao
+            )
+            AND pc_latest.datafim > CURRENT_DATE
+        )
+    )
+"""
+
 # distribuicao nao trava num pedido so por vez feito a separacao - o usuario pode acumular ate 10
 # pedidos reivindicados (em andamento) simultaneamente
 LIMITE_DISTRIBUICAO_USUARIO = 10
@@ -3155,7 +3177,8 @@ def api_estoque():
                     p.referenciasus AS procedimento_sus,
                     est.total AS total_estoque,
                     et.customedio AS custo_medio,
-                    (est.total * et.customedio) AS valor_total
+                    (est.total * et.customedio) AS valor_total,
+                    {SQL_PRODUTO_TEM_CONTRATO_VALIDO} AS tem_contrato
                 {base_from}
             )
             SELECT
@@ -3899,7 +3922,8 @@ def api_aquisicoes():
                     p.referenciasus AS procedimento_sus,
                     est.total AS total_estoque,
                     et.customedio AS custo_medio,
-                    (est.total * et.customedio) AS valor_total
+                    (est.total * et.customedio) AS valor_total,
+                    {SQL_PRODUTO_TEM_CONTRATO_VALIDO} AS tem_contrato
                 {base_from}
             )
             SELECT
