@@ -269,6 +269,7 @@
               <button type="button" class="botao-acao-produto botao-movimentacoes">Movimentações</button>
               <button type="button" class="botao-acao-produto botao-unidades">Unidades</button>
               <button type="button" class="botao-acao-produto botao-contratos">Ata/Contrato</button>
+              <button type="button" class="botao-acao-produto botao-processos-aquisicao">Processos de Aquisição</button>
             </div>
           </td>
         </tr>`
@@ -336,6 +337,13 @@
         botao.addEventListener("click", (ev) => {
           const linhaAcoes = ev.currentTarget.closest("tr");
           alternarDetalhe(linhaAcoes, "contratos");
+        });
+      });
+
+      container.querySelectorAll(".botao-processos-aquisicao").forEach((botao) => {
+        botao.addEventListener("click", (ev) => {
+          const linhaAcoes = ev.currentTarget.closest("tr");
+          alternarDetalhe(linhaAcoes, "processos");
         });
       });
     }
@@ -423,6 +431,19 @@
           trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}">${montarTabelaContratos(contratos)}</td>`;
         } catch (erro) {
           trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}"><p class="msg-vazio">Erro ao carregar contratos: ${erro}</p></td>`;
+        }
+      } else if (tipo === "processos") {
+        trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}"><p class="msg-vazio">Carregando processos de aquisição...</p></td>`;
+        linhaAcoes.after(trDetalhe);
+
+        try {
+          const params = new URLSearchParams({ produto: linhaProduto.dataset.produto });
+          const resp = await fetch(`/api/estoque_processos_aquisicao?${params.toString()}`);
+          const processos = await resp.json();
+          if (processos.erro) throw new Error(processos.erro);
+          trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}">${montarTabelaProcessosAquisicao(processos)}</td>`;
+        } catch (erro) {
+          trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}"><p class="msg-vazio">Erro ao carregar processos de aquisição: ${erro}</p></td>`;
         }
       } else {
         trDetalhe.innerHTML = `<td colspan="${NUMERO_COLUNAS}">${montarFormularioMovimentacoes()}</td>`;
@@ -597,6 +618,53 @@
                 <th>Validade</th>
                 <th>Quantidade</th>
                 <th>Última Saída</th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // processos de aquisicao (planilha SESA e cadastrados a mao) com item desse cod. seplag - ja vem
+    // do mais recente pro mais antigo pela data de atualizacao
+    function montarTabelaProcessosAquisicao(dados) {
+      if (!Array.isArray(dados) || dados.length === 0) {
+        return '<p class="msg-vazio">Nenhum processo de aquisição encontrado pra esse produto.</p>';
+      }
+
+      const texto = (valor) => {
+        const div = document.createElement("div");
+        div.textContent = valor ?? "";
+        return div.innerHTML;
+      };
+      const linhas = dados
+        .map(
+          (item) => `
+        <tr>
+          <td>${texto(item.processo)}</td>
+          <td>${texto(item.status)}</td>
+          <td class="celula-quebra">${texto(item.etapa)}</td>
+          <td>${texto(item.pregao)}</td>
+          <td>${texto(item.ata)}</td>
+          <td>${texto(item.vigencia)}</td>
+          <td>${texto(item.data_atualizacao)}</td>
+        </tr>`
+        )
+        .join("");
+
+      return `
+        <div class="bloco-hierarquia">
+          ${SETA_HIERARQUIA}
+          <table class="tabela-lotes">
+            <thead>
+              <tr>
+                <th>Processo</th>
+                <th>Status</th>
+                <th>Etapa</th>
+                <th>Pregão</th>
+                <th>Ata</th>
+                <th>Vigência</th>
+                <th>Dt. Atualização</th>
               </tr>
             </thead>
             <tbody>${linhas}</tbody>

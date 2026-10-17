@@ -5631,6 +5631,38 @@ def _incluir_estoque_e_saldos(itens, usuario_logado):
         item.update(por_codigo.get(_normalizar_codigo_seplag(item["codigo_srp"]), {}))
 
 
+@app.route("/api/estoque_processos_aquisicao")
+def api_estoque_processos_aquisicao():
+    # botao "Processos de Aquisição" do estoque.html: processos (planilha SESA e manuais, das duas
+    # listas) que tem item com codigo SRP = cod. seplag do produto. um registro por processo, com o
+    # dado do item atualizado por ultimo (mesma regra da listagem de processos_aquisicao.html)
+    produto = request.args.get("produto")
+    if not produto:
+        return jsonify([])
+    try:
+        linhas = run_query("SELECT codigoreferencia FROM public.produto WHERE produto = %s", [produto])
+        codigo = _normalizar_codigo_seplag(linhas[0]["codigoreferencia"]) if linhas else ""
+        if not codigo:
+            return jsonify([])
+        processos = _consultar_processos_sesa(f"""
+            SELECT
+                p.processo,
+                {_campo_item_mais_recente("status")} AS status,
+                {_campo_item_mais_recente("etapa")} AS etapa,
+                {_campo_item_mais_recente("pregao")} AS pregao,
+                {_campo_item_mais_recente("ata")} AS ata,
+                {_campo_item_mais_recente("vigencia")} AS vigencia,
+                to_char(max(p.data_atualizacao), 'DD/MM/YYYY') AS data_atualizacao
+            FROM ({SQL_ITENS_PROCESSOS}) p
+            WHERE LTRIM(TRIM(p.codigo_srp), '0') = %s AND p.processo IS NOT NULL
+            GROUP BY p.processo
+            ORDER BY max(p.data_atualizacao) DESC NULLS LAST, p.processo
+        """, [codigo])
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+    return jsonify(processos or [])
+
+
 @app.route("/api/processos_sesa/descricoes_sugestoes")
 def api_descricoes_sugestoes_processos():
     # sugestao do filtro Descricao enquanto digita - descricoes dos itens de processo (planilha e
