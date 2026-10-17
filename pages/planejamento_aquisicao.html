@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSYSTEM | Planejamento de Aquisição</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <div id="menuContainer"></div>
+
+    <main class="conteudo">
+      <div class="topo-pagina">
+        <h1>Planejamento de Aquisição</h1>
+        <div class="topo-direita">
+          <div class="area-usuario">
+            <span class="usuario-logado" id="usuarioLogado"></span>
+            <button class="botao-sair" id="botaoSairTopo">Sair</button>
+          </div>
+          <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+        </div>
+      </div>
+
+      <section class="cartao filtros">
+        <form id="formFiltros" class="grade-filtros">
+          <div class="campo-filtro campo-autocompletar campo-largo-fixo">
+            <label for="filtroClasse">Classe</label>
+            <input type="text" id="filtroClasse" placeholder="Ex.: Material Hospitalar" autocomplete="off" />
+            <div class="sugestoes" id="sugestoesClasse"></div>
+          </div>
+
+          <div class="campo-filtro campo-autocompletar campo-largo-fixo">
+            <label for="filtroSubgrupo">Subgrupo</label>
+            <input type="text" id="filtroSubgrupo" placeholder="Ex.: Agulhas" autocomplete="off" />
+            <div class="sugestoes" id="sugestoesSubgrupo"></div>
+          </div>
+
+          <div class="campo-filtro campo-curto oculto" id="blocoFiltroArmazem">
+            <label for="filtroArmazem">Armazém</label>
+            <select id="filtroArmazem">
+              <option value="">Todos</option>
+            </select>
+          </div>
+
+          <div class="campo-filtro campo-acao">
+            <div class="grupo-botoes-filtro">
+              <button type="submit" class="botao-filtrar" id="botaoGerar">Gerar</button>
+              <button type="button" class="botao-resetar" id="botaoLimpar">Limpar</button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <div class="linha-cards-painel">
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="cardNumeroItens">0</span>
+          <span class="contagem-rotulo">Número de Itens</span>
+        </div>
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="cardQuantidadeTotal">0</span>
+          <span class="contagem-rotulo">Quantidade Total</span>
+        </div>
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="cardValorTotal">R$ 0,00</span>
+          <span class="contagem-rotulo">Valor Total Mensal</span>
+        </div>
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="cardValorTotalAnual">R$ 0,00</span>
+          <span class="contagem-rotulo">Valor Total Anual</span>
+        </div>
+      </div>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Itens</h2>
+          <span class="contador-secao" id="contadorItens">0</span>
+          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoInserirItens">+ Inserir Itens</button>
+          <button type="button" class="botao-resetar" id="botaoCsv">CSV</button>
+          <button type="button" class="botao-resetar" id="botaoXlsx">Planilha</button>
+          <button type="button" class="botao-resetar" id="botaoPdf">PDF</button>
+        </div>
+        <p class="msg-ajuda-importacao">
+          Qtde. Sugerida = média mensal de consumo dos últimos 6 meses (todas as saídas), arredondada pra cima.
+          Pode ser alterada direto na tabela. A lista não é salva: use CSV, Planilha ou PDF pra guardar.
+        </p>
+
+        <form id="formInserirItens" class="form-cadastro oculto">
+          <div class="grade-filtros">
+            <div class="campo-filtro campo-largo">
+              <label for="buscaProduto">Pesquisar produto (Cód. Seplag ou nome)</label>
+              <input type="text" id="buscaProduto" placeholder="Ex.: 371891 ou Agulha" autocomplete="off" />
+            </div>
+            <div class="campo-filtro campo-acao">
+              <div class="grupo-botoes-filtro">
+                <button type="submit" class="botao-filtrar">Pesquisar</button>
+                <button type="button" class="botao-resetar" id="botaoFecharInserir">Fechar</button>
+              </div>
+            </div>
+          </div>
+          <div id="resultadoBuscaProduto"></div>
+        </form>
+
+        <div id="areaItens">
+          <p class="msg-vazio">Escolha os filtros (ou deixe em branco pra todos os itens dos seus armazéns) e clique em Gerar.</p>
+        </div>
+        <div class="paginacao" id="areaPaginacao"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script src="/static/js/tabela.js"></script>
+  <script>
+    // caverna so abre pra quem tem crachá
+    protegerPagina();
+    iniciarMenu("planejamento_aquisicao");
+
+    // a lista vive so aqui (nao vai pro banco): cada item eh a linha que veio da api + "quantidade",
+    // que comeca na sugestao e o usuario pode mudar
+    let itens = [];
+    let paginaAtual = 1;
+    const TAMANHO_PAGINA = 20;
+
+    function escaparHtml(texto) {
+      const div = document.createElement("div");
+      div.textContent = texto ?? "";
+      return div.innerHTML;
+    }
+
+    function quantidadeSugerida(item) {
+      return Math.ceil(Number(item.media_mensal) || 0);
+    }
+
+    // qtde. sugerida eh mensal (vem da media mensal) - anual = 12x
+    function valoresItem(item) {
+      const quantidade = Number(item.quantidade) || 0;
+      const valorUnitario = Number(item.valor_unitario) || 0;
+      return {
+        valorMensal: quantidade * valorUnitario,
+        quantidadeAnual: quantidade * 12,
+        valorAnual: quantidade * 12 * valorUnitario,
+      };
+    }
+
+    function celulasValores(item) {
+      const valores = valoresItem(item);
+      return `
+          <td class="celula-valor-mensal">${formatarMoeda(valores.valorMensal)}</td>
+          <td class="celula-qtde-anual">${formatarQuantidade(valores.quantidadeAnual)}</td>
+          <td class="celula-valor-anual">${formatarMoeda(valores.valorAnual)}</td>`;
+    }
+
+    function montarQueryFiltros() {
+      const params = new URLSearchParams();
+      const classe = document.getElementById("filtroClasse").value.trim();
+      const subgrupo = document.getElementById("filtroSubgrupo").value.trim();
+      const armazem = document.getElementById("filtroArmazem").value;
+      if (classe) params.set("classe", classe);
+      if (subgrupo) params.set("subgrupo", subgrupo);
+      if (armazem) params.set("armazem", armazem);
+      if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
+      return params;
+    }
+
+    // ---- cards ----
+    function atualizarTotais() {
+      const quantidadeTotal = itens.reduce((soma, item) => soma + (Number(item.quantidade) || 0), 0);
+      const valorTotal = itens.reduce((soma, item) => soma + (Number(item.quantidade) || 0) * (Number(item.valor_unitario) || 0), 0);
+      document.getElementById("cardNumeroItens").textContent = itens.length.toLocaleString("pt-BR");
+      document.getElementById("cardQuantidadeTotal").textContent = formatarQuantidade(quantidadeTotal);
+      document.getElementById("cardValorTotal").textContent = formatarMoeda(valorTotal);
+      document.getElementById("cardValorTotalAnual").textContent = formatarMoeda(valorTotal * 12);
+      document.getElementById("contadorItens").textContent = itens.length.toLocaleString("pt-BR");
+    }
+
+    // ---- tabela ----
+    // paginador compacto: anterior, um punhado de numeros perto da atual, proxima
+    function renderizarPaginacao() {
+      const area = document.getElementById("areaPaginacao");
+      const totalPaginas = Math.max(Math.ceil(itens.length / TAMANHO_PAGINA), 1);
+      if (totalPaginas <= 1) {
+        area.innerHTML = "";
+        return;
+      }
+
+      const inicio = Math.max(paginaAtual - 2, 1);
+      const fim = Math.min(inicio + 4, totalPaginas);
+      let botoes = `<button type="button" class="botao-pagina" data-pagina="${paginaAtual - 1}" ${paginaAtual <= 1 ? "disabled" : ""}>‹ Anterior</button>`;
+      for (let n = inicio; n <= fim; n++) {
+        botoes += `<button type="button" class="botao-pagina ${n === paginaAtual ? "ativo" : ""}" data-pagina="${n}">${n}</button>`;
+      }
+      botoes += `<button type="button" class="botao-pagina" data-pagina="${paginaAtual + 1}" ${paginaAtual >= totalPaginas ? "disabled" : ""}>Próxima ›</button>`;
+
+      area.innerHTML = botoes;
+      area.querySelectorAll(".botao-pagina").forEach((botao) => {
+        botao.addEventListener("click", () => {
+          paginaAtual = Number(botao.dataset.pagina);
+          renderizarItens();
+        });
+      });
+    }
+
+    function renderizarItens(mensagemVazio = "Nenhum item na lista.") {
+      const container = document.getElementById("areaItens");
+      atualizarTotais();
+
+      const totalPaginas = Math.max(Math.ceil(itens.length / TAMANHO_PAGINA), 1);
+      paginaAtual = Math.min(paginaAtual, totalPaginas);
+
+      if (!itens.length) {
+        container.innerHTML = `<p class="msg-vazio">${escaparHtml(mensagemVazio)}</p>`;
+        renderizarPaginacao();
+        return;
+      }
+
+      const inicio = (paginaAtual - 1) * TAMANHO_PAGINA;
+      const linhas = itens
+        .slice(inicio, inicio + TAMANHO_PAGINA)
+        .map(
+          (item, indicePagina) => `
+        <tr class="linha-produto" data-indice="${inicio + indicePagina}">
+          <td>${escaparHtml(item.cod_seplag)}</td>
+          <td class="celula-quebra">${escaparHtml(item.nome_produto)}</td>
+          <td class="celula-quebra">${escaparHtml(item.descricao_produto)}</td>
+          <td class="celula-quebra">${escaparHtml(item.classe)}</td>
+          <td class="celula-quebra">${escaparHtml(item.sub_grupo)}</td>
+          <td>${escaparHtml(item.apresentacao)}</td>
+          <td>${formatarQuantidade(item.consumo_6m)}</td>
+          <td>${formatarQuantidade(item.media_mensal)}</td>
+          <td>${formatarQuantidade(item.total_estoque)}</td>
+          <td><input type="number" class="campo-tabela campo-quantidade-planejamento" min="0" step="any" value="${Number(item.quantidade) || 0}" /></td>
+          <td>${formatarMoeda(item.valor_unitario)}</td>
+          ${celulasValores(item)}
+          <td><button type="button" class="botao-acao-produto botao-remover-item">Remover</button></td>
+        </tr>`
+        )
+        .join("");
+
+      container.innerHTML = `
+        <div class="tabela-rolagem-horizontal">
+          <table class="tabela-dados">
+            <thead>
+              <tr>
+                <th>Cód. Seplag</th>
+                <th>Nome do Produto</th>
+                <th>Descrição</th>
+                <th>Classe</th>
+                <th>Sub Grupo</th>
+                <th>Apresentação</th>
+                <th>Consumo 6 Meses</th>
+                <th>Média Mensal</th>
+                <th>Estoque Atual</th>
+                <th>Qtde. Sugerida</th>
+                <th>Valor Unitário</th>
+                <th>Valor Mensal</th>
+                <th>Qtde. Anual</th>
+                <th>Valor Anual</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+
+      container.querySelectorAll("tr[data-indice]").forEach((linha) => {
+        const item = itens[Number(linha.dataset.indice)];
+        // muda so a linha e os cards (sem redesenhar a tabela, pra nao perder o foco do campo)
+        linha.querySelector(".campo-quantidade-planejamento").addEventListener("input", (ev) => {
+          item.quantidade = Math.max(Number(ev.target.value) || 0, 0);
+          const valores = valoresItem(item);
+          linha.querySelector(".celula-valor-mensal").textContent = formatarMoeda(valores.valorMensal);
+          linha.querySelector(".celula-qtde-anual").textContent = formatarQuantidade(valores.quantidadeAnual);
+          linha.querySelector(".celula-valor-anual").textContent = formatarMoeda(valores.valorAnual);
+          atualizarTotais();
+        });
+        linha.querySelector(".botao-remover-item").addEventListener("click", () => {
+          itens.splice(Number(linha.dataset.indice), 1);
+          renderizarItens();
+        });
+      });
+      renderizarPaginacao();
+    }
+
+    // ---- gerar / limpar ----
+    document.getElementById("formFiltros").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      esconderTodasSugestoes();
+      if (itens.length && !confirm("Gerar de novo substitui a lista atual (inclusive quantidades alteradas e itens inseridos). Continuar?")) return;
+
+      const botao = document.getElementById("botaoGerar");
+      botao.disabled = true;
+      document.getElementById("areaItens").innerHTML = '<p class="msg-vazio">Calculando consumo dos últimos 6 meses, aguenta ai...</p>';
+      document.getElementById("areaPaginacao").innerHTML = "";
+      try {
+        const resp = await fetch(`/api/planejamento_aquisicao?${montarQueryFiltros().toString()}`);
+        const dados = await resp.json();
+        if (dados.erro) throw new Error(dados.erro);
+        itens = dados.map((item) => ({ ...item, quantidade: quantidadeSugerida(item) }));
+        paginaAtual = 1;
+        renderizarItens("Nenhum item com consumo nos últimos 6 meses pra esses filtros.");
+      } catch (erro) {
+        itens = [];
+        atualizarTotais();
+        document.getElementById("areaItens").innerHTML = `<p class="msg-vazio">Erro ao gerar: ${escaparHtml(String(erro))}</p>`;
+      } finally {
+        botao.disabled = false;
+      }
+    });
+
+    document.getElementById("botaoLimpar").addEventListener("click", () => {
+      if (itens.length && !confirm("Limpar os filtros e a lista atual?")) return;
+      document.getElementById("formFiltros").reset();
+      esconderTodasSugestoes();
+      itens = [];
+      paginaAtual = 1;
+      renderizarItens("Escolha os filtros (ou deixe em branco pra todos os itens dos seus armazéns) e clique em Gerar.");
+    });
+
+    // ---- inserir itens ----
+    const formInserirItens = document.getElementById("formInserirItens");
+
+    document.getElementById("botaoInserirItens").addEventListener("click", () => {
+      formInserirItens.classList.toggle("oculto");
+      if (!formInserirItens.classList.contains("oculto")) document.getElementById("buscaProduto").focus();
+    });
+    document.getElementById("botaoFecharInserir").addEventListener("click", () => {
+      formInserirItens.reset();
+      document.getElementById("resultadoBuscaProduto").innerHTML = "";
+      formInserirItens.classList.add("oculto");
+    });
+
+    formInserirItens.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const termo = document.getElementById("buscaProduto").value.trim();
+      const area = document.getElementById("resultadoBuscaProduto");
+      if (!termo) {
+        area.innerHTML = "";
+        return;
+      }
+      area.innerHTML = '<p class="msg-vazio">Pesquisando...</p>';
+
+      // mesmo escopo de armazem da lista (consumo/estoque calculados igual ao Gerar)
+      const params = montarQueryFiltros();
+      params.delete("classe");
+      params.delete("subgrupo");
+      params.set("termo", termo);
+      try {
+        const resp = await fetch(`/api/planejamento_aquisicao/produtos?${params.toString()}`);
+        const produtos = await resp.json();
+        if (produtos.erro) throw new Error(produtos.erro);
+        if (!produtos.length) {
+          area.innerHTML = '<p class="msg-vazio">Nenhum produto encontrado.</p>';
+          return;
+        }
+        area.innerHTML = `
+          <table class="tabela-dados">
+            <thead><tr><th>Cód. Seplag</th><th>Nome do Produto</th><th>Apresentação</th><th>Média Mensal</th><th>Estoque Atual</th><th></th></tr></thead>
+            <tbody>${produtos.map((p, indice) => {
+              const naLista = itens.some((item) => String(item.cod_produto) === String(p.cod_produto));
+              return `
+              <tr>
+                <td>${escaparHtml(p.cod_seplag)}</td>
+                <td class="celula-quebra">${escaparHtml(p.nome_produto)}</td>
+                <td>${escaparHtml(p.apresentacao)}</td>
+                <td>${formatarQuantidade(p.media_mensal)}</td>
+                <td>${formatarQuantidade(p.total_estoque)}</td>
+                <td><button type="button" class="botao-acao-produto" data-indice="${indice}" ${naLista ? "disabled" : ""}>${naLista ? "Na lista" : "Incluir"}</button></td>
+              </tr>`;
+            }).join("")}
+            </tbody>
+          </table>`;
+        area.querySelectorAll("button[data-indice]").forEach((botao) => {
+          botao.addEventListener("click", () => {
+            const produto = produtos[Number(botao.dataset.indice)];
+            // item inserido entra no topo pra aparecer na hora
+            itens.unshift({ ...produto, quantidade: quantidadeSugerida(produto) });
+            paginaAtual = 1;
+            botao.disabled = true;
+            botao.textContent = "Na lista";
+            renderizarItens();
+          });
+        });
+      } catch (erro) {
+        area.innerHTML = `<p class="msg-vazio">Erro ao pesquisar: ${escaparHtml(String(erro))}</p>`;
+      }
+    });
+
+    // ---- exportar ----
+    async function exportar(formato) {
+      if (!itens.length) {
+        alert("Gere ou insira itens antes de exportar.");
+        return;
+      }
+      try {
+        const resp = await fetch("/api/planejamento_aquisicao/exportar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            formato,
+            itens,
+            // so pro cabecalho do pdf ("Filtros aplicados")
+            filtros: Object.fromEntries(montarQueryFiltros()),
+          }),
+        });
+        if (!resp.ok) {
+          const dado = await resp.json().catch(() => ({}));
+          throw new Error(dado.erro || `HTTP ${resp.status}`);
+        }
+        const arquivo = await resp.blob();
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(arquivo);
+        link.download = `planejamento_aquisicao.${formato}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(link.href);
+      } catch (erro) {
+        alert(`Não foi possível exportar: ${erro.message || erro}`);
+      }
+    }
+
+    document.getElementById("botaoCsv").addEventListener("click", () => exportar("csv"));
+    document.getElementById("botaoXlsx").addEventListener("click", () => exportar("xlsx"));
+    document.getElementById("botaoPdf").addEventListener("click", () => exportar("pdf"));
+
+    // ---- sugestao de classe/subgrupo enquanto digita ----
+    function iniciarAutocompletar(campoId, caixaId, endpoint, chave) {
+      const campo = document.getElementById(campoId);
+      const caixa = document.getElementById(caixaId);
+      let temporizador = null;
+
+      const esconder = () => {
+        caixa.innerHTML = "";
+        caixa.classList.remove("aberto");
+      };
+
+      campo.addEventListener("input", () => {
+        const termo = campo.value.trim();
+        clearTimeout(temporizador);
+        if (!termo) {
+          esconder();
+          return;
+        }
+        temporizador = setTimeout(async () => {
+          try {
+            const resp = await fetch(`${endpoint}?termo=${encodeURIComponent(termo)}`);
+            const dados = await resp.json();
+            if (campo.value.trim() !== termo) return;
+            if (!Array.isArray(dados) || !dados.length) {
+              esconder();
+              return;
+            }
+            caixa.innerHTML = dados
+              .map((item, indice) => `<div class="item-sugestao" data-indice="${indice}">${escaparHtml(item[chave])}</div>`)
+              .join("");
+            caixa.classList.add("aberto");
+            caixa.querySelectorAll(".item-sugestao").forEach((opcao) => {
+              opcao.addEventListener("click", () => {
+                campo.value = dados[Number(opcao.dataset.indice)][chave];
+                esconder();
+              });
+            });
+          } catch (erro) {
+            esconder();
+          }
+        }, 250);
+      });
+      return esconder;
+    }
+
+    const esconderSugestoesClasse = iniciarAutocompletar("filtroClasse", "sugestoesClasse", "/api/classes_sugestoes", "classe");
+    const esconderSugestoesSubgrupo = iniciarAutocompletar("filtroSubgrupo", "sugestoesSubgrupo", "/api/subgrupos_sugestoes", "sub_grupo");
+
+    function esconderTodasSugestoes() {
+      esconderSugestoesClasse();
+      esconderSugestoesSubgrupo();
+    }
+
+    document.addEventListener("click", (ev) => {
+      if (!ev.target.closest(".campo-autocompletar")) esconderTodasSugestoes();
+    });
+
+    iniciarFiltroArmazemCondicional("filtroArmazem", "blocoFiltroArmazem");
+  </script>
+</body>
+</html>

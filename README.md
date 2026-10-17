@@ -42,6 +42,7 @@ pages/                    # todas as telas html
   estoque.html
   estoque_critico.html
   processos_aquisicao.html
+  planejamento_aquisicao.html
   atas_contratos.html
   pagamentos.html
 static/css/style.css      # css único do projeto

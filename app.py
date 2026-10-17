@@ -1,6 +1,7 @@
 """Homem grande serve paginas e API."""
 import csv
 import datetime
+import html
 import io
 import os
 import re
@@ -52,6 +53,7 @@ PAGES = [
     "consumo.html",
     "estoque_critico.html",
     "processos_aquisicao.html",
+    "planejamento_aquisicao.html",
     "painel_pedidos.html",
     "pagamentos.html",
     "atas_contratos.html",
@@ -74,6 +76,7 @@ PAGINAS_SISTEMA = [
     {"chave": "vencidos", "rotulo": "Produtos Vencidos"},
     {"chave": "estoque_critico", "rotulo": "Estoque Crítico"},
     {"chave": "processos_aquisicao", "rotulo": "Processos de Aquisição"},
+    {"chave": "planejamento_aquisicao", "rotulo": "Planejamento de Aquisição"},
     {"chave": "atas_contratos", "rotulo": "Atas e Contratos"},
     {"chave": "pagamentos", "rotulo": "Processos de Pagamento"},
     {"chave": "cadastro", "rotulo": "Cadastro"},
@@ -696,7 +699,8 @@ PERFIS_PADRAO = [
         "administrador": False,
         "paginas": [
             "estoque_critico", "atas_contratos", "dashboard", "distribuicao_pedidos", "estoque",
-            "pagamentos", "painel_pedidos", "pedidos", "processos_aquisicao", "produtos", "separacao_pedidos", "vencidos",
+            "pagamentos", "painel_pedidos", "pedidos", "planejamento_aquisicao", "processos_aquisicao", "produtos",
+            "separacao_pedidos", "vencidos",
         ],
     },
 ]
@@ -1681,11 +1685,12 @@ def _montar_cabecalho_pdf_consumo(args):
 LINHAS_POR_BLOCO_PDF = 40
 
 
-def _montar_pdf_relatorio(titulo, linhas_cabecalho, blocos):
+def _montar_pdf_relatorio(titulo, linhas_cabecalho, blocos, cards=None):
     # builder generico pra um pdf de 1+ tabelas (cabecalho de texto + N tabelas em paisagem, cada
     # uma com subtitulo opcional) - usado pelos relatorios de consumo e vencidos.
     # "blocos" eh uma lista de dicts: subtitulo (opcional), cabecalho_tabela, linhas_tabela,
-    # largura_colunas, linha_total (opcional)
+    # largura_colunas, linha_total (opcional). "cards": lista opcional de (rotulo, valor) - vira uma
+    # faixa de quadros logo abaixo do cabecalho, igual aos cards da tela
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -1710,6 +1715,30 @@ def _montar_pdf_relatorio(titulo, linhas_cabecalho, blocos):
     for linha in linhas_cabecalho:
         elementos.append(Paragraph(linha, estilos["Normal"]))
     elementos.append(Spacer(1, 12))
+
+    if cards:
+        estilo_card_valor = ParagraphStyle("cardValor", parent=estilos["Normal"], fontName="Helvetica-Bold",
+                                           fontSize=15, leading=19, alignment=1, textColor=colors.HexColor("#1c2b3a"))
+        estilo_card_rotulo = ParagraphStyle("cardRotulo", parent=estilos["Normal"], fontSize=8, leading=10,
+                                            alignment=1, textColor=colors.HexColor("#556677"))
+        largura_card = doc.width / len(cards)
+        tabela_cards = Table(
+            [[Paragraph(str(valor), estilo_card_valor) for _rotulo, valor in cards],
+             [Paragraph(rotulo, estilo_card_rotulo) for rotulo, _valor in cards]],
+            colWidths=[largura_card] * len(cards),
+        )
+        estilo_cards = [
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, 0), 10),
+            ("BOTTOMPADDING", (0, 1), (-1, 1), 10),
+        ]
+        # um quadro por card (borda em volta das duas linhas da coluna), com respiro entre eles
+        for coluna in range(len(cards)):
+            estilo_cards.append(("BOX", (coluna, 0), (coluna, 1), 0.8, colors.HexColor("#d7dde3")))
+            estilo_cards.append(("BACKGROUND", (coluna, 0), (coluna, 1), colors.HexColor("#f5f7f9")))
+        tabela_cards.setStyle(TableStyle(estilo_cards))
+        elementos.append(tabela_cards)
+        elementos.append(Spacer(1, 16))
 
     # cada pedaco (chunk de LINHAS_POR_BLOCO_PDF linhas) e cada novo bloco (ex.: "Produtos do
     # Hospital" depois de "Produtos do CD") comeca em pagina nova - sem isso, o fim de um pedaco
@@ -6045,6 +6074,237 @@ def api_remover_item_processo_manual(processohospitalmanualitem):
     except Exception as erro:
         return jsonify({"ok": False, "msg": str(erro)}), 500
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------------------------
+# planejamento de aquisicao (planejamento_aquisicao.html) - sugestao de compra pela media mensal
+# de consumo dos ultimos 6 meses. a lista nao eh gravada: vive na tela e sai por exportacao
+# ---------------------------------------------------------------------------------------------
+
+def _sql_planejamento_aquisicao(args, produtos=None):
+    # consumo = toda saida (saidacabecalho nao estornada, status <> 'E') dos armazens do usuario
+    # (ou do armazem escolhido), nos ultimos 6 meses ate hoje - data no futuro eh lixo de digitacao
+    # na base e fica de fora. produtos=None: so quem teve consumo no periodo (botao Gerar);
+    # lista de ids: esses produtos, mesmo sem consumo (botao Inserir itens)
+    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+    armazem = args.get("armazem")
+    filtro_saida, params_saida = _fragmento_filtro_armazem("sc.armazem", usuario_logado, armazem)
+    filtro_estoque, params_estoque = _fragmento_filtro_armazem("e2.armazem", usuario_logado, armazem)
+
+    condicoes = []
+    params = []
+    if produtos is None:
+        filtro_produto_consumo = ""
+        filtro_produto_estoque = "AND lt2.produto IN (SELECT produto FROM consumo)"
+        origem = "consumo c JOIN public.produto p ON p.produto = c.produto"
+        params_produto_consumo = []
+        params_produto_estoque = []
+        condicoes.append("c.consumo_6m > 0")
+    else:
+        filtro_produto_consumo = "AND lt.produto = ANY(%s)"
+        filtro_produto_estoque = "AND lt2.produto = ANY(%s)"
+        origem = "public.produto p LEFT JOIN consumo c ON c.produto = p.produto"
+        params_produto_consumo = [produtos]
+        params_produto_estoque = [produtos]
+        condicoes.append("p.produto = ANY(%s)")
+        params.append(produtos)
+
+    classe = args.get("classe")
+    subgrupo = args.get("subgrupo")
+    if classe:
+        condicoes.append("cl.descricao ILIKE %s")
+        params.append(f"%{classe}%")
+    if subgrupo:
+        condicoes.append("sg.descricao ILIKE %s")
+        params.append(f"%{subgrupo}%")
+
+    sql = f"""
+        WITH consumo AS (
+            SELECT lt.produto, SUM(si.quantidade) AS consumo_6m
+            FROM public.saidaitem si
+            JOIN public.saidacabecalho sc ON sc.saidacabecalho = si.saidacabecalho
+            JOIN public.estoque e ON e.estoque = si.estoque
+            JOIN public.lote lt ON lt.lote = e.lote
+            WHERE sc.status <> 'E'
+            AND sc.data >= CURRENT_DATE - INTERVAL '6 months'
+            AND sc.data < CURRENT_DATE + 1
+            {filtro_saida}
+            {filtro_produto_consumo}
+            GROUP BY lt.produto
+        ),
+        estoque_atual AS (
+            SELECT lt2.produto, SUM(e2.quantidade) AS total
+            FROM public.estoque e2
+            JOIN public.lote lt2 ON lt2.lote = e2.lote
+            WHERE 1=1 {filtro_estoque} {filtro_produto_estoque}
+            GROUP BY lt2.produto
+        )
+        SELECT
+            p.produto AS cod_produto,
+            p.codigoreferencia AS cod_seplag,
+            p.codigo AS cod_almox,
+            p.nome AS nome_produto,
+            p.descricao AS descricao_produto,
+            cl.descricao AS classe,
+            sg.descricao AS sub_grupo,
+            up.sigla AS apresentacao,
+            COALESCE(c.consumo_6m, 0) AS consumo_6m,
+            ROUND(COALESCE(c.consumo_6m, 0) / 6, 2) AS media_mensal,
+            COALESCE(ea.total, 0) AS total_estoque,
+            COALESCE(et.customedio, 0) AS valor_unitario
+        FROM {origem}
+        LEFT JOIN estoque_atual ea ON ea.produto = p.produto
+        LEFT JOIN public.classe cl ON cl.classe = p.classe
+        LEFT JOIN public.subgrupo sg ON sg.subgrupo = cl.subgrupo
+        LEFT JOIN public.unidadeproduto up ON up.unidadeproduto = p.unidadeproduto
+        LEFT JOIN public.estoquetotal et ON et.produto = p.produto
+        WHERE {' AND '.join(condicoes)}
+        ORDER BY p.nome
+    """
+    return sql, params_saida + params_produto_consumo + params_estoque + params_produto_estoque + params
+
+
+@app.route("/api/planejamento_aquisicao")
+def api_planejamento_aquisicao():
+    # botao Gerar - sem classe/subgrupo/armazem = todo produto com consumo nos armazens do usuario
+    sql, params = _sql_planejamento_aquisicao(request.args)
+    return _consulta_generica(sql, params)
+
+
+@app.route("/api/planejamento_aquisicao/produtos")
+def api_planejamento_aquisicao_produtos():
+    # botao Inserir itens - busca por cod. seplag, cod. produto ou nome e devolve no mesmo formato
+    # da lista gerada (consumo/estoque calculados pro mesmo escopo de armazem)
+    termo = (request.args.get("termo") or "").strip()
+    if not termo:
+        return jsonify([])
+    try:
+        candidatos = run_query("""
+            SELECT produto FROM public.produto
+            WHERE codigoreferencia ILIKE %s OR produto::text = %s OR nome ILIKE %s
+            ORDER BY (TRIM(codigoreferencia) = %s) DESC, nome
+            LIMIT 20
+        """, [f"%{termo}%", termo, f"%{termo}%", termo])
+        if not candidatos:
+            return jsonify([])
+        sql, params = _sql_planejamento_aquisicao(request.args, [int(linha["produto"]) for linha in candidatos])
+        return jsonify(run_query(sql, params))
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+
+
+def _gerar_pdf_planejamento_aquisicao(itens, filtros):
+    # mesma lista da tela (com as quantidades ajustadas) + os 4 cards. sem a descricao longa do
+    # produto pra caber as colunas de valor numa pagina paisagem (mesmo corte do pdf de vencidos)
+    linhas_tabela = []
+    total_quantidade = total_mensal = 0.0
+    for item in itens:
+        quantidade = float(item.get("quantidade") or 0)
+        valor_unitario = float(item.get("valor_unitario") or 0)
+        total_quantidade += quantidade
+        total_mensal += quantidade * valor_unitario
+        # texto do produto vai pra Paragraph do reportlab, que le marcacao - "&"/"<" no nome quebraria
+        texto = lambda campo: html.escape(str(item.get(campo) or ""))
+        linhas_tabela.append([
+            texto("cod_seplag"),
+            texto("nome_produto"),
+            texto("classe"),
+            texto("sub_grupo"),
+            texto("apresentacao"),
+            _formatar_quantidade_pdf(item.get("consumo_6m")),
+            _formatar_quantidade_pdf(item.get("media_mensal")),
+            _formatar_quantidade_pdf(item.get("total_estoque")),
+            _formatar_quantidade_pdf(quantidade),
+            _formatar_moeda_pdf(valor_unitario),
+            _formatar_moeda_pdf(quantidade * valor_unitario),
+            _formatar_quantidade_pdf(quantidade * 12),
+            _formatar_moeda_pdf(quantidade * 12 * valor_unitario),
+        ])
+
+    rotulos_filtro = [("classe", "Classe"), ("subgrupo", "Subgrupo"), ("armazem", "Armazém")]
+    descricao_filtros = [f"{rotulo}: {html.escape(str(filtros[chave]))}" for chave, rotulo in rotulos_filtro if filtros.get(chave)]
+    linhas_cabecalho = [
+        f"<b>Gerado em:</b> {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
+        f"<b>Filtros aplicados:</b> {' · '.join(descricao_filtros) if descricao_filtros else 'Nenhum (todos os itens dos armazéns do usuário)'}",
+        "<b>Qtde. Sugerida:</b> média mensal de consumo dos últimos 6 meses (ajustável na tela) · Anual = 12 × mensal",
+    ]
+    cards = [
+        ("Número de Itens", f"{len(itens):,}".replace(",", ".")),
+        ("Quantidade Total", _formatar_quantidade_pdf(total_quantidade)),
+        ("Valor Total Mensal", _formatar_moeda_pdf(total_mensal)),
+        ("Valor Total Anual", _formatar_moeda_pdf(total_mensal * 12)),
+    ]
+    return _montar_pdf_relatorio(
+        "Planejamento de Aquisição",
+        linhas_cabecalho,
+        [{
+            "cabecalho_tabela": [
+                "Cód. Seplag", "Nome do Produto", "Classe", "Sub Grupo", "Apres.", "Consumo 6 Meses",
+                "Média Mensal", "Estoque Atual", "Qtde. Sugerida", "Valor Unitário", "Valor Mensal",
+                "Qtde. Anual", "Valor Anual",
+            ],
+            "linhas_tabela": linhas_tabela,
+            "largura_colunas": [1.6 * cm, 4.2 * cm, 2.2 * cm, 2.1 * cm, 1.3 * cm, 1.8 * cm, 1.8 * cm, 1.8 * cm,
+                                1.8 * cm, 1.9 * cm, 2.3 * cm, 1.9 * cm, 2.5 * cm],
+            "linha_total": ["Total Geral", "", "", "", "", "", "", "", _formatar_quantidade_pdf(total_quantidade), "",
+                            _formatar_moeda_pdf(total_mensal), _formatar_quantidade_pdf(total_quantidade * 12),
+                            _formatar_moeda_pdf(total_mensal * 12)],
+        }],
+        cards=cards,
+    )
+
+
+@app.route("/api/planejamento_aquisicao/exportar", methods=["POST"])
+def api_planejamento_aquisicao_exportar():
+    # lista vem da tela (com as quantidades que o usuario ajustou e os itens que inseriu) - o
+    # servidor so monta o arquivo
+    dados = request.get_json(force=True)
+    formato = dados.get("formato")
+    itens = dados.get("itens") or []
+    cabecalho = [
+        "Cód. Seplag", "Nome do Produto", "Descrição", "Classe", "Sub Grupo",
+        "Apresentação", "Consumo 6 Meses", "Média Mensal", "Estoque Atual", "Qtde. Sugerida",
+        "Valor Unitário", "Valor Mensal", "Qtde. Anual", "Valor Anual",
+    ]
+    linhas = []
+    for item in itens:
+        try:
+            quantidade = float(item.get("quantidade") or 0)
+            valor_unitario = float(item.get("valor_unitario") or 0)
+        except (TypeError, ValueError):
+            return jsonify({"erro": "Quantidade inválida"}), 400
+        # qtde. sugerida eh mensal - anual = 12x (mesma conta da tela)
+        linhas.append([
+            item.get("cod_seplag") or "",
+            item.get("nome_produto") or "", item.get("descricao_produto") or "", item.get("classe") or "",
+            item.get("sub_grupo") or "", item.get("apresentacao") or "",
+            _formatar_quantidade_pdf(item.get("consumo_6m")), _formatar_quantidade_pdf(item.get("media_mensal")),
+            _formatar_quantidade_pdf(item.get("total_estoque")), _formatar_quantidade_pdf(quantidade),
+            _formatar_moeda_pdf(valor_unitario), _formatar_moeda_pdf(quantidade * valor_unitario),
+            _formatar_quantidade_pdf(quantidade * 12), _formatar_moeda_pdf(quantidade * 12 * valor_unitario),
+        ])
+
+    if formato == "pdf":
+        if not REPORTLAB_DISPONIVEL:
+            return jsonify({"erro": "Geração de PDF indisponível: biblioteca reportlab não instalada no servidor."}), 500
+        return Response(
+            _gerar_pdf_planejamento_aquisicao(itens, dados.get("filtros") or {}),
+            mimetype="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=planejamento_aquisicao.pdf"},
+        )
+    if formato == "xlsx":
+        if not OPENPYXL_DISPONIVEL:
+            return jsonify({"erro": "Geração de planilha indisponível: biblioteca openpyxl não instalada no servidor."}), 500
+        return Response(
+            _escrever_xlsx(cabecalho, linhas),
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=planejamento_aquisicao.xlsx"},
+        )
+    return Response(
+        _escrever_csv(cabecalho, linhas).encode("utf-8"),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=planejamento_aquisicao.csv"},
+    )
 
 
 if __name__ == "__main__":
