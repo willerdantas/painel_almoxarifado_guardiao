@@ -40,12 +40,18 @@ pages/                    # todas as telas html
   distribuicao_pedidos.html
   vencidos.html
   estoque.html
-  aquisicoes.html
+  estoque_critico.html
+  processos_aquisicao.html
   atas_contratos.html
   pagamentos.html
 static/css/style.css      # css único do projeto
 static/js/sidebar.js      # menu lateral + helpers compartilhados (data, select, registro de separação)
 static/js/tabela.js       # renderiza tabela genérica vinda da api
 ```
+
+**Banco fora do ar:** se o sistema não conseguir conectar no Postgres, o login aceita só o
+usuário de teste (`teste` / `teste`, ou o que estiver nas variáveis de ambiente `USUARIO_TESTE` /
+`SENHA_TESTE`), que entra direto na tela Configuração do Banco pra ajustar a conexão. Com o banco
+conectando, esse usuário deixa de funcionar e o login volta ao normal.
 
 Login usa `localStorage` pra guardar o usuário logado (troque por sessão/JWT se precisar de mais segurança).

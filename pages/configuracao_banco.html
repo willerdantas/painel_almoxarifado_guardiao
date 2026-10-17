@@ -150,6 +150,15 @@
             </tbody>
           </table>`;
 
+        // banco fora do ar (ex.: login com usuario de teste) - mostra o erro e deixa so editar/testar
+        if (dado.erro_conexao) {
+          areaConexao.innerHTML += `<p class="erro-login">⚠️ Sem conexão: ${dado.erro_conexao}</p>`;
+          areaSchema.innerHTML = `<p class="msg-vazio">Corrija a conexão para verificar o schema.</p>`;
+          botaoCriar.classList.add("oculto");
+          document.getElementById("secaoAdminInicial").classList.add("oculto");
+          return;
+        }
+
         const linhasTabelas = dado.tabelas
           .map(
             (tabela) => `

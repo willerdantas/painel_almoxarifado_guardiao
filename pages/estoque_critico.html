@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>INSYSTEM | Aquisições</title>
+  <title>INSYSTEM | Estoque Crítico</title>
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
 
     <main class="conteudo">
       <div class="topo-pagina">
-        <h1>Aquisições</h1>
+        <h1>Estoque Crítico</h1>
         <div class="topo-direita">
           <div class="area-usuario">
             <span class="usuario-logado" id="usuarioLogado"></span>
@@ -122,7 +122,7 @@
   <script>
     // caverna so abre pra quem tem crachá
     protegerPagina();
-    iniciarMenu("aquisicoes");
+    iniciarMenu("estoque_critico");
 
     function montarQueryFiltros() {
       const params = new URLSearchParams();
@@ -155,10 +155,10 @@
     // dropdown de armazem so com quem de fato tem produto insuficiente na lista (nao a lista
     // cheia de armazens tipo C) - se o usuario logado cair num unico armazem dessa lista (via
     // armazemfunc), filtra por ele automaticamente em vez de comecar em "Todos"
-    async function iniciarFiltroArmazemAquisicoes() {
+    async function iniciarFiltroArmazemEstoqueCritico() {
       try {
         const query = identificacaoLogada() ? `?usuario_logado=${encodeURIComponent(identificacaoLogada())}` : "";
-        const resp = await fetch(`/api/aquisicoes_armazens${query}`);
+        const resp = await fetch(`/api/estoque_critico_armazens${query}`);
         const armazens = await resp.json();
         const select = document.getElementById("filtroArmazem");
 
@@ -652,7 +652,7 @@
       container.innerHTML = '<p class="msg-vazio">Carregando dado, aguenta ai...</p>';
 
       try {
-        const resp = await fetch(`/api/aquisicoes?${params.toString()}`);
+        const resp = await fetch(`/api/estoque_critico?${params.toString()}`);
         const resultado = await resp.json();
         const total = resultado.total ?? 0;
 
@@ -905,7 +905,7 @@
       }
     });
 
-    iniciarFiltroArmazemAquisicoes();
+    iniciarFiltroArmazemEstoqueCritico();
   </script>
 </body>
 </html>

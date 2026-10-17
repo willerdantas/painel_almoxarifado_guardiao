@@ -41,6 +41,9 @@
       localStorage.setItem("identificacao", dado.identificacao);
       localStorage.setItem("administrador", dado.administrador ? "true" : "false");
       if (Array.isArray(dado.paginas)) localStorage.setItem("paginas", JSON.stringify(dado.paginas));
+      // usuario de teste (banco fora do ar) so enxerga a Configuração do Banco
+      if (dado.modo_configuracao) localStorage.setItem("modo_configuracao", "true");
+      else localStorage.removeItem("modo_configuracao");
       // tela padrao escolhida em cadastro.html (secao Usuários) - cai no dashboard se o usuario
       // nao tiver uma configurada
       const telaPadrao = dado.tela_padrao || "dashboard";
