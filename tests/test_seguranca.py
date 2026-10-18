@@ -155,6 +155,38 @@ class TestLimites(BaseTeste):
         self.assertEqual(resposta.status_code, 413)
 
 
+class TestPagamentos(BaseTeste):
+    def setUp(self):
+        super().setUp()
+        for patch in (mock.patch.object(modulo, "_garantir_tabelas_pagamento"),
+                      mock.patch.object(modulo, "_destaque_existe", return_value=True)):
+            patch.start()
+            self.patches.append(patch)
+        self.logar()
+
+    def test_prioridade_fora_de_1_a_3_recusada(self):
+        with mock.patch.object(modulo, "run_query") as consulta:
+            resposta = self.cliente.put("/api/pagamentos/10", json={"prioridade": "4"})
+        self.assertEqual(resposta.status_code, 400)
+        consulta.assert_not_called()
+
+    def test_data_de_envio_invalida_recusada(self):
+        with mock.patch.object(modulo, "run_query"):
+            resposta = self.cliente.put("/api/pagamentos/10", json={"data_envio_empenho": "31/02/2026"})
+        self.assertEqual(resposta.status_code, 400)
+
+    def test_pago_exige_numero_de_empenho(self):
+        with mock.patch.object(modulo, "run_query", return_value=[{"numero_empenho": None}]):
+            resposta = self.cliente.post("/api/pagamentos/10/situacao", json={"acao": "pago"})
+        self.assertEqual(resposta.status_code, 400)
+
+    def test_edicao_grava_usuario_da_sessao(self):
+        with mock.patch.object(modulo, "run_query", return_value=[]) as consulta:
+            resposta = self.cliente.put("/api/pagamentos/10", json={"numero_empenho": "NE1", "prioridade": "2"})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(consulta.call_args[0][1][-1], "joao")
+
+
 @unittest.skipUnless(modulo.OPENPYXL_DISPONIVEL, "openpyxl nao instalado")
 class TestPlanilhaSesa(unittest.TestCase):
     def _planilha(self):

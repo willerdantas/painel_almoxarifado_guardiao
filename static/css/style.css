@@ -1853,3 +1853,114 @@ body.pagina-dashboard .duas-tabelas table.tabela-dados td {
   font-size: 11px;
   color: #889;
 }
+
+/* situacao do processo de pagamento (pagamentos.html) */
+.tag-situacao {
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: var(--branco);
+}
+
+.tag-situacao-a_empenhar {
+  background: var(--laranja);
+}
+
+.tag-situacao-empenhado {
+  background: var(--azul-claro);
+}
+
+.tag-situacao-pago {
+  background: #2e7d4f;
+}
+
+.tag-situacao-cancelado {
+  background: #8a8f96;
+}
+
+/* texto explicativo acima das secoes de Processos de Pagamento */
+.ajuda-pagamentos {
+  margin: 0 0 12px;
+}
+
+/* Processos de Pagamento: larguras minimas das colunas de texto longo (a tabela larga espremia
+   as duas pra ~96px) */
+table.tabela-dados td.celula-fornecedor {
+  min-width: 250px;
+}
+
+table.tabela-dados td.celula-paciente {
+  min-width: 150px;
+}
+
+/* Processos de Pagamento: cada nº de ordem de compra (pedidodestaque) numa linha propria */
+.ordem-compra {
+  display: block;
+  white-space: nowrap;
+}
+
+/* prioridade do processo de pagamento (pagamentos.html) - mesmo formato da tag de situacao */
+.tag-prioridade {
+  display: inline-flex;
+  justify-content: center;
+  min-width: 22px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.tag-prioridade-1 {
+  background: var(--vermelho);
+  color: var(--branco);
+}
+
+.tag-prioridade-2 {
+  background: #fff3b0;
+  color: #000;
+}
+
+.tag-prioridade-3 {
+  background: #2e7d4f;
+  color: var(--branco);
+}
+
+/* area vinculada do processo de pagamento (pagamentos.html) - mesmo formato da prioridade */
+.tag-area {
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: var(--cinza-claro);
+  color: var(--azul-escuro);
+}
+
+.tag-area-hemodinamica {
+  background: #d6e9fb;
+  color: #0b3d6e;
+}
+
+.tag-area-marcapasso {
+  background: #9ca3ab;
+  color: #000;
+}
+
+.tag-area-assistencia-geral {
+  background: #d7f2dd;
+  color: #1b5e2e;
+}
+
+.tag-area-centro-cirurgico {
+  background: #fbdede;
+  color: #8b1a12;
+}
+
+.tag-area-estomaterapia {
+  background: #fff3b0;
+  color: #000;
+}

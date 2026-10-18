@@ -22,21 +22,696 @@
         </div>
       </div>
 
-      <div class="cartao">
-        <div id="areaTabela">
-          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+      <section class="cartao filtros">
+        <form id="formFiltros" class="grade-filtros">
+          <div class="campo-filtro campo-curto">
+            <label for="filtroDataInicio">Destaque de</label>
+            <input type="date" id="filtroDataInicio" />
+          </div>
+          <div class="campo-filtro campo-curto">
+            <label for="filtroDataFim">Destaque até</label>
+            <input type="date" id="filtroDataFim" />
+          </div>
+          <div class="campo-filtro campo-largo">
+            <label for="filtroFornecedor">Fornecedor</label>
+            <input type="text" id="filtroFornecedor" placeholder="Ex.: Distribuidora" />
+          </div>
+          <div class="campo-filtro campo-curto">
+            <label for="filtroContrato">Nº Contrato/Ata</label>
+            <input type="text" id="filtroContrato" placeholder="Ex.: 562026" />
+          </div>
+          <div class="campo-filtro campo-curto">
+            <label for="filtroOrdemCompra">Nº Ordem de Compra</label>
+            <input type="text" id="filtroOrdemCompra" placeholder="Ex.: 51913821" />
+          </div>
+          <div class="campo-filtro campo-curto">
+            <label for="filtroProcesso">Nº Processo</label>
+            <input type="text" id="filtroProcesso" />
+          </div>
+          <div class="campo-filtro campo-curto">
+            <label for="filtroEmpenho">Nº Empenho</label>
+            <input type="text" id="filtroEmpenho" />
+          </div>
+          <div class="campo-filtro campo-curto">
+            <label for="filtroProntuario">Nº Prontuário</label>
+            <input type="text" id="filtroProntuario" placeholder="Ex.: 280060" />
+          </div>
+          <div class="campo-filtro campo-largo">
+            <label for="filtroPaciente">Paciente</label>
+            <input type="text" id="filtroPaciente" placeholder="Nome do paciente" />
+          </div>
+          <div class="campo-filtro campo-curto">
+            <label for="filtroTipo">Tipo de Aquisição</label>
+            <select id="filtroTipo"><option value="">Todos</option></select>
+          </div>
+          <div class="campo-filtro campo-curto">
+            <label for="filtroArea">Área Vinculada</label>
+            <select id="filtroArea"><option value="">Todas</option></select>
+          </div>
+          <div class="campo-filtro campo-curto">
+            <label for="filtroPrioridade">Prioridade</label>
+            <select id="filtroPrioridade">
+              <option value="">Todas</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+            </select>
+          </div>
+          <div class="campo-filtro campo-acao">
+            <div class="grupo-botoes-filtro">
+              <button type="submit" class="botao-filtrar">Filtrar</button>
+              <button type="button" class="botao-resetar" id="botaoResetarFiltros">Resetar</button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <div class="linha-cards-painel">
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="cardAEmpenhar">0</span>
+          <span class="contagem-rotulo">Aguardando Empenho</span>
+        </div>
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="cardEmpenhados">0</span>
+          <span class="contagem-rotulo">Empenhados</span>
+        </div>
+        <div class="cartao card-painel">
+          <span class="contagem-numero" id="cardFinalizados">0</span>
+          <span class="contagem-rotulo">Finalizados (pagos)</span>
         </div>
       </div>
+
+      <p class="msg-ajuda-importacao ajuda-pagamentos">
+        Um processo por ordem de compra (pedidodestaque) do Guardião, a partir de 01/01/2026 (clique na ordem para ver o item).
+        Fica em <strong>A Empenhar</strong> até ter nº de empenho, passa pra <strong>Empenhado</strong> quando tem,
+        e vai pra <strong>Pago</strong> ou <strong>Cancelado</strong> pelos botões.
+      </p>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>A Empenhar</h2>
+          <span class="contador-secao" id="contador-a_empenhar">0</span>
+          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim botao-relatorio" data-situacao="a_empenhar" data-formato="pdf">PDF</button>
+          <button type="button" class="botao-resetar botao-relatorio" data-situacao="a_empenhar" data-formato="csv">CSV</button>
+          <button type="button" class="botao-resetar botao-relatorio" data-situacao="a_empenhar" data-formato="xlsx">Planilha</button>
+        </div>
+        <div id="area-a_empenhar"><p class="msg-vazio">Carregando dado, aguenta ai...</p></div>
+        <div class="paginacao" id="paginacao-a_empenhar"></div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Empenhado</h2>
+          <span class="contador-secao" id="contador-empenhado">0</span>
+          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim botao-relatorio" data-situacao="empenhado" data-formato="pdf">PDF</button>
+          <button type="button" class="botao-resetar botao-relatorio" data-situacao="empenhado" data-formato="csv">CSV</button>
+          <button type="button" class="botao-resetar botao-relatorio" data-situacao="empenhado" data-formato="xlsx">Planilha</button>
+        </div>
+        <div id="area-empenhado"><p class="msg-vazio">Carregando dado, aguenta ai...</p></div>
+        <div class="paginacao" id="paginacao-empenhado"></div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Pago</h2>
+          <span class="contador-secao" id="contador-pago">0</span>
+          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim botao-relatorio" data-situacao="pago" data-formato="pdf">PDF</button>
+          <button type="button" class="botao-resetar botao-relatorio" data-situacao="pago" data-formato="csv">CSV</button>
+          <button type="button" class="botao-resetar botao-relatorio" data-situacao="pago" data-formato="xlsx">Planilha</button>
+        </div>
+        <div id="area-pago"><p class="msg-vazio">Carregando dado, aguenta ai...</p></div>
+        <div class="paginacao" id="paginacao-pago"></div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Cancelado</h2>
+          <span class="contador-secao" id="contador-cancelado">0</span>
+          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim botao-relatorio" data-situacao="cancelado" data-formato="pdf">PDF</button>
+          <button type="button" class="botao-resetar botao-relatorio" data-situacao="cancelado" data-formato="csv">CSV</button>
+          <button type="button" class="botao-resetar botao-relatorio" data-situacao="cancelado" data-formato="xlsx">Planilha</button>
+        </div>
+        <div id="area-cancelado"><p class="msg-vazio">Carregando dado, aguenta ai...</p></div>
+        <div class="paginacao" id="paginacao-cancelado"></div>
+      </section>
     </main>
   </div>
 
   <script src="/static/js/sidebar.js"></script>
-  <script src="/static/js/tabela.js"></script>
   <script>
     // caverna so abre pra quem tem crachá
     protegerPagina();
     iniciarMenu("pagamentos");
-    carregarTabela("/api/pagamentos", "areaTabela");
+
+    const NOMES_SITUACAO = { a_empenhar: "A empenhar", empenhado: "Empenhado", pago: "Pago", cancelado: "Cancelado" };
+    // uma secao por situacao, cada uma com a propria paginacao
+    const SECOES = ["a_empenhar", "empenhado", "pago", "cancelado"];
+    const paginaAtual = { a_empenhar: 1, empenhado: 1, pago: 1, cancelado: 1 };
+    let opcoes = { tipos: [], areas: [] };
+    // linhas exibidas, pela ordem de compra (pedidodestaque) - pra abrir itens/edicao/utilizacao. a
+    // mesma ordem so existe numa situacao, entao a chave nao repete entre secoes
+    const processosPorChave = {};
+
+    function montarQueryFiltros() {
+      const params = new URLSearchParams();
+      const campos = {
+        data_inicio: "filtroDataInicio",
+        data_fim: "filtroDataFim",
+        fornecedor: "filtroFornecedor",
+        numero_contrato: "filtroContrato",
+        ordem_compra: "filtroOrdemCompra",
+        numero_processo: "filtroProcesso",
+        numero_empenho: "filtroEmpenho",
+        prontuario: "filtroProntuario",
+        paciente: "filtroPaciente",
+        tipoaquisicaopagamento: "filtroTipo",
+        areavinculada: "filtroArea",
+        prioridade: "filtroPrioridade",
+      };
+      Object.entries(campos).forEach(([parametro, id]) => {
+        const valor = document.getElementById(id).value.trim();
+        if (valor) params.set(parametro, valor);
+      });
+      return params;
+    }
+
+    function opcoesSelect(lista, selecionado, rotuloVazio) {
+      return `<option value="">${rotuloVazio}</option>` + lista
+        .map((item) => `<option value="${item.id}" ${String(item.id) === String(selecionado ?? "") ? "selected" : ""}>${escaparHtml(item.nome)}</option>`)
+        .join("");
+    }
+
+    async function carregarOpcoes() {
+      try {
+        const resp = await fetch("/api/pagamentos/opcoes");
+        const dado = await resp.json();
+        if (dado.erro) throw new Error(dado.erro);
+        opcoes = dado;
+        document.getElementById("filtroTipo").innerHTML = opcoesSelect(opcoes.tipos, "", "Todos");
+        document.getElementById("filtroArea").innerHTML = opcoesSelect(opcoes.areas, "", "Todas");
+      } catch (e) {
+        // sem as listas os filtros ficam so com "Todos"
+      }
+    }
+
+    // paginador compacto: anterior, um punhado de numeros perto da atual, proxima
+    function renderizarPaginacao(situacao, total, pagina, tamanhoPagina) {
+      const area = document.getElementById(`paginacao-${situacao}`);
+      const totalPaginas = Math.max(Math.ceil(total / tamanhoPagina), 1);
+      if (totalPaginas <= 1) {
+        area.innerHTML = "";
+        return;
+      }
+      const inicio = Math.max(pagina - 2, 1);
+      const fim = Math.min(inicio + 4, totalPaginas);
+      let botoes = `<button type="button" class="botao-pagina" data-pagina="${pagina - 1}" ${pagina <= 1 ? "disabled" : ""}>‹ Anterior</button>`;
+      for (let n = inicio; n <= fim; n++) {
+        botoes += `<button type="button" class="botao-pagina ${n === pagina ? "ativo" : ""}" data-pagina="${n}">${n}</button>`;
+      }
+      botoes += `<button type="button" class="botao-pagina" data-pagina="${pagina + 1}" ${pagina >= totalPaginas ? "disabled" : ""}>Próxima ›</button>`;
+      area.innerHTML = botoes;
+      area.querySelectorAll(".botao-pagina").forEach((botao) => {
+        botao.addEventListener("click", () => buscarProcessos(situacao, Number(botao.dataset.pagina)));
+      });
+    }
+
+    // area vinculada com cor propria, pelo nome (sem acento/maiuscula): "Centro Cirúrgico" ->
+    // tag-area-centro-cirurgico. area nova cadastrada sem cor definida cai no cinza padrao
+    function tagArea(nome) {
+      if (!nome) return "";
+      const classe = String(nome).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/\s+/g, "-");
+      return `<span class="tag-area tag-area-${escaparHtml(classe)}">${escaparHtml(nome)}</span>`;
+    }
+
+    function botoesAcao(processo) {
+      const encerrado = processo.situacao === "pago" || processo.situacao === "cancelado";
+      const utilizacao = `<button type="button" class="botao-acao-produto botao-utilizacao">Utilização</button>`;
+      if (encerrado) {
+        return `${utilizacao}<button type="button" class="botao-acao-produto botao-reabrir">Reabrir</button>`;
+      }
+      return `
+        <button type="button" class="botao-acao-produto botao-editar">Editar</button>
+        ${utilizacao}
+        <button type="button" class="botao-acao-produto botao-pago" ${processo.numero_empenho ? "" : 'disabled title="Preencha o nº de empenho antes"'}>Pago</button>
+        <button type="button" class="botao-acao-produto botao-cancelar">Cancelar</button>`;
+    }
+
+    function renderizarProcessos(situacao, dados) {
+      const container = document.getElementById(`area-${situacao}`);
+      if (!Array.isArray(dados) || dados.length === 0) {
+        container.innerHTML = '<p class="msg-vazio">Nenhum processo nesta situação.</p>';
+        return;
+      }
+
+      const linhas = dados
+        .map((p) => {
+          const chave = String(p.pedidodestaque);
+          processosPorChave[chave] = p;
+          const atualizado = p.atualizado_em_br
+            ? `${escaparHtml(p.atualizado_em_br)}${p.atualizado_por ? `<span class="numero-original">${escaparHtml(p.atualizado_por)}</span>` : ""}`
+            : "";
+          return `
+        <tr class="linha-produto linha-pagamento" data-chave="${escaparHtml(chave)}" title="Clique para ver os itens">
+          <td>${escaparHtml(p.data_destaque_br)}</td>
+          <td>${escaparHtml(p.pedidodestaque)}</td>
+          <td>${escaparHtml(p.tipo_contrato)}</td>
+          <td>${escaparHtml(p.contrato_original)}</td>
+          <td>${escaparHtml(p.data_fim_br)}</td>
+          <td>${escaparHtml(p.prazo)}</td>
+          <td>${escaparHtml(p.tipo_aquisicao)}</td>
+          <td>${tagArea(p.area_vinculada)}</td>
+          <td class="celula-quebra celula-fornecedor">${escaparHtml(p.fornecedor)}</td>
+          <td>${escaparHtml(p.num_prontuario)}</td>
+          <td class="celula-quebra celula-paciente">${escaparHtml(p.paciente)}</td>
+          <td>${escaparHtml(p.data_utilizacao_br)}</td>
+          <td>${escaparHtml(p.isn_internacao)}</td>
+          <td>${escaparHtml(p.numero_processo)}</td>
+          <td>${p.prioridade ? `<span class="tag-prioridade tag-prioridade-${escaparHtml(p.prioridade)}">${escaparHtml(p.prioridade)}</span>` : ""}</td>
+          <td>${formatarMoeda(p.valor_total)}</td>
+          <td>${escaparHtml(p.numero_empenho)}</td>
+          <td>${escaparHtml(p.data_envio_empenho_br)}</td>
+          <td><span class="tag-situacao tag-situacao-${escaparHtml(p.situacao)}">${escaparHtml(NOMES_SITUACAO[p.situacao] || p.situacao)}</span></td>
+          <td>${atualizado}</td>
+          <td><div class="grupo-botoes-linha">${botoesAcao(p)}</div></td>
+        </tr>`;
+        })
+        .join("");
+
+      container.innerHTML = `
+        <div class="tabela-rolagem-horizontal">
+          <table class="tabela-dados">
+            <thead>
+              <tr>
+                <th>Data Destaque</th>
+                <th>Nº Ordem de Compra</th>
+                <th>Tipo (Contrato)</th>
+                <th>Nº Contrato Original</th>
+                <th>Data Fim</th>
+                <th>Prazo</th>
+                <th>Tipo de Aquisição</th>
+                <th>Área Vinculada</th>
+                <th>Fornecedor</th>
+                <th>Nº Prontuário</th>
+                <th>Paciente</th>
+                <th>Data Utilização</th>
+                <th>Nº Internação</th>
+                <th>Nº Processo</th>
+                <th>Prioridade</th>
+                <th>Valor Total</th>
+                <th>Nº Empenho</th>
+                <th>Envio do Empenho</th>
+                <th>Situação</th>
+                <th>Atualizado em</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+
+      container.querySelectorAll("tr.linha-pagamento").forEach((linha) => {
+        const processo = processosPorChave[linha.dataset.chave];
+        // clique na linha abre os itens; clique nos botoes nao
+        linha.addEventListener("click", (ev) => {
+          if (!ev.target.closest("button")) alternarItens(linha, processo);
+        });
+        linha.querySelector(".botao-editar")?.addEventListener("click", () => alternarEdicao(linha, processo));
+        linha.querySelector(".botao-utilizacao")?.addEventListener("click", () => alternarUtilizacao(linha, processo));
+        linha.querySelector(".botao-pago")?.addEventListener("click", () => mudarSituacao(processo, "pago"));
+        linha.querySelector(".botao-cancelar")?.addEventListener("click", () => mudarSituacao(processo, "cancelado"));
+        linha.querySelector(".botao-reabrir")?.addEventListener("click", () => mudarSituacao(processo, "reabrir"));
+      });
+    }
+
+    // ---- item da ordem de compra (produto destacado + item do contrato) ----
+    async function alternarItens(linha, processo) {
+      const aberta = linha.nextElementSibling?.classList.contains("linha-itens-pagamento");
+      fecharEdicoes();
+      if (aberta) return;
+      linha.classList.add("linha-produto-ativa");
+
+      const colunas = linha.children.length;
+      const tr = document.createElement("tr");
+      tr.className = "linha-itens-pagamento linha-detalhe-itens";
+      tr.innerHTML = `<td colspan="${colunas}"><p class="msg-vazio">Carregando itens...</p></td>`;
+      linha.after(tr);
+      try {
+        const resp = await fetch(`/api/pagamentos/${encodeURIComponent(processo.pedidodestaque)}/itens`);
+        const itens = await resp.json();
+        if (itens.erro) throw new Error(itens.erro);
+        const linhas = itens.map((i) => `
+          <tr>
+            <td>${escaparHtml(i.pedidodestaque)}</td>
+            <td>${escaparHtml(i.numero_item)}</td>
+            <td>${escaparHtml(i.cod_seplag)}</td>
+            <td class="celula-quebra">${escaparHtml(i.nome_produto)}</td>
+            <td>${escaparHtml(i.apresentacao)}</td>
+            <td>${formatarQuantidade(i.quantidade_destaque)}</td>
+            <td>${formatarMoeda(i.valor_unitario)}</td>
+            <td>${formatarMoeda(i.valor_total)}</td>
+            <td>${formatarQuantidade(i.quantidade_contratada)}</td>
+            <td>${formatarQuantidade(i.quantidade_entregue)}</td>
+            <td>${formatarQuantidade(i.saldo_contrato)}</td>
+          </tr>`).join("");
+        tr.innerHTML = `
+          <td colspan="${colunas}">
+            <table class="tabela-lotes">
+              <thead>
+                <tr>
+                  <th>Nº Ordem de Compra</th>
+                  <th>Item</th>
+                  <th>Cód. Seplag</th>
+                  <th>Produto</th>
+                  <th>Apres.</th>
+                  <th>Qtde. Destacada</th>
+                  <th>Valor Unitário</th>
+                  <th>Valor Total</th>
+                  <th>Qtde. Contratada</th>
+                  <th>Qtde. Entregue</th>
+                  <th>Saldo no Contrato</th>
+                </tr>
+              </thead>
+              <tbody>${linhas || '<tr><td colspan="11">Nenhum item encontrado.</td></tr>'}</tbody>
+            </table>
+          </td>`;
+      } catch (erro) {
+        tr.innerHTML = `<td colspan="${colunas}"><p class="msg-vazio">Erro ao carregar itens: ${escaparHtml(String(erro))}</p></td>`;
+      }
+    }
+
+    // ---- edicao (linha logo abaixo do processo) ----
+    // fecha qualquer detalhe aberto (itens ou edicao) - um por vez
+    function fecharEdicoes() {
+      document.querySelectorAll(".linha-edicao-pagamento, .linha-itens-pagamento, .linha-utilizacao-pagamento").forEach((el) => el.remove());
+      document.querySelectorAll(".linha-produto-ativa").forEach((el) => el.classList.remove("linha-produto-ativa"));
+    }
+
+    function alternarEdicao(linha, processo) {
+      const aberta = linha.nextElementSibling?.classList.contains("linha-edicao-pagamento");
+      fecharEdicoes();
+      if (aberta) return;
+      linha.classList.add("linha-produto-ativa");
+
+      const tr = document.createElement("tr");
+      tr.className = "linha-edicao-pagamento";
+      tr.innerHTML = `
+        <td colspan="${linha.children.length}">
+          <form class="form-cadastro form-edicao-pagamento">
+            <div class="grade-filtros">
+              <div class="campo-filtro campo-curto">
+                <label>Tipo de Aquisição</label>
+                <select name="tipoaquisicaopagamento">${opcoesSelect(opcoes.tipos, processo.tipoaquisicaopagamento, "-")}</select>
+              </div>
+              <div class="campo-filtro campo-curto">
+                <label>Área Vinculada</label>
+                <select name="areavinculada">${opcoesSelect(opcoes.areas, processo.areavinculada, "-")}</select>
+              </div>
+              <div class="campo-filtro campo-curto">
+                <label>Nº Processo</label>
+                <input type="text" name="numero_processo" value="${escaparHtml(processo.numero_processo)}" />
+              </div>
+              <div class="campo-filtro campo-curto">
+                <label>Prioridade</label>
+                <select name="prioridade">
+                  ${["", "1", "2", "3"].map((v) => `<option value="${v}" ${String(processo.prioridade ?? "") === v ? "selected" : ""}>${v || "-"}</option>`).join("")}
+                </select>
+              </div>
+              <div class="campo-filtro campo-curto">
+                <label>Nº Empenho</label>
+                <input type="text" name="numero_empenho" value="${escaparHtml(processo.numero_empenho)}" />
+              </div>
+              <div class="campo-filtro campo-curto">
+                <label>Data de Envio do Empenho</label>
+                <input type="date" name="data_envio_empenho" value="${escaparHtml(processo.data_envio_empenho_iso)}" />
+              </div>
+            </div>
+            <div class="grupo-botoes-filtro">
+              <button type="submit" class="botao-filtrar">Salvar</button>
+              <button type="button" class="botao-resetar botao-fechar-edicao">Fechar</button>
+            </div>
+            <p class="erro-login"></p>
+          </form>
+        </td>`;
+      linha.after(tr);
+
+      const form = tr.querySelector("form");
+      tr.querySelector(".botao-fechar-edicao").addEventListener("click", fecharEdicoes);
+      form.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const erro = form.querySelector(".erro-login");
+        erro.textContent = "";
+        const corpo = Object.fromEntries(new FormData(form).entries());
+        const botao = form.querySelector('button[type="submit"]');
+        botao.disabled = true;
+        try {
+          const resp = await fetch(`/api/pagamentos/${encodeURIComponent(processo.pedidodestaque)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(corpo),
+          });
+          const dado = await resp.json();
+          if (!dado.ok) {
+            erro.textContent = dado.msg || "Não foi possível salvar";
+            return;
+          }
+          recarregarSecoes();
+        } catch (e) {
+          erro.textContent = "Sem sinal de fumaça com o servidor";
+        } finally {
+          botao.disabled = false;
+        }
+      });
+    }
+
+    // ---- utilizacao: paciente (prontuario) + data -> internacao daquela data ----
+    function alternarUtilizacao(linha, processo) {
+      const aberta = linha.nextElementSibling?.classList.contains("linha-utilizacao-pagamento");
+      fecharEdicoes();
+      if (aberta) return;
+      linha.classList.add("linha-produto-ativa");
+
+      const tr = document.createElement("tr");
+      tr.className = "linha-utilizacao-pagamento";
+      tr.innerHTML = `
+        <td colspan="${linha.children.length}">
+          <form class="form-cadastro form-utilizacao-pagamento">
+            <div class="grade-filtros">
+              <div class="campo-filtro campo-curto">
+                <label>Nº Prontuário</label>
+                <input type="text" name="prontuario" value="${escaparHtml(processo.num_prontuario)}" autocomplete="off" />
+              </div>
+              <div class="campo-filtro campo-acao">
+                <button type="button" class="botao-resetar botao-buscar-paciente">Buscar paciente</button>
+              </div>
+              <div class="campo-filtro campo-largo">
+                <label>Paciente</label>
+                <select name="isn_paciente"><option value="">Busque pelo prontuário</option></select>
+              </div>
+              <div class="campo-filtro campo-curto">
+                <label>Data da Utilização</label>
+                <input type="date" name="data_utilizacao" value="${escaparHtml(processo.data_utilizacao_iso)}" />
+              </div>
+              <div class="campo-filtro campo-largo">
+                <label>Nº Internação</label>
+                <select name="isn_internacao"><option value="">Informe paciente e data</option></select>
+              </div>
+            </div>
+            <div class="grupo-botoes-filtro">
+              <button type="submit" class="botao-filtrar">Salvar</button>
+              <button type="button" class="botao-resetar botao-limpar-utilizacao">Limpar utilização</button>
+              <button type="button" class="botao-resetar botao-fechar-edicao">Fechar</button>
+            </div>
+            <p class="erro-login"></p>
+          </form>
+        </td>`;
+      linha.after(tr);
+
+      const form = tr.querySelector("form");
+      const erro = form.querySelector(".erro-login");
+      const selectPaciente = form.isn_paciente;
+      const selectInternacao = form.isn_internacao;
+
+      async function buscarPaciente(selecionado) {
+        erro.textContent = "";
+        const prontuario = form.prontuario.value.trim();
+        if (!prontuario) return;
+        selectPaciente.innerHTML = '<option value="">Buscando...</option>';
+        try {
+          const resp = await fetch(`/api/pagamentos/pacientes?prontuario=${encodeURIComponent(prontuario)}`);
+          const pacientes = await resp.json();
+          if (!Array.isArray(pacientes) || !pacientes.length) {
+            selectPaciente.innerHTML = '<option value="">Nenhum paciente com esse prontuário</option>';
+          } else {
+            selectPaciente.innerHTML = pacientes
+              .map((pac) => `<option value="${escaparHtml(pac.isn_paciente)}" ${String(pac.isn_paciente) === String(selecionado ?? "") ? "selected" : ""}>${escaparHtml(pac.nome)}${pac.nascimento ? ` (nasc. ${escaparHtml(pac.nascimento)})` : ""}</option>`)
+              .join("");
+          }
+        } catch (e) {
+          selectPaciente.innerHTML = '<option value="">Erro ao buscar paciente</option>';
+        }
+        await buscarInternacoes(processo.isn_internacao);
+      }
+
+      // internacoes do paciente que cobrem a data da utilizacao
+      async function buscarInternacoes(selecionada) {
+        const isnPaciente = selectPaciente.value;
+        const data = form.data_utilizacao.value;
+        if (!isnPaciente || !data) {
+          selectInternacao.innerHTML = '<option value="">Informe paciente e data</option>';
+          return;
+        }
+        selectInternacao.innerHTML = '<option value="">Buscando...</option>';
+        try {
+          const resp = await fetch(`/api/pagamentos/internacoes?isn_paciente=${encodeURIComponent(isnPaciente)}&data=${encodeURIComponent(data)}`);
+          const internacoes = await resp.json();
+          if (!Array.isArray(internacoes) || !internacoes.length) {
+            selectInternacao.innerHTML = '<option value="">Nenhuma internação nessa data</option>';
+            return;
+          }
+          selectInternacao.innerHTML = internacoes
+            .map((i) => `<option value="${escaparHtml(i.isn_internacao)}" ${String(i.isn_internacao) === String(selecionada ?? "") ? "selected" : ""}>${escaparHtml(i.isn_internacao)} — ${escaparHtml(i.entrada)} a ${i.internado ? "internado" : escaparHtml(i.alta)}</option>`)
+            .join("");
+        } catch (e) {
+          selectInternacao.innerHTML = '<option value="">Erro ao buscar internações</option>';
+        }
+      }
+
+      async function gravar(corpo) {
+        erro.textContent = "";
+        try {
+          const resp = await fetch(`/api/pagamentos/${encodeURIComponent(processo.pedidodestaque)}/utilizacao`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(corpo),
+          });
+          const dado = await resp.json();
+          if (!dado.ok) {
+            erro.textContent = dado.msg || "Não foi possível salvar";
+            return;
+          }
+          recarregarSecoes();
+        } catch (e) {
+          erro.textContent = "Sem sinal de fumaça com o servidor";
+        }
+      }
+
+      form.querySelector(".botao-buscar-paciente").addEventListener("click", () => buscarPaciente());
+      form.prontuario.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          buscarPaciente();
+        }
+      });
+      selectPaciente.addEventListener("change", () => buscarInternacoes());
+      form.data_utilizacao.addEventListener("change", () => buscarInternacoes());
+      tr.querySelector(".botao-fechar-edicao").addEventListener("click", fecharEdicoes);
+      form.querySelector(".botao-limpar-utilizacao").addEventListener("click", () => {
+        if (confirm("Remover paciente, data e internação deste processo?")) gravar({ isn_paciente: "" });
+      });
+      form.addEventListener("submit", (ev) => {
+        ev.preventDefault();
+        if (!selectPaciente.value) {
+          erro.textContent = "Busque e escolha o paciente pelo prontuário";
+          return;
+        }
+        gravar({
+          isn_paciente: selectPaciente.value,
+          data_utilizacao: form.data_utilizacao.value,
+          isn_internacao: selectInternacao.value,
+        });
+      });
+
+      // processo que ja tem utilizacao abre com tudo preenchido
+      if (processo.num_prontuario) buscarPaciente(processo.isn_paciente);
+    }
+
+    async function mudarSituacao(processo, acao) {
+      const mensagens = {
+        pago: `Marcar a ordem de compra ${processo.pedidodestaque} (${processo.fornecedor ?? ""}) como PAGA?`,
+        cancelado: `CANCELAR o processo da ordem de compra ${processo.pedidodestaque} (${processo.fornecedor ?? ""})?`,
+        reabrir: `Reabrir o processo da ordem de compra ${processo.pedidodestaque}? Ele volta a ficar em aberto.`,
+      };
+      if (!confirm(mensagens[acao])) return;
+      try {
+        const resp = await fetch(`/api/pagamentos/${encodeURIComponent(processo.pedidodestaque)}/situacao`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ acao }),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          alert(dado.msg || "Não foi possível mudar a situação");
+          return;
+        }
+        recarregarSecoes();
+      } catch (e) {
+        alert("Sem sinal de fumaça com o servidor");
+      }
+    }
+
+    // ---- busca ----
+    async function buscarProcessos(situacao, pagina) {
+      paginaAtual[situacao] = pagina;
+      const params = montarQueryFiltros();
+      params.set("situacao", situacao);
+      params.set("pagina", pagina);
+      // so a primeira secao calcula os cards (mesmo resultado pras quatro)
+      if (situacao !== "a_empenhar") params.set("cards", "0");
+      const container = document.getElementById(`area-${situacao}`);
+      container.innerHTML = '<p class="msg-vazio">Carregando dado, aguenta ai...</p>';
+      try {
+        const resp = await fetch(`/api/pagamentos?${params.toString()}`);
+        const resultado = await resp.json();
+        if (resultado.erro) throw new Error(resultado.erro);
+
+        // pagina que ficou vazia depois de o pedido mudar de situacao - volta uma
+        if (!resultado.dados.length && pagina > 1) return buscarProcessos(situacao, pagina - 1);
+
+        if (resultado.cards) {
+          document.getElementById("cardAEmpenhar").textContent = Number(resultado.cards.a_empenhar || 0).toLocaleString("pt-BR");
+          document.getElementById("cardEmpenhados").textContent = Number(resultado.cards.empenhado || 0).toLocaleString("pt-BR");
+          document.getElementById("cardFinalizados").textContent = Number(resultado.cards.pago || 0).toLocaleString("pt-BR");
+        }
+        document.getElementById(`contador-${situacao}`).textContent = Number(resultado.total || 0).toLocaleString("pt-BR");
+        renderizarProcessos(situacao, resultado.dados);
+        renderizarPaginacao(situacao, resultado.total, resultado.pagina, resultado.tamanho_pagina);
+      } catch (erro) {
+        container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${escaparHtml(String(erro))}</p>`;
+        document.getElementById(`paginacao-${situacao}`).innerHTML = "";
+      }
+    }
+
+    // filtro novo: todas as secoes voltam pra pagina 1
+    function buscarTudo() {
+      SECOES.forEach((situacao) => buscarProcessos(situacao, 1));
+    }
+
+    // depois de editar/pagar/cancelar/reabrir o pedido pode mudar de secao - recarrega as quatro
+    // na pagina em que estavam
+    function recarregarSecoes() {
+      SECOES.forEach((situacao) => buscarProcessos(situacao, paginaAtual[situacao]));
+    }
+
+    // relatorio da secao inteira (todas as paginas), com os filtros da tela
+    document.querySelectorAll(".botao-relatorio").forEach((botao) => {
+      botao.addEventListener("click", () => {
+        const params = montarQueryFiltros();
+        params.set("situacao", botao.dataset.situacao);
+        params.set("formato", botao.dataset.formato);
+        window.open(`/api/pagamentos/relatorio?${params.toString()}`, "_blank");
+      });
+    });
+
+    document.getElementById("formFiltros").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      buscarTudo();
+    });
+    document.getElementById("botaoResetarFiltros").addEventListener("click", () => {
+      document.getElementById("formFiltros").reset();
+      buscarTudo();
+    });
+
+    carregarOpcoes().then(buscarTudo);
   </script>
 </body>
 </html>

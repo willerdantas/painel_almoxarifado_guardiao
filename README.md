@@ -25,7 +25,7 @@ planejamento de aquisição.
 | Processos de Aquisição | `processos_aquisicao.html` | Processos SESA (importados da planilha) e Processos Hospital. Ver abaixo. |
 | Planejamento de Aquisição | `planejamento_aquisicao.html` | Sugestão de compra pela média de consumo. Ver abaixo. |
 | Atas e Contratos | `atas_contratos.html` | Atas e contratos vigentes, aditivos, itens e saldos. Os vencidos ficam em `atas_contratos_vencidos.html`. |
-| Processos de Pagamento | `pagamentos.html` | Estrutura pronta; consulta ainda não definida (ver Pendências). |
+| Processos de Pagamento | `pagamentos.html` | Um processo por destaque (ordem de compra) do Guardião, com empenho e situação. Ver abaixo. |
 | Cadastro | `cadastro.html` | Perfis de acesso, usuários e calendário de distribuição. **Só administrador.** |
 | Configuração do Banco | `configuracao_banco.html` | Conexão com o Postgres, criação do schema e logo. **Só administrador.** |
 
@@ -59,6 +59,25 @@ O login fica em `index.html`. As páginas que cada perfil vê são escolhidas em
   alterada na tabela. Qtde. e Valor Anual = 12 × mensal.
 - **+ Inserir Itens** adiciona produtos pelo Cód. Seplag ou nome.
 - A lista **não é salva**: use CSV, Planilha ou PDF.
+
+### Processos de Pagamento
+
+- Cada **ordem de compra** do Guardião (`public.pedidodestaque`, uma por produto destacado) é um
+  processo, a partir de 01/01/2026 (`DATA_INICIO_PAGAMENTOS` em `app.py`).
+- Do Guardião vêm: data do destaque, nº da ordem de compra (`pedidodestaque`), tipo do contrato (ARP,
+  Aquisição, Serviços…), nº do contrato original, data fim e prazo (versão mais recente), fornecedor
+  e valor total. Clicar na ordem mostra o produto e o item do contrato (`pedidoitem`): quantidade
+  contratada, entregue e saldo.
+- **Editar** preenche tipo de aquisição (Consignado/Compra), área vinculada, nº processo, prioridade
+  (1 a 3), nº empenho e data de envio do empenho, e grava data/hora e usuário da alteração.
+- **Utilização** liga a ordem a um paciente: busca pelo nº do prontuário (`integra_local.t_paciente`),
+  informa a data da utilização e escolhe a internação que cobre essa data (`t_internacao` +
+  `t_internacao_leito`, da primeira entrada em leito até a última alta). Os filtros **Nº Prontuário**
+  e **Paciente** consultam `t_paciente`.
+- **Situação:** *A empenhar* sem nº de empenho, *Empenhado* com nº de empenho, *Pago* e *Cancelado*
+  pelos botões. **Pago** exige nº de empenho. **Reabrir** desfaz Pago/Cancelado.
+- A lista fica em quatro seções, uma por situação, cada uma com a própria paginação (10 por página).
+- Cards: aguardando empenho, empenhados e finalizados (pagos), com os mesmos filtros da lista.
 
 ## Rodar
 
@@ -132,7 +151,8 @@ python3 -m unittest discover -s tests -v
 ```
 
 Os testes rodam sem banco (o acesso ao banco é simulado). Cobrem sessão e permissões, login,
-primeiro acesso, troca de conexão, limite de upload e a leitura da planilha SESA.
+primeiro acesso, troca de conexão, limite de upload, a leitura da planilha SESA e as regras de
+Processos de Pagamento.
 
 ## Banco de teste (dado fictício)
 
@@ -176,6 +196,8 @@ static/logo_insystem.png     # logo (trocável pela Configuração do Banco)
 | `processohospitalajuste` | Ajustes manuais Incluir/Remover. |
 | `processohospitalmanual`, `processohospitalmanualitem` | Processos cadastrados à mão e seus itens. |
 | `processohospitaledicao` | Edições feitas pelo botão Editar em processos da planilha. |
+| `tipoaquisicaopagamento`, `areavinculada` | Listas de Processos de Pagamento (Consignado/Compra; Centro Cirúrgico, Hemodinâmica, Estomaterapia, Marcapasso, Assistência Geral). |
+| `processopagamento` | Campos preenchidos por ordem de compra (`pedidodestaque`): tipo, área, nº processo, prioridade, empenho, situação, utilização (paciente, prontuário, data, internação), quem e quando alterou. |
 
 ## Onde mexer
 
@@ -187,7 +209,6 @@ static/logo_insystem.png     # logo (trocável pela Configuração do Banco)
 
 ## Pendências
 
-- **Processos de Pagamento:** a consulta ainda não foi definida (`/api/pagamentos` em `app.py`).
 - **Atas e Contratos:** os filtros de status e modalidade aguardam o significado dos códigos de
   1 letra (`statuspedido`, `modalidadelicitacao`).
 - **Separação:** `/api/pedidos_separacao` ainda não filtra por status de separação/distribuição.

@@ -818,6 +818,44 @@ TABELAS_SIST_LOGISTICA = {
             _update TIMESTAMP NOT NULL DEFAULT now()
         )
     """,
+    # listas da tela Processos de Pagamento (pagamentos.html) - semeadas por _seed_listas_pagamento
+    "tipoaquisicaopagamento": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.tipoaquisicaopagamento (
+            tipoaquisicaopagamento SERIAL PRIMARY KEY,
+            nome VARCHAR(80) NOT NULL UNIQUE,
+            _creation TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
+    "areavinculada": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.areavinculada (
+            areavinculada SERIAL PRIMARY KEY,
+            nome VARCHAR(80) NOT NULL UNIQUE,
+            _creation TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
+    # campos preenchidos na tela pra cada ordem de compra do Guardiao (public.pedidodestaque - uma
+    # linha por produto destacado). situacao_final: 'P' pago, 'C' cancelado, NULL = em aberto
+    # (empenhado se tem numero de empenho, senao a empenhar)
+    "processopagamento": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.processopagamento (
+            pedidodestaque NUMERIC PRIMARY KEY,
+            tipoaquisicaopagamento INTEGER REFERENCES sist_logistica.tipoaquisicaopagamento(tipoaquisicaopagamento),
+            areavinculada INTEGER REFERENCES sist_logistica.areavinculada(areavinculada),
+            numero_processo TEXT,
+            prioridade SMALLINT CHECK (prioridade BETWEEN 1 AND 3),
+            numero_empenho TEXT,
+            data_envio_empenho DATE,
+            situacao_final CHAR(1) CHECK (situacao_final IN ('P', 'C')),
+            -- utilizacao (botao Utilizacao): paciente do integra_local, data e internacao da data
+            isn_paciente NUMERIC,
+            num_prontuario TEXT,
+            data_utilizacao DATE,
+            isn_internacao NUMERIC,
+            usuario VARCHAR(60),
+            _creation TIMESTAMP NOT NULL DEFAULT now(),
+            _update TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
 }
 
 # indices extras (fora das PK/UNIQUE que ja saem junto com o CREATE TABLE acima)
@@ -1005,6 +1043,7 @@ def api_criar_schema_sist_logistica():
             run_query(ddl)
         _seed_perfis_padrao()
         _seed_grupos_aquisicao()
+        _seed_listas_pagamento()
         _migrar_chave_aquisicoes()
         return jsonify({"ok": True})
     except Exception as erro:
@@ -4554,10 +4593,650 @@ def api_painel_chamados():
     return jsonify(linhas)
 
 
+# ---------------------------------------------------------------------------------------------
+# processos de pagamento (pagamentos.html) - um processo por destaque (ordem de compra) do Guardiao;
+# o que nao vem do banco (tipo, area, processo, prioridade, empenho, situacao) fica em
+# sist_logistica.processopagamento
+# ---------------------------------------------------------------------------------------------
+
+# destaques anteriores a essa data ficam fora da lista e dos cards (historico do Guardiao desde 2015)
+DATA_INICIO_PAGAMENTOS = "2026-01-01"
+
+TIPOS_AQUISICAO_PAGAMENTO = ["Consignado", "Compra"]
+AREAS_VINCULADAS = ["Centro Cirúrgico", "Hemodinâmica", "Estomaterapia", "Marcapasso", "Assistência Geral"]
+
+# tipopedido do contrato (codigo de 1 letra do Guardiao)
+SQL_TIPO_PEDIDO_CONTRATO = """
+    CASE pc.tipopedido
+        WHEN 'A' THEN 'ARP'
+        WHEN 'C' THEN 'Aquisição'
+        WHEN 'I' THEN 'Imobilizados'
+        WHEN 'S' THEN 'Serviços'
+        ELSE pc.tipopedido
+    END
+"""
+
+SQL_SITUACAO_PAGAMENTO = """
+    CASE
+        WHEN pp.situacao_final = 'P' THEN 'pago'
+        WHEN pp.situacao_final = 'C' THEN 'cancelado'
+        WHEN COALESCE(TRIM(pp.numero_empenho), '') <> '' THEN 'empenhado'
+        ELSE 'a_empenhar'
+    END
+"""
+
+_tabelas_pagamento_prontas = False
+
+
+def _seed_listas_pagamento():
+    for nome in TIPOS_AQUISICAO_PAGAMENTO:
+        run_query("""
+            INSERT INTO sist_logistica.tipoaquisicaopagamento (nome) VALUES (%s) ON CONFLICT (nome) DO NOTHING
+        """, [nome])
+    for nome in AREAS_VINCULADAS:
+        run_query("""
+            INSERT INTO sist_logistica.areavinculada (nome) VALUES (%s) ON CONFLICT (nome) DO NOTHING
+        """, [nome])
+
+
+def _migrar_chave_processopagamento():
+    # a tabela nasceu com um processo por pedido agrupado (versao do contrato + numero do destaque);
+    # agora eh um por ordem de compra (pedidodestaque). recria com a chave nova copiando o que ja foi
+    # preenchido pra cada pedidodestaque do grupo - tudo numa transacao
+    tem_chave_nova = run_query("""
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'sist_logistica' AND table_name = 'processopagamento' AND column_name = 'pedidodestaque'
+    """)
+    if tem_chave_nova:
+        return
+    ddl_nova = TABELAS_SIST_LOGISTICA["processopagamento"].replace(
+        "sist_logistica.processopagamento", "sist_logistica.processopagamento_novo")
+    conexao = get_conn()
+    try:
+        with conexao.cursor() as cursor:
+            cursor.execute(ddl_nova)
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'sist_logistica' AND table_name = 'processopagamento'
+            """)
+            antigas = {linha[0] for linha in cursor.fetchall()}
+            copiar = [c for c in ("tipoaquisicaopagamento", "areavinculada", "numero_processo", "prioridade",
+                                  "numero_empenho", "data_envio_empenho", "situacao_final", "isn_paciente",
+                                  "num_prontuario", "data_utilizacao", "isn_internacao", "usuario",
+                                  "_creation", "_update") if c in antigas]
+            cursor.execute(f"""
+                INSERT INTO sist_logistica.processopagamento_novo (pedidodestaque, {', '.join(copiar)})
+                SELECT pd.pedidodestaque, {', '.join('pp.' + c for c in copiar)}
+                FROM sist_logistica.processopagamento pp
+                JOIN public.pedidoitem pi ON pi.pedidocabecalho = pp.pedidocabecalho
+                JOIN public.pedidodestaque pd ON pd.pedidoitem = pi.pedidoitem AND pd.destaque = pp.destaque
+                ON CONFLICT (pedidodestaque) DO NOTHING
+            """)
+            cursor.execute("DROP TABLE sist_logistica.processopagamento")
+            cursor.execute("ALTER TABLE sist_logistica.processopagamento_novo RENAME TO processopagamento")
+            cursor.execute("ALTER INDEX IF EXISTS sist_logistica.processopagamento_novo_pkey RENAME TO processopagamento_pkey")
+        conexao.commit()
+    except Exception:
+        conexao.rollback()
+        raise
+    finally:
+        conexao.close()
+
+
+def _garantir_tabelas_pagamento():
+    # cria as tabelas na primeira vez que a tela eh usada (banco que ja existia antes dela)
+    global _tabelas_pagamento_prontas
+    if _tabelas_pagamento_prontas:
+        return
+    run_query("CREATE SCHEMA IF NOT EXISTS sist_logistica")
+    for nome in ("tipoaquisicaopagamento", "areavinculada", "processopagamento"):
+        run_query(TABELAS_SIST_LOGISTICA[nome])
+    _migrar_chave_processopagamento()
+    # tabela criada antes do botao Utilizacao existir
+    for coluna, tipo in (("isn_paciente", "NUMERIC"), ("num_prontuario", "TEXT"),
+                         ("data_utilizacao", "DATE"), ("isn_internacao", "NUMERIC")):
+        run_query(f"ALTER TABLE sist_logistica.processopagamento ADD COLUMN IF NOT EXISTS {coluna} {tipo}")
+    _seed_listas_pagamento()
+    _tabelas_pagamento_prontas = True
+
+
+def _filtros_pagamentos(args):
+    # devolve (condicoes sobre a linha final, params) - situacao fica de fora pra os cards poderem
+    # contar as tres situacoes com os mesmos filtros
+    condicoes = []
+    params = []
+    if args.get("data_inicio"):
+        condicoes.append("d.data_destaque >= %s")
+        params.append(args["data_inicio"])
+    if args.get("data_fim"):
+        condicoes.append("d.data_destaque <= %s")
+        params.append(args["data_fim"])
+    if args.get("fornecedor"):
+        condicoes.append("pes.nome ILIKE %s")
+        params.append(f"%{args['fornecedor']}%")
+    if args.get("numero_contrato"):
+        # numero de qualquer versao do contrato (original ou aditivo)
+        condicoes.append("""
+            EXISTS (
+                SELECT 1 FROM public.pedidocabecalho pc_num
+                WHERE pc_num.numeroidentificacao = pc.numeroidentificacao
+                AND (pc_num.numerocontrato ILIKE %s OR pc_num.numeroata ILIKE %s)
+            )
+        """)
+        params.extend([f"%{args['numero_contrato']}%"] * 2)
+    if args.get("ordem_compra"):
+        condicoes.append("d.pedidodestaque::text = %s")
+        params.append(args["ordem_compra"].strip())
+    if args.get("numero_processo"):
+        condicoes.append("pp.numero_processo ILIKE %s")
+        params.append(f"%{args['numero_processo']}%")
+    if args.get("numero_empenho"):
+        condicoes.append("pp.numero_empenho ILIKE %s")
+        params.append(f"%{args['numero_empenho']}%")
+    if args.get("prontuario"):
+        condicoes.append("""
+            EXISTS (
+                SELECT 1 FROM integra_local.t_paciente tp
+                WHERE tp.isn_paciente = pp.isn_paciente AND tp.num_prontuario = %s
+            )
+        """)
+        params.append(args["prontuario"].strip())
+    if args.get("paciente"):
+        condicoes.append("""
+            EXISTS (
+                SELECT 1 FROM integra_local.t_paciente tp
+                WHERE tp.isn_paciente = pp.isn_paciente AND tp.dsc_nome ILIKE %s
+            )
+        """)
+        params.append(f"%{args['paciente'].strip()}%")
+    for campo in ("tipoaquisicaopagamento", "areavinculada", "prioridade"):
+        valor = args.get(campo)
+        if valor and valor.isdigit():
+            condicoes.append(f"pp.{campo} = %s")
+            params.append(int(valor))
+    return condicoes, params
+
+
+# destaques (uma linha por versao do contrato + numero do destaque) desde DATA_INICIO_PAGAMENTOS,
+# com o contrato original (base da familia), a data fim efetiva (aditivo mais recente) e o que foi
+# preenchido na tela
+SQL_BASE_PAGAMENTOS = f"""
+    WITH d AS (
+        -- uma ordem de compra por linha de pedidodestaque (produto destacado)
+        SELECT
+            pd.pedidodestaque,
+            pi.pedidocabecalho,
+            pd.datadestaque AS data_destaque,
+            COALESCE(pd.valortotal, pd.quantidade * pd.valorunitario) AS valor_total
+        FROM public.pedidodestaque pd
+        JOIN public.pedidoitem pi ON pi.pedidoitem = pd.pedidoitem
+        WHERE pd.datadestaque >= %s
+    )
+    SELECT
+        d.pedidodestaque,
+        d.data_destaque,
+        d.valor_total,
+        {SQL_TIPO_PEDIDO_CONTRATO} AS tipo_contrato,
+        COALESCE(base.numerocontrato, base.numeroata) AS contrato_original,
+        ult.datafim AS data_fim,
+        pes.nome AS fornecedor,
+        pp.tipoaquisicaopagamento,
+        tap.nome AS tipo_aquisicao,
+        pp.areavinculada,
+        av.nome AS area_vinculada,
+        pp.numero_processo,
+        pp.prioridade,
+        pp.numero_empenho,
+        pp.data_envio_empenho,
+        pp.usuario AS atualizado_por,
+        pp._update AS atualizado_em,
+        pp.isn_paciente,
+        pp.num_prontuario,
+        pac.dsc_nome AS paciente,
+        pp.data_utilizacao,
+        pp.isn_internacao,
+        {SQL_SITUACAO_PAGAMENTO} AS situacao
+    FROM d
+    JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = d.pedidocabecalho
+    LEFT JOIN public.pedidocabecalho base
+        ON base.numeroidentificacao = pc.numeroidentificacao AND base.numeroaditivo = 0
+    LEFT JOIN LATERAL (
+        SELECT pc2.datafim FROM public.pedidocabecalho pc2
+        WHERE pc2.numeroidentificacao = pc.numeroidentificacao
+        ORDER BY pc2.numeroaditivo DESC LIMIT 1
+    ) ult ON TRUE
+    LEFT JOIN public.fornecedor forn ON forn.fornecedor = pc.fornecedor
+    LEFT JOIN public.pessoa pes ON pes.pessoa = forn.pessoa
+    LEFT JOIN sist_logistica.processopagamento pp ON pp.pedidodestaque = d.pedidodestaque
+    LEFT JOIN sist_logistica.tipoaquisicaopagamento tap ON tap.tipoaquisicaopagamento = pp.tipoaquisicaopagamento
+    LEFT JOIN sist_logistica.areavinculada av ON av.areavinculada = pp.areavinculada
+    LEFT JOIN integra_local.t_paciente pac ON pac.isn_paciente = pp.isn_paciente
+"""
+
+SITUACOES_PAGAMENTO = ("a_empenhar", "empenhado", "pago", "cancelado")
+
+
 @app.route("/api/pagamentos")
 def api_pagamentos():
-    # TODO homem: cola consulta real aqui
-    return _consulta_generica("SELECT 1 AS placeholder LIMIT 0")
+    try:
+        pagina = max(int(request.args.get("pagina", 1)), 1)
+    except ValueError:
+        pagina = 1
+    tamanho_pagina = 10
+    condicoes, params = _filtros_pagamentos(request.args)
+    situacao = request.args.get("situacao")
+
+    filtro = f"WHERE {' AND '.join(condicoes)}" if condicoes else ""
+    filtro_lista = filtro
+    params_lista = list(params)
+    if situacao in SITUACOES_PAGAMENTO:
+        filtro_lista = f"{filtro} {'AND' if filtro else 'WHERE'} ({SQL_SITUACAO_PAGAMENTO}) = %s"
+        params_lista.append(situacao)
+
+    try:
+        _garantir_tabelas_pagamento()
+        # cards: mesmos filtros da lista, menos o de situacao (senao dois dos tres zeravam). cards=0
+        # pula a conta (a tela busca as 4 secoes juntas e so uma delas precisa dos cards)
+        cards = None if request.args.get("cards") == "0" else run_query(f"""
+            SELECT
+                count(*) FILTER (WHERE situacao = 'a_empenhar') AS a_empenhar,
+                count(*) FILTER (WHERE situacao = 'empenhado') AS empenhado,
+                count(*) FILTER (WHERE situacao = 'pago') AS pago
+            FROM ({SQL_BASE_PAGAMENTOS} {filtro}) x
+        """, [DATA_INICIO_PAGAMENTOS] + params)
+        cards = cards[0] if cards else None
+        total = run_query(f"SELECT count(*) AS total FROM ({SQL_BASE_PAGAMENTOS} {filtro_lista}) x",
+                          [DATA_INICIO_PAGAMENTOS] + params_lista)[0]["total"]
+        dados = run_query(f"""
+            SELECT
+                x.*,
+                to_char(x.data_destaque, 'DD/MM/YYYY') AS data_destaque_br,
+                to_char(x.data_fim, 'DD/MM/YYYY') AS data_fim_br,
+                CASE WHEN x.data_fim >= CURRENT_DATE THEN (x.data_fim - CURRENT_DATE)::text ELSE 'Vencido' END AS prazo,
+                to_char(x.data_envio_empenho, 'YYYY-MM-DD') AS data_envio_empenho_iso,
+                to_char(x.data_envio_empenho, 'DD/MM/YYYY') AS data_envio_empenho_br,
+                to_char(x.atualizado_em, 'DD/MM/YYYY HH24:MI') AS atualizado_em_br,
+                to_char(x.data_utilizacao, 'DD/MM/YYYY') AS data_utilizacao_br,
+                to_char(x.data_utilizacao, 'YYYY-MM-DD') AS data_utilizacao_iso
+            FROM ({SQL_BASE_PAGAMENTOS} {filtro_lista}) x
+            ORDER BY x.data_destaque DESC, x.pedidodestaque DESC
+            LIMIT %s OFFSET %s
+        """, [DATA_INICIO_PAGAMENTOS] + params_lista + [tamanho_pagina, (pagina - 1) * tamanho_pagina])
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+
+    for linha in dados:
+        for campo in ("data_destaque", "data_fim", "data_envio_empenho", "atualizado_em", "data_utilizacao"):
+            linha.pop(campo, None)
+    return jsonify({
+        "dados": dados,
+        "total": total,
+        "pagina": pagina,
+        "tamanho_pagina": tamanho_pagina,
+        "cards": cards,
+        "data_inicio_lista": DATA_INICIO_PAGAMENTOS,
+    })
+
+
+@app.route("/api/pagamentos/<int:pedidodestaque>/itens")
+def api_itens_pagamento(pedidodestaque):
+    # clique na ordem de compra: o produto destacado com o item do contrato (pedidoitem) - quanto foi
+    # contratado, entregue e o saldo
+    return _consulta_generica("""
+        SELECT
+            pd.pedidodestaque,
+            pi.item AS numero_item,
+            p.codigoreferencia AS cod_seplag,
+            p.nome AS nome_produto,
+            up.sigla AS apresentacao,
+            pd.quantidade AS quantidade_destaque,
+            pd.valorunitario AS valor_unitario,
+            COALESCE(pd.valortotal, pd.quantidade * pd.valorunitario) AS valor_total,
+            pi.quantidade AS quantidade_contratada,
+            COALESCE(pi.quantidadeentregue, 0) AS quantidade_entregue,
+            pi.quantidade - COALESCE(pi.quantidadeentregue, 0) AS saldo_contrato
+        FROM public.pedidodestaque pd
+        JOIN public.pedidoitem pi ON pi.pedidoitem = pd.pedidoitem
+        JOIN public.produto p ON p.produto = pi.produto
+        LEFT JOIN public.unidadeproduto up ON up.unidadeproduto = p.unidadeproduto
+        WHERE pd.pedidodestaque = %s
+    """, [pedidodestaque])
+
+
+# internacoes do paciente que cobrem a data: periodo da internacao vai da primeira entrada em leito
+# (t_internacao_leito.dat_internacao) ate a ultima alta (dat_alta); alta nula = ainda internado
+SQL_INTERNACOES_NA_DATA = """
+    SELECT
+        i.isn_internacao,
+        to_char(MIN(il.dat_internacao), 'DD/MM/YYYY') AS entrada,
+        to_char(MAX(il.dat_alta), 'DD/MM/YYYY') AS alta,
+        bool_or(il.dat_alta IS NULL) AS internado
+    FROM integra_local.t_internacao i
+    JOIN integra_local.t_internacao_leito il ON il.isn_internacao = i.isn_internacao
+    JOIN integra_local.t_paciente p ON p.isn_paciente = i.isn_paciente
+    WHERE p.isn_paciente = %s
+    GROUP BY i.isn_internacao
+    HAVING MIN(il.dat_internacao) <= %s AND (bool_or(il.dat_alta IS NULL) OR MAX(il.dat_alta) >= %s)
+    ORDER BY MIN(il.dat_internacao), i.isn_internacao
+"""
+
+
+@app.route("/api/pagamentos/pacientes")
+def api_pagamentos_pacientes():
+    # botao Utilizacao: paciente pelo numero do prontuario (integra_local.t_paciente)
+    prontuario = (request.args.get("prontuario") or "").strip()
+    if not prontuario:
+        return jsonify([])
+    return _consulta_generica("""
+        SELECT isn_paciente, num_prontuario, dsc_nome AS nome, to_char(dat_nascimento, 'DD/MM/YYYY') AS nascimento
+        FROM integra_local.t_paciente
+        WHERE num_prontuario = %s
+        ORDER BY dsc_nome
+    """, [prontuario])
+
+
+@app.route("/api/pagamentos/internacoes")
+def api_pagamentos_internacoes():
+    isn_paciente = request.args.get("isn_paciente")
+    data = request.args.get("data")
+    try:
+        datetime.date.fromisoformat(data or "")
+        int(isn_paciente)
+    except (TypeError, ValueError):
+        return jsonify([])
+    return _consulta_generica(SQL_INTERNACOES_NA_DATA, [isn_paciente, data, data])
+
+
+@app.route("/api/pagamentos/<int:pedidodestaque>/utilizacao", methods=["PUT"])
+def api_utilizacao_pagamento(pedidodestaque):
+    # grava paciente + data de utilizacao + internacao daquela data (ou limpa, com isn_paciente vazio)
+    dados = request.get_json(force=True)
+    isn_paciente = dados.get("isn_paciente") or None
+    data_utilizacao = (dados.get("data_utilizacao") or "").strip() or None
+    isn_internacao = dados.get("isn_internacao") or None
+    num_prontuario = None
+    try:
+        _garantir_tabelas_pagamento()
+        if not _destaque_existe(pedidodestaque):
+            return jsonify({"ok": False, "msg": "Destaque não encontrado"}), 404
+        if isn_paciente:
+            if not data_utilizacao:
+                return jsonify({"ok": False, "msg": "Informe a data da utilização"}), 400
+            try:
+                datetime.date.fromisoformat(data_utilizacao)
+            except ValueError:
+                return jsonify({"ok": False, "msg": "Data da utilização inválida"}), 400
+            paciente = run_query("SELECT num_prontuario FROM integra_local.t_paciente WHERE isn_paciente = %s",
+                                 [isn_paciente])
+            if not paciente:
+                return jsonify({"ok": False, "msg": "Paciente não encontrado"}), 404
+            num_prontuario = paciente[0]["num_prontuario"]
+            # a internacao tem que ser do paciente e cobrir a data
+            if isn_internacao:
+                validas = run_query(SQL_INTERNACOES_NA_DATA, [isn_paciente, data_utilizacao, data_utilizacao])
+                if str(isn_internacao) not in {str(linha["isn_internacao"]) for linha in validas}:
+                    return jsonify({"ok": False, "msg": "Internação não confere com o paciente e a data"}), 400
+        else:
+            data_utilizacao = isn_internacao = None
+        run_query("""
+            INSERT INTO sist_logistica.processopagamento
+                (pedidodestaque, isn_paciente, num_prontuario, data_utilizacao, isn_internacao, usuario)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (pedidodestaque) DO UPDATE SET
+                isn_paciente = EXCLUDED.isn_paciente,
+                num_prontuario = EXCLUDED.num_prontuario,
+                data_utilizacao = EXCLUDED.data_utilizacao,
+                isn_internacao = EXCLUDED.isn_internacao,
+                usuario = EXCLUDED.usuario,
+                _update = now()
+        """, [pedidodestaque, isn_paciente, num_prontuario, data_utilizacao, isn_internacao,
+              _usuario_sessao()])
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+    return jsonify({"ok": True})
+
+
+NOMES_SITUACAO_PAGAMENTO = {"a_empenhar": "A Empenhar", "empenhado": "Empenhado", "pago": "Pago", "cancelado": "Cancelado"}
+
+# (rotulo, campo da linha) - csv/planilha levam tudo; o pdf (paisagem) leva o subconjunto de
+# COLUNAS_PDF_PAGAMENTO pra caber na pagina
+COLUNAS_RELATORIO_PAGAMENTO = [
+    ("Data Destaque", "data_destaque_br"),
+    ("Nº Ordem de Compra", "pedidodestaque"),
+    ("Tipo (Contrato)", "tipo_contrato"),
+    ("Nº Contrato Original", "contrato_original"),
+    ("Data Fim", "data_fim_br"),
+    ("Prazo", "prazo"),
+    ("Tipo de Aquisição", "tipo_aquisicao"),
+    ("Área Vinculada", "area_vinculada"),
+    ("Fornecedor", "fornecedor"),
+    ("Nº Prontuário", "num_prontuario"),
+    ("Paciente", "paciente"),
+    ("Data Utilização", "data_utilizacao_br"),
+    ("Nº Internação", "isn_internacao"),
+    ("Nº Processo", "numero_processo"),
+    ("Prioridade", "prioridade"),
+    ("Valor Total", "valor_total"),
+    ("Nº Empenho", "numero_empenho"),
+    ("Envio do Empenho", "data_envio_empenho_br"),
+    ("Situação", "situacao"),
+    ("Atualizado em", "atualizado_em_br"),
+]
+
+COLUNAS_PDF_PAGAMENTO = [
+    ("Data Destaque", "data_destaque_br", 1.5),
+    ("Nº Ordem", "pedidodestaque", 1.6),
+    ("Contrato Orig.", "contrato_original", 1.5),
+    ("Prazo", "prazo", 1.0),
+    ("Tipo Aquisição", "tipo_aquisicao", 1.7),
+    ("Área Vinculada", "area_vinculada", 2.1),
+    ("Fornecedor", "fornecedor", 3.0),
+    ("Prontuário", "num_prontuario", 1.6),
+    ("Paciente", "paciente", 2.5),
+    ("Utilização", "data_utilizacao_br", 1.5),
+    ("Nº Processo", "numero_processo", 3.1),
+    ("Prior.", "prioridade", 0.9),
+    ("Valor Total", "valor_total", 2.1),
+    ("Nº Empenho", "numero_empenho", 1.5),
+    ("Envio Empenho", "data_envio_empenho_br", 1.5),
+]
+
+ROTULOS_FILTRO_PAGAMENTO = [
+    ("data_inicio", "Destaque de"), ("data_fim", "Destaque até"), ("fornecedor", "Fornecedor"),
+    ("numero_contrato", "Nº Contrato/Ata"), ("ordem_compra", "Nº Ordem de Compra"),
+    ("numero_processo", "Nº Processo"), ("numero_empenho", "Nº Empenho"), ("prontuario", "Nº Prontuário"),
+    ("paciente", "Paciente"), ("prioridade", "Prioridade"),
+]
+
+
+def _valor_relatorio_pagamento(linha, campo):
+    valor = linha.get(campo)
+    if campo == "valor_total":
+        return _formatar_moeda_pdf(valor)
+    if campo == "situacao":
+        return NOMES_SITUACAO_PAGAMENTO.get(valor, valor or "")
+    return "" if valor is None else str(valor)
+
+
+@app.route("/api/pagamentos/relatorio")
+def api_pagamentos_relatorio():
+    # botoes PDF / CSV / Planilha de cada secao: a secao inteira (sem paginacao) com os filtros da tela
+    formato = request.args.get("formato")
+    situacao = request.args.get("situacao")
+    if formato not in ("pdf", "csv", "xlsx") or situacao not in SITUACOES_PAGAMENTO:
+        return jsonify({"erro": "Formato ou seção inválida"}), 400
+    if formato == "pdf" and not REPORTLAB_DISPONIVEL:
+        return jsonify({"erro": "Geração de PDF indisponível: biblioteca reportlab não instalada no servidor."}), 500
+    if formato == "xlsx" and not OPENPYXL_DISPONIVEL:
+        return jsonify({"erro": "Geração de planilha indisponível: biblioteca openpyxl não instalada no servidor."}), 500
+
+    condicoes, params = _filtros_pagamentos(request.args)
+    condicoes.append(f"({SQL_SITUACAO_PAGAMENTO}) = %s")
+    params.append(situacao)
+    try:
+        _garantir_tabelas_pagamento()
+        linhas = run_query(f"""
+            SELECT
+                x.*,
+                to_char(x.data_destaque, 'DD/MM/YYYY') AS data_destaque_br,
+                to_char(x.data_fim, 'DD/MM/YYYY') AS data_fim_br,
+                CASE WHEN x.data_fim >= CURRENT_DATE THEN (x.data_fim - CURRENT_DATE)::text ELSE 'Vencido' END AS prazo,
+                to_char(x.data_envio_empenho, 'DD/MM/YYYY') AS data_envio_empenho_br,
+                to_char(x.atualizado_em, 'DD/MM/YYYY HH24:MI') AS atualizado_em_br,
+                to_char(x.data_utilizacao, 'DD/MM/YYYY') AS data_utilizacao_br
+            FROM ({SQL_BASE_PAGAMENTOS} WHERE {' AND '.join(condicoes)}) x
+            ORDER BY x.data_destaque DESC, x.pedidodestaque DESC
+        """, [DATA_INICIO_PAGAMENTOS] + params)
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+
+    nome_secao = NOMES_SITUACAO_PAGAMENTO[situacao]
+    nome_arquivo = f"processos_pagamento_{situacao}.{formato}"
+    total_valor = sum(float(linha.get("valor_total") or 0) for linha in linhas)
+
+    if formato == "pdf":
+        # texto vai pra Paragraph do reportlab (le marcacao) - escapa "&"/"<" de fornecedor/paciente
+        linhas_tabela = [
+            [html.escape(_valor_relatorio_pagamento(linha, campo)) for _rotulo, campo, _larg in COLUNAS_PDF_PAGAMENTO]
+            for linha in linhas
+        ]
+        filtros = [f"{rotulo}: {html.escape(str(request.args[chave]))}" for chave, rotulo in ROTULOS_FILTRO_PAGAMENTO
+                   if request.args.get(chave)]
+        cabecalho = [
+            f"<b>Gerado em:</b> {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
+            f"<b>Seção:</b> {nome_secao} · destaques a partir de "
+            f"{datetime.date.fromisoformat(DATA_INICIO_PAGAMENTOS).strftime('%d/%m/%Y')}",
+            f"<b>Filtros aplicados:</b> {' · '.join(filtros) if filtros else 'Nenhum'}",
+        ]
+        linha_total = ["Total Geral"] + [""] * (len(COLUNAS_PDF_PAGAMENTO) - 1)
+        linha_total[[campo for _r, campo, _l in COLUNAS_PDF_PAGAMENTO].index("valor_total")] = _formatar_moeda_pdf(total_valor)
+        conteudo = _montar_pdf_relatorio(
+            f"Processos de Pagamento — {nome_secao}",
+            cabecalho,
+            [{
+                "cabecalho_tabela": [rotulo for rotulo, _campo, _larg in COLUNAS_PDF_PAGAMENTO],
+                "linhas_tabela": linhas_tabela,
+                "largura_colunas": [largura * cm for _r, _c, largura in COLUNAS_PDF_PAGAMENTO],
+                "linha_total": linha_total,
+            }],
+            cards=[("Processos", f"{len(linhas):,}".replace(",", ".")), ("Valor Total", _formatar_moeda_pdf(total_valor))],
+        )
+        return Response(conteudo, mimetype="application/pdf",
+                        headers={"Content-Disposition": f"attachment; filename={nome_arquivo}"})
+
+    cabecalho = [rotulo for rotulo, _campo in COLUNAS_RELATORIO_PAGAMENTO]
+    linhas_arquivo = [[_valor_relatorio_pagamento(linha, campo) for _rotulo, campo in COLUNAS_RELATORIO_PAGAMENTO]
+                      for linha in linhas]
+    if formato == "xlsx":
+        return Response(_escrever_xlsx(cabecalho, linhas_arquivo),
+                        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f"attachment; filename={nome_arquivo}"})
+    return Response(_escrever_csv(cabecalho, linhas_arquivo).encode("utf-8"), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={nome_arquivo}"})
+
+
+@app.route("/api/pagamentos/opcoes")
+def api_pagamentos_opcoes():
+    try:
+        _garantir_tabelas_pagamento()
+        return jsonify({
+            "tipos": run_query("SELECT tipoaquisicaopagamento AS id, nome FROM sist_logistica.tipoaquisicaopagamento ORDER BY nome"),
+            "areas": run_query("SELECT areavinculada AS id, nome FROM sist_logistica.areavinculada ORDER BY nome"),
+        })
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+
+
+def _destaque_existe(pedidodestaque):
+    return bool(run_query("SELECT 1 FROM public.pedidodestaque WHERE pedidodestaque = %s", [pedidodestaque]))
+
+
+@app.route("/api/pagamentos/<int:pedidodestaque>", methods=["PUT"])
+def api_editar_pagamento(pedidodestaque):
+    # botao Editar - grava os campos que nao vem do Guardiao e a data/hora da alteracao
+    dados = request.get_json(force=True)
+
+    def texto(campo):
+        return (dados.get(campo) or "").strip() or None
+
+    def inteiro(campo):
+        valor = dados.get(campo)
+        if valor in (None, ""):
+            return None
+        try:
+            return int(valor)
+        except (TypeError, ValueError):
+            raise ValueError(f"Valor inválido em {campo}")
+
+    try:
+        prioridade = inteiro("prioridade")
+        if prioridade is not None and not 1 <= prioridade <= 3:
+            raise ValueError("Prioridade deve ser 1, 2 ou 3")
+        tipo = inteiro("tipoaquisicaopagamento")
+        area = inteiro("areavinculada")
+        data_envio = texto("data_envio_empenho")
+        if data_envio:
+            try:
+                datetime.date.fromisoformat(data_envio)
+            except ValueError:
+                raise ValueError("Data de envio do empenho inválida")
+    except ValueError as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 400
+
+    try:
+        _garantir_tabelas_pagamento()
+        if not _destaque_existe(pedidodestaque):
+            return jsonify({"ok": False, "msg": "Destaque não encontrado"}), 404
+        run_query("""
+            INSERT INTO sist_logistica.processopagamento
+                (pedidodestaque, tipoaquisicaopagamento, areavinculada, numero_processo,
+                 prioridade, numero_empenho, data_envio_empenho, usuario)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (pedidodestaque) DO UPDATE SET
+                tipoaquisicaopagamento = EXCLUDED.tipoaquisicaopagamento,
+                areavinculada = EXCLUDED.areavinculada,
+                numero_processo = EXCLUDED.numero_processo,
+                prioridade = EXCLUDED.prioridade,
+                numero_empenho = EXCLUDED.numero_empenho,
+                data_envio_empenho = EXCLUDED.data_envio_empenho,
+                usuario = EXCLUDED.usuario,
+                _update = now()
+        """, [pedidodestaque, tipo, area, texto("numero_processo"), prioridade,
+              texto("numero_empenho"), data_envio, _usuario_sessao()])
+    except psycopg2.errors.ForeignKeyViolation:
+        return jsonify({"ok": False, "msg": "Tipo de aquisição ou área vinculada inválida"}), 400
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/api/pagamentos/<int:pedidodestaque>/situacao", methods=["POST"])
+def api_situacao_pagamento(pedidodestaque):
+    # botoes Pago / Cancelar (e Reabrir, pra desfazer). pago exige numero de empenho
+    acao = (request.get_json(force=True) or {}).get("acao")
+    novo = {"pago": "P", "cancelado": "C", "reabrir": None}
+    if acao not in novo:
+        return jsonify({"ok": False, "msg": "Ação inválida"}), 400
+    try:
+        _garantir_tabelas_pagamento()
+        if not _destaque_existe(pedidodestaque):
+            return jsonify({"ok": False, "msg": "Destaque não encontrado"}), 404
+        if acao == "pago":
+            atual = run_query("""
+                SELECT numero_empenho FROM sist_logistica.processopagamento
+                WHERE pedidodestaque = %s
+            """, [pedidodestaque])
+            if not atual or not (atual[0]["numero_empenho"] or "").strip():
+                return jsonify({"ok": False, "msg": "Preencha o número do empenho (Editar) antes de marcar como pago"}), 400
+        run_query("""
+            INSERT INTO sist_logistica.processopagamento (pedidodestaque, situacao_final, usuario)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (pedidodestaque) DO UPDATE SET
+                situacao_final = EXCLUDED.situacao_final, usuario = EXCLUDED.usuario, _update = now()
+        """, [pedidodestaque, novo[acao], _usuario_sessao()])
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+    return jsonify({"ok": True})
 
 
 # colunas que o cabecalho da tabela de atas/contratos deixa ordenar (setas ascendente/descendente)
