@@ -5,17 +5,19 @@ que precisar resetar os dados: apaga e recria as tabelas do zero.
 
 Uso: python3 scripts/seed_dev.py
 """
+import os
 import random
 from datetime import datetime, timedelta
 
 import psycopg2
 
+# senha so pelo ambiente (DB_PASSWORD) - nunca no codigo
 DB_CONFIG_DEV = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "almoxarifado_dev",
-    "user": "postgres",
-    "password": "grandeviagem",
+    "host": os.environ.get("DB_HOST", "localhost"),
+    "port": int(os.environ.get("DB_PORT", "5432")),
+    "dbname": os.environ.get("DB_NAME_DEV", "almoxarifado_dev"),
+    "user": os.environ.get("DB_USER", "postgres"),
+    "password": os.environ.get("DB_PASSWORD", ""),
 }
 
 ARMAZENS = [

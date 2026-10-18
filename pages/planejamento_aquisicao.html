@@ -122,12 +122,6 @@
     let paginaAtual = 1;
     const TAMANHO_PAGINA = 20;
 
-    function escaparHtml(texto) {
-      const div = document.createElement("div");
-      div.textContent = texto ?? "";
-      return div.innerHTML;
-    }
-
     function quantidadeSugerida(item) {
       return Math.ceil(Number(item.media_mensal) || 0);
     }

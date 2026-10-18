@@ -1242,7 +1242,7 @@ tr.linha-sem-contrato:hover {
   color: var(--azul-escuro);
   font-size: 13px;
   font-weight: 600;
-  cursor: pointer;c8cccf
+  cursor: pointer;
 }
 
 .botao-pagina:hover:not(:disabled) {

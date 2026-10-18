@@ -219,12 +219,12 @@
             const paginas = perfil.administrador ? "Todas" : perfil.paginas.join(", ") || "Nenhuma";
             return `
               <tr>
-                <td>${perfil.nome}</td>
+                <td>${escaparHtml(perfil.nome)}</td>
                 <td>${perfil.administrador ? "Sim" : "Não"}</td>
                 <td>${paginas}</td>
                 <td>
-                  <button type="button" class="botao-resetar botao-editar" data-id="${perfil.sistemaperfil}">Editar</button>
-                  <button type="button" class="botao-excluir" data-id="${perfil.sistemaperfil}">Excluir</button>
+                  <button type="button" class="botao-resetar botao-editar" data-id="${escaparHtml(perfil.sistemaperfil)}">Editar</button>
+                  <button type="button" class="botao-excluir" data-id="${escaparHtml(perfil.sistemaperfil)}">Excluir</button>
                 </td>
               </tr>`;
           })
@@ -245,7 +245,7 @@
 
         preencherSelectPerfis();
       } catch (erro) {
-        area.innerHTML = `<p class="msg-vazio">Erro ao buscar perfis: ${erro}</p>`;
+        area.innerHTML = `<p class="msg-vazio">Erro ao buscar perfis: ${escaparHtml(erro)}</p>`;
       }
     }
 
@@ -257,7 +257,7 @@
           listaPerfis
             .map(
               (perfil) =>
-                `<option value="${perfil.sistemaperfil}" ${perfil.sistemaperfil === atual ? "selected" : ""}>${perfil.nome}</option>`
+                `<option value="${escaparHtml(perfil.sistemaperfil)}" ${perfil.sistemaperfil === atual ? "selected" : ""}>${escaparHtml(perfil.nome)}</option>`
             )
             .join("");
       });
@@ -348,11 +348,11 @@
           .map(
             (usuario) => `
               <tr>
-                <td>${usuario.identificacao}</td>
-                <td>${usuario.nome}</td>
-                <td><select class="select-perfil-usuario" data-identificacao="${usuario.identificacao}" data-atual="${usuario.sistemaperfil ?? ""}"></select></td>
-                <td><select class="select-tela-padrao-usuario" data-atual="${usuario.tela_padrao ?? ""}"></select></td>
-                <td><button type="button" class="botao-resetar botao-resetar-senha" data-identificacao="${usuario.identificacao}" ${usuario.sistemaperfil ? "" : "disabled"}>Resetar Senha</button></td>
+                <td>${escaparHtml(usuario.identificacao)}</td>
+                <td>${escaparHtml(usuario.nome)}</td>
+                <td><select class="select-perfil-usuario" data-identificacao="${escaparHtml(usuario.identificacao)}" data-atual="${escaparHtml(usuario.sistemaperfil)}"></select></td>
+                <td><select class="select-tela-padrao-usuario" data-atual="${escaparHtml(usuario.tela_padrao)}"></select></td>
+                <td><button type="button" class="botao-resetar botao-resetar-senha" data-identificacao="${escaparHtml(usuario.identificacao)}" ${usuario.sistemaperfil ? "" : "disabled"}>Resetar Senha</button></td>
               </tr>`
           )
           .join("");
@@ -380,7 +380,7 @@
           botao.addEventListener("click", () => resetarSenha(botao.dataset.identificacao));
         });
       } catch (erro) {
-        area.innerHTML = `<p class="msg-vazio">Erro ao buscar usuários: ${erro}</p>`;
+        area.innerHTML = `<p class="msg-vazio">Erro ao buscar usuários: ${escaparHtml(erro)}</p>`;
       }
     }
 
@@ -457,7 +457,7 @@
               (dia) =>
                 `<td><input type="checkbox" class="checkbox-dia-${dia.chave}" ${armazem[dia.chave] ? "checked" : ""} /></td>`
             ).join("");
-            return `<tr data-armazem="${armazem.armazem}"><td>${armazem.nome}</td>${celulasDias}</tr>`;
+            return `<tr data-armazem="${escaparHtml(armazem.armazem)}"><td>${escaparHtml(armazem.nome)}</td>${celulasDias}</tr>`;
           })
           .join("");
 
@@ -475,7 +475,7 @@
           });
         });
       } catch (erro) {
-        area.innerHTML = `<p class="msg-vazio">Erro ao buscar calendário: ${erro}</p>`;
+        area.innerHTML = `<p class="msg-vazio">Erro ao buscar calendário: ${escaparHtml(erro)}</p>`;
       }
     }
 

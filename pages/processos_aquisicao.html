@@ -218,12 +218,6 @@
     let grupoSelecionado = "";
     const paginaAtual = { sesa: 1, hospital: 1 };
 
-    function escaparHtml(texto) {
-      const div = document.createElement("div");
-      div.textContent = texto ?? "";
-      return div.innerHTML;
-    }
-
     function montarQueryFiltros() {
       const params = new URLSearchParams();
       const processo = document.getElementById("filtroNumeroProcesso").value.trim();
@@ -342,7 +336,7 @@
       const linhas = dados
         .map(
           (processo) => `
-        <tr class="linha-produto linha-processo" data-processo="${escaparHtml(processo.processo)}" data-manual="${processo.processohospitalmanual ?? ""}">
+        <tr class="linha-produto linha-processo" data-processo="${escaparHtml(processo.processo)}" data-manual="${escaparHtml(processo.processohospitalmanual)}">
           <td>${escaparHtml(processo.processo) || "(sem processo)"}</td>
           <td>${escaparHtml(processo.grupo)}</td>
           <td>${escaparHtml(processo.tipo_aquisicao)}</td>
@@ -413,7 +407,7 @@
           <td>${formatarQuantidade(item.total_estoque)}</td>
           <td>${formatarQuantidade(item.saldo_ata)}</td>
           <td>${formatarQuantidade(item.saldo_contrato)}</td>` : ""}
-          <td><button type="button" class="botao-acao-produto botao-mover-processo" data-item="${item.item_id}" data-origem="${item.origem}">${textoBotao}</button></td>
+          <td><button type="button" class="botao-acao-produto botao-mover-processo" data-item="${escaparHtml(item.item_id)}" data-origem="${escaparHtml(item.origem)}">${textoBotao}</button></td>
         </tr>`
         )
         .join("");

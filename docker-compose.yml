@@ -8,3 +8,9 @@ services:
     network_mode: host
     volumes:
       - .:/app
+    # desenvolvimento: servidor do Flask recarregando a cada arquivo salvo (APP_RELOAD), SEM o
+    # depurador interativo. em producao, tire este "command" e o container usa o gunicorn do
+    # Dockerfile
+    command: ["python", "app.py"]
+    environment:
+      APP_RELOAD: "1"

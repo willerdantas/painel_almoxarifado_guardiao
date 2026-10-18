@@ -7,9 +7,12 @@ import os
 import re
 import unicodedata
 
-from flask import Flask, jsonify, request, send_from_directory, Response
+import secrets
+import threading
+import time
+
+from flask import Flask, jsonify, request, send_from_directory, Response, session
 from werkzeug.security import check_password_hash, generate_password_hash
-import openpyxl
 import psycopg2
 import psycopg2.extras
 
@@ -28,7 +31,7 @@ except ImportError:
 
 # openpyxl eh so pra gerar as planilhas (.xlsx) - mesmo import tolerante do reportlab acima
 try:
-    from openpyxl import Workbook
+    from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill
 
     OPENPYXL_DISPONIVEL = True
@@ -38,6 +41,42 @@ except ImportError:
 from db import run_query, get_conn, DB_CONFIG, salvar_config
 
 app = Flask(__name__, static_folder="static")
+
+
+def _chave_secreta():
+    # assina o cookie de sessao. APP_SECRET_KEY (ambiente) tem prioridade; sem ela, gera uma vez e
+    # guarda em secret_key (fora do git, igual db_config.json) pra sessao sobreviver a reinicio
+    chave = os.environ.get("APP_SECRET_KEY")
+    if chave:
+        return chave
+    caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), "secret_key")
+    try:
+        if os.path.exists(caminho):
+            with open(caminho) as arquivo:
+                return arquivo.read().strip()
+        chave = secrets.token_hex(32)
+        with open(os.open(caminho, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as arquivo:
+            arquivo.write(chave)
+        return chave
+    except OSError as erro:
+        # arquivo de outro dono (ex.: criado pelo container como root) - sobe com uma chave so
+        # desta execucao em vez de cair; quem estiver logado entra de novo depois de reiniciar
+        print(f"AVISO: nao foi possivel usar {caminho} ({erro}); usando chave de sessao temporaria. "
+              "Defina APP_SECRET_KEY ou corrija o dono do arquivo.")
+        return secrets.token_hex(32)
+
+
+app.config.update(
+    SECRET_KEY=_chave_secreta(),
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    # so manda o cookie em https quando o servidor estiver atras de https de verdade
+    SESSION_COOKIE_SECURE=os.environ.get("APP_COOKIE_SECURE") == "1",
+    PERMANENT_SESSION_LIFETIME=datetime.timedelta(hours=12),
+    # maior upload aceito (planilha SESA de 30MB + folga) - acima disso o Flask recusa (413) antes
+    # de ler o corpo inteiro pra memoria
+    MAX_CONTENT_LENGTH=32 * 1024 * 1024,
+)
 
 # nomes das paginas, homem organiza tribo
 PAGES = [
@@ -104,10 +143,98 @@ def estatico(caminho):
     return send_from_directory("static", caminho)
 
 
-# usuario de teste que so funciona quando o banco nao conecta (ver login) - troca pelas variaveis
-# de ambiente em vez de deixar o padrao em producao
-USUARIO_TESTE = os.environ.get("USUARIO_TESTE", "teste")
-SENHA_TESTE = os.environ.get("SENHA_TESTE", "teste")
+# usuario de teste que so funciona quando o banco nao conecta (ver login), pra abrir a tela de
+# Configuração do Banco. sem padrao: so existe se USUARIO_TESTE e SENHA_TESTE estiverem no ambiente
+USUARIO_TESTE = os.environ.get("USUARIO_TESTE")
+SENHA_TESTE = os.environ.get("SENHA_TESTE")
+
+
+# ---------------------------------------------------------------------------------------------
+# autenticacao: o login grava a identidade num cookie de sessao assinado (SECRET_KEY). toda /api/
+# exige essa sessao, e o "usuario logado" sempre sai dela - nunca do que o navegador manda
+# ---------------------------------------------------------------------------------------------
+
+# rotas de /api/ que funcionam sem sessao (a tela de login usa)
+ROTAS_API_PUBLICAS = {"/api/login", "/api/logout", "/api/definir_senha"}
+
+# rotas so de administrador (telas Cadastro e Configuração do Banco) - prefixo
+PREFIXOS_API_ADMIN = (
+    "/api/perfis",
+    "/api/paginas_sistema",
+    "/api/usuarios_sistema",
+    "/api/calendario_distribuicao",
+    "/api/configuracao_banco",
+)
+
+
+def _usuario_sessao():
+    # identificacao do usuario logado (cookie de sessao) - substitui o antigo parametro
+    # "usuario_logado", que o navegador podia mandar com qualquer valor
+    return session.get("identificacao")
+
+
+@app.before_request
+def _exigir_sessao():
+    caminho = request.path
+    if not caminho.startswith("/api/") or caminho in ROTAS_API_PUBLICAS:
+        return None
+    if not _usuario_sessao():
+        return jsonify({"ok": False, "erro": "Sessão expirada. Entre novamente.", "msg": "Sessão expirada. Entre novamente."}), 401
+    eh_rota_config = caminho.startswith("/api/configuracao_banco")
+    # usuario de teste (banco fora do ar) so mexe na configuracao da conexao
+    if session.get("modo_configuracao") and not eh_rota_config:
+        return jsonify({"ok": False, "erro": "Acesso restrito", "msg": "Acesso restrito"}), 403
+    if caminho.startswith(PREFIXOS_API_ADMIN) and not session.get("administrador"):
+        return jsonify({"ok": False, "erro": "Acesso restrito a administradores", "msg": "Acesso restrito a administradores"}), 403
+    return None
+
+
+def _iniciar_sessao(identificacao, administrador, modo_configuracao=False):
+    session.clear()
+    session.permanent = True
+    session["identificacao"] = identificacao
+    session["administrador"] = bool(administrador)
+    if modo_configuracao:
+        session["modo_configuracao"] = True
+
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+# tentativas de login erradas por identificacao + ip: depois de LIMITE_TENTATIVAS_LOGIN dentro de
+# JANELA_TENTATIVAS_LOGIN segundos, bloqueia ate a janela passar. em memoria (por processo)
+LIMITE_TENTATIVAS_LOGIN = 5
+JANELA_TENTATIVAS_LOGIN = 5 * 60
+_tentativas_login = {}
+_trava_tentativas_login = threading.Lock()
+
+
+def _chave_tentativa(usuario):
+    return (usuario.lower(), request.remote_addr or "")
+
+
+def _login_bloqueado(usuario):
+    agora = time.monotonic()
+    with _trava_tentativas_login:
+        tentativas = [t for t in _tentativas_login.get(_chave_tentativa(usuario), []) if agora - t < JANELA_TENTATIVAS_LOGIN]
+        _tentativas_login[_chave_tentativa(usuario)] = tentativas
+        return len(tentativas) >= LIMITE_TENTATIVAS_LOGIN
+
+
+def _registrar_falha_login(usuario):
+    with _trava_tentativas_login:
+        _tentativas_login.setdefault(_chave_tentativa(usuario), []).append(time.monotonic())
+
+
+def _limpar_falhas_login(usuario):
+    with _trava_tentativas_login:
+        _tentativas_login.pop(_chave_tentativa(usuario), None)
+
+
+MSG_LOGIN_INVALIDO = "Usuário ou senha inválidos"
 
 
 def _erro_conexao_banco():
@@ -147,15 +274,20 @@ def login():
     # Guardiao) E ter um perfil atribuido em sist_logistica.sistemausuario (cadastro.html) - sem
     # perfil, sem entrada, mesmo que o Guardiao reconheca o usuario
     dados = request.get_json(force=True)
-    usuario = dados.get("usuario", "").strip()
-    senha = dados.get("senha", "")
+    usuario = (dados.get("usuario") or "").strip()
+    senha = dados.get("senha") or ""
+
+    if _login_bloqueado(usuario):
+        return jsonify({"ok": False, "msg": "Muitas tentativas. Aguarde alguns minutos e tente de novo."}), 429
 
     # banco fora do ar (senha errada, host/porta inexistente...) = ninguem do Guardiao consegue
     # logar, e a tela de Configuração do Banco fica presa atras do login - libera so o usuario de
     # teste (USUARIO_TESTE/SENHA_TESTE), e so pra essa tela, ate a conexao voltar
     erro_conexao = _erro_conexao_banco()
     if erro_conexao:
-        if usuario == USUARIO_TESTE and senha == SENHA_TESTE:
+        if USUARIO_TESTE and SENHA_TESTE and secrets.compare_digest(usuario, USUARIO_TESTE) \
+                and secrets.compare_digest(senha, SENHA_TESTE):
+            _iniciar_sessao(USUARIO_TESTE, True, modo_configuracao=True)
             return jsonify({
                 "ok": True,
                 "usuario": "Usuário de teste (sem banco)",
@@ -165,6 +297,8 @@ def login():
                 "paginas": ["configuracao_banco"],
                 "tela_padrao": "configuracao_banco",
             })
+        if usuario or senha:
+            _registrar_falha_login(usuario)
         return jsonify({
             "ok": False,
             "msg": "Sem conexão com o banco de dados. Entre com o usuário de teste para configurar a conexão.",
@@ -181,13 +315,17 @@ def login():
         WHERE u.identificacao = %s
     """
     linhas = run_query(sql, (usuario,))
+    # usuario inexistente, sem perfil ou com senha errada dao a mesma resposta - nao revela quais
+    # logins existem
     if not linhas:
-        return jsonify({"ok": False, "msg": "usuario não encontrado"}), 401
+        _registrar_falha_login(usuario)
+        return jsonify({"ok": False, "msg": MSG_LOGIN_INVALIDO}), 401
 
     linha = linhas[0]
     sistemausuario = _buscar_sistemausuario(linha["identificacao"])
     if not sistemausuario or not sistemausuario["sistemaperfil"]:
-        return jsonify({"ok": False, "msg": "Usuário sem perfil de acesso cadastrado. Procure o administrador."}), 403
+        _registrar_falha_login(usuario)
+        return jsonify({"ok": False, "msg": MSG_LOGIN_INVALIDO}), 401
 
     # usuario sem armazem em armazemfunc loga normalmente - so nao traz item nenhum nas paginas
     # que filtram por armazem (SQL_ARMAZENS_DO_USUARIO devolve zero linhas pra ele, e "IN (zero
@@ -200,7 +338,11 @@ def login():
         return jsonify({"ok": False, "precisa_criar_senha": True, "identificacao": linha["identificacao"]})
 
     if not senha or not check_password_hash(sistemausuario["senha_hash"], senha):
-        return jsonify({"ok": False, "msg": "Senha incorreta"}), 401
+        _registrar_falha_login(usuario)
+        return jsonify({"ok": False, "msg": MSG_LOGIN_INVALIDO}), 401
+
+    _limpar_falhas_login(usuario)
+    _iniciar_sessao(linha["identificacao"], eh_admin)
 
     paginas = PAGINAS_SISTEMA_CHAVES if eh_admin else _paginas_do_perfil(sistemausuario["sistemaperfil"])
 
@@ -234,15 +376,17 @@ def api_definir_senha():
     if not identificacao or len(senha) < 6:
         return jsonify({"ok": False, "msg": "Senha deve ter pelo menos 6 caracteres"}), 400
 
-    sistemausuario = _buscar_sistemausuario(identificacao)
-    if not sistemausuario:
-        return jsonify({"ok": False, "msg": "Usuário sem perfil de acesso cadastrado. Procure o administrador."}), 403
-
-    run_query("""
+    # so grava se ainda NAO tem senha (primeiro acesso ou senha resetada pelo administrador) - a
+    # condicao fica no proprio UPDATE pra nao abrir brecha entre conferir e gravar. sem isso,
+    # qualquer um trocava a senha de qualquer usuario (inclusive administrador)
+    atualizado = run_query("""
         UPDATE sist_logistica.sistemausuario
         SET senha_hash = %s, _update = now()
-        WHERE identificacao = %s
+        WHERE identificacao = %s AND senha_hash IS NULL
+        RETURNING sistemausuario
     """, [generate_password_hash(senha), identificacao])
+    if not atualizado:
+        return jsonify({"ok": False, "msg": "Não é possível definir senha para este usuário. Procure o administrador."}), 403
 
     return jsonify({"ok": True})
 
@@ -771,7 +915,11 @@ def api_editar_configuracao_banco():
         return jsonify({"ok": False, "msg": "Porta inválida"}), 400
 
     novo_config = {"host": host, "port": porta, "dbname": dbname, "user": usuario}
-    # senha em branco mantem a senha atual - evita ter que redigitar so pra trocar o host, por ex.
+    # senha em branco mantem a atual so se o servidor e o usuario continuam os mesmos (ex.: trocar
+    # so o nome do banco) - apontar pra outro host com a senha antiga mandaria essa senha pra ele
+    mesmo_servidor = (host, porta, usuario) == (DB_CONFIG.get("host"), DB_CONFIG.get("port"), DB_CONFIG.get("user"))
+    if not senha and not mesmo_servidor:
+        return jsonify({"ok": False, "msg": "Informe a senha ao trocar host, porta ou usuário"}), 400
     novo_config["password"] = senha if senha else DB_CONFIG["password"]
 
     salvar_config(novo_config)
@@ -1005,7 +1153,7 @@ def _fragmento_filtro_armazem(alias_coluna, usuario_logado, armazem_nome):
 def api_usuario_armazens():
     # armazens que o usuario logado tem em armazemfunc - usado pra decidir se mostra o campo de
     # filtro de armazem (administrador ou mais de um armazem) e pra popular as opcoes dele
-    usuario_logado = request.args.get("usuario_logado")
+    usuario_logado = _usuario_sessao()
     if not usuario_logado:
         return jsonify([])
 
@@ -1058,7 +1206,7 @@ SQL_PRODUTO_TEM_CONTRATO_VALIDO = """
                 SELECT MAX(pc2.numeroaditivo) FROM public.pedidocabecalho pc2
                 WHERE pc2.numeroidentificacao = pc_ctr.numeroidentificacao
             )
-            AND pc_latest.datafim > CURRENT_DATE
+            AND pc_latest.datafim >= CURRENT_DATE
         )
     )
 """
@@ -1127,7 +1275,7 @@ def api_vencidos_armazens():
     # armazens que tem pelo menos um produto vencido com estoque > 0 - usado pra popular o filtro
     # de armazem em vencidos.html (em vez da lista cheia de armazens, so quem realmente tem
     # produto vencido). restrito aos armazens do usuario logado quando ele nao eh administrador
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     condicoes = ["l.validade < CURRENT_DATE", "e.quantidade > 0"]
     params = []
     if usuario_logado:
@@ -1152,7 +1300,7 @@ def api_estoque_armazens():
     # armazens de qualquer tipo que tem pelo menos um produto com estoque > 0 - usado pra popular
     # o filtro de armazem em estoque.html (em vez da lista cheia de armazens, so quem realmente
     # tem estoque). restrito aos armazens do usuario logado quando ele nao eh administrador
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     condicoes = ["e.quantidade > 0"]
     params = []
     if usuario_logado:
@@ -1178,7 +1326,7 @@ def api_estoque_critico_armazens():
     # cheia de armazens tipo C, so quem realmente tem produto na lista). mesmo criterio
     # "insuficiente" (e o mesmo default) de /api/estoque_critico. restrito aos armazens do usuario
     # logado quando ele nao eh administrador
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     limite_alerta_por_tipo = {
         "minimo": "ea.estoqueminimo",
         "seguranca": "ea.estoqueseguranca",
@@ -1224,7 +1372,7 @@ def api_pedidos_novos():
     data_fim = request.args.get("data_fim")
     armazem = request.args.get("armazem")
     setor = request.args.get("setor")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
 
     # so entra em "novos pedidos" quem ainda nao foi tocado - se algum item da requisicao ja virou
     # saida (saidaitem), o pedido ja esta em processamento e passa a aparecer em "pedidos a separar"
@@ -1408,7 +1556,7 @@ def _filtros_consumo(args):
     data_inicio = args.get("data_inicio") or "2026-10-01"
     data_fim = args.get("data_fim")
     armazem = args.get("armazem")
-    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     # origem do lote: "cd" = fornecedor 13276609 (CENTRO DE DISTRIBUICAO SESA / C.D SESA), "hospital"
     # = qualquer outro fornecedor (ou sem fornecedor) - separa "Itens Movimentados" em duas listas
     origem = args.get("origem")
@@ -2168,7 +2316,7 @@ def api_consumo_xlsx():
 def api_separacao_ativa():
     # pedido que esse usuario ja reivindicou e ainda nao concluiu (_creation = _update) - usado
     # pra bloquear "Separar Pedido" em outro pedido e mostrar a mensagem "pedido em separacao"
-    usuario_id = _resolver_usuario_id(request.args.get("usuario_logado"))
+    usuario_id = _resolver_usuario_id(_usuario_sessao())
     if not usuario_id:
         return jsonify(None)
 
@@ -2191,7 +2339,7 @@ def api_separar_pedido():
     # _creation = agora (o momento da selecao)
     dados = request.get_json(force=True)
     saidacabecalho = dados.get("saidacabecalho")
-    usuario_id = _resolver_usuario_id(dados.get("usuario_logado"))
+    usuario_id = _resolver_usuario_id(_usuario_sessao())
 
     if not saidacabecalho or not usuario_id:
         return jsonify({"ok": False, "msg": "dados incompletos"}), 400
@@ -2235,7 +2383,7 @@ def api_pedidos_em_separacao():
     # a consulta parte de armazemmovimentacao (tabela pequena - so reivindicacoes ativas) e so
     # depois junta com saidacabecalho pela PK - NUNCA um JOIN LATERAL correlacionado por linha de
     # saidacabecalho (tabela com mais de 1 milhao de linhas), que forcava um scan completo dela
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
 
     condicoes = ["sc.status <> 'E'"]
     params = []
@@ -2308,7 +2456,7 @@ def api_separacao_concluir():
     # _creation (quando foi selecionado) e trocando _update pra agora (quando foi concluido)
     dados = request.get_json(force=True)
     saidacabecalho = dados.get("saidacabecalho")
-    usuario_id = _resolver_usuario_id(dados.get("usuario_logado"))
+    usuario_id = _resolver_usuario_id(_usuario_sessao())
 
     if not saidacabecalho or not usuario_id:
         return jsonify({"ok": False, "msg": "dados incompletos"}), 400
@@ -2385,7 +2533,7 @@ def api_pedidos_separacao():
         data_fim=request.args.get("data_fim"),
         armazem=request.args.get("armazem"),
         setor=request.args.get("setor"),
-        usuario_logado=request.args.get("usuario_logado"),
+        usuario_logado=_usuario_sessao(),
     )
 
 
@@ -2400,7 +2548,7 @@ def api_pedidos_distribuicao():
         data_fim=request.args.get("data_fim"),
         armazem=request.args.get("armazem"),
         setor=request.args.get("setor"),
-        usuario_logado=request.args.get("usuario_logado"),
+        usuario_logado=_usuario_sessao(),
         condicoes_base=["sc.status <> 'E'", SQL_SEPARACAO_CONCLUIDA, f"NOT {SQL_DISTRIBUICAO_RECLAMADA}"],
     )
 
@@ -2411,7 +2559,7 @@ def api_pedidos_em_distribuicao():
     # pra todo mundo, igual pedidos_em_separacao. Uma vez concluido, sai daqui e vai pra finalizados
     # mesma logica de performance: parte de armazemmovimentacao (pequena) e so depois junta com
     # saidacabecalho pela PK, nunca um JOIN LATERAL correlacionado por linha de saidacabecalho
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
 
     condicoes = ["sc.status <> 'E'"]
     params = []
@@ -2456,7 +2604,7 @@ def api_pedidos_em_distribuicao():
 def api_distribuicao_ativos():
     # pedidos que esse usuario ja reivindicou pra distribuicao e ainda estao em andamento - usado
     # pra saber quantas vagas restam (limite de 10 simultaneos) e travar os checkboxes na tela
-    usuario_id = _resolver_usuario_id(request.args.get("usuario_logado"))
+    usuario_id = _resolver_usuario_id(_usuario_sessao())
     if not usuario_id:
         return jsonify([])
 
@@ -2477,7 +2625,7 @@ def api_distribuir_pedidos():
     # 1 por vez). Conta quantos esse usuario ja tem em andamento e nao deixa passar do limite
     dados = request.get_json(force=True)
     saidacabecalhos = dados.get("saidacabecalhos") or []
-    usuario_id = _resolver_usuario_id(dados.get("usuario_logado"))
+    usuario_id = _resolver_usuario_id(_usuario_sessao())
 
     if not saidacabecalhos or not usuario_id:
         return jsonify({"ok": False, "msg": "dados incompletos"}), 400
@@ -2558,7 +2706,7 @@ def api_distribuicao_concluir():
     # pedido reivindicado se conclui de forma independente (nao trava os outros 9)
     dados = request.get_json(force=True)
     saidacabecalho = dados.get("saidacabecalho")
-    usuario_id = _resolver_usuario_id(dados.get("usuario_logado"))
+    usuario_id = _resolver_usuario_id(_usuario_sessao())
 
     if not saidacabecalho or not usuario_id:
         return jsonify({"ok": False, "msg": "dados incompletos"}), 400
@@ -2594,7 +2742,7 @@ def api_pedidos_finalizados():
     data_fim = request.args.get("data_fim")
     armazem = request.args.get("armazem")
     setor = request.args.get("setor")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
 
     # sem ::date pra continuar sargable (indice em (status, data))
     condicoes = [f"(sc.status = 'E' OR {SQL_DISTRIBUICAO_CONCLUIDA})", "sc.data >= %s"]
@@ -2643,7 +2791,7 @@ def api_separacao_pedidos():
         data_inicio=request.args.get("data_inicio"),
         data_fim=request.args.get("data_fim"),
         setor=request.args.get("unidade"),
-        usuario_logado=request.args.get("usuario_logado"),
+        usuario_logado=_usuario_sessao(),
     )
 
 
@@ -2939,7 +3087,7 @@ def api_vencidos():
     nome_produto = request.args.get("nome_produto")
     descricao = request.args.get("descricao")
     lote = request.args.get("lote")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = request.args.get("armazem")
     try:
         pagina = max(int(request.args.get("pagina", 1)), 1)
@@ -3052,7 +3200,7 @@ def _filtros_vencidos_relatorio(args):
     nome_produto = args.get("nome_produto")
     descricao = args.get("descricao")
     lote = args.get("lote")
-    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = args.get("armazem")
 
     condicoes = ["l.validade < CURRENT_DATE", "e.quantidade > 0"]
@@ -3293,7 +3441,7 @@ def api_vencidos_lotes():
     # aquele lote vencido esta
     produto = request.args.get("produto")
     lote = request.args.get("lote")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = request.args.get("armazem")
     if not produto:
         return jsonify([])
@@ -3358,7 +3506,7 @@ def _filtros_estoque(args):
     lote = args.get("lote")
     classe = args.get("classe")
     subgrupo = args.get("subgrupo")
-    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = args.get("armazem")
     origem = args.get("origem")
 
@@ -3569,7 +3717,7 @@ def _dados_estoque_posicao_historica(args, origem, data_posicao):
     lote = args.get("lote")
     subgrupo = args.get("subgrupo")
     armazem = args.get("armazem")
-    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
 
     filtro_origem = ""
     if origem == "cd":
@@ -3767,7 +3915,7 @@ def api_estoque_lotes():
     # ordenado do lote que vence primeiro pro que vence por ultimo
     produto = request.args.get("produto")
     lote = request.args.get("lote")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     if not produto:
         return jsonify([])
 
@@ -3872,7 +4020,7 @@ def api_estoque_contratos():
                     SELECT MAX(pc2.numeroaditivo) FROM public.pedidocabecalho pc2
                     WHERE pc2.numeroidentificacao = pc.numeroidentificacao
                 )
-                AND pc_latest.datafim > CURRENT_DATE
+                AND pc_latest.datafim >= CURRENT_DATE
             )
         """)
 
@@ -4021,7 +4169,7 @@ def api_estoque_abastecimento():
     if not produto:
         return jsonify([])
 
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = request.args.get("armazem")
     filtro_armazem, params_armazem = _fragmento_filtro_armazem("arm.armazem", usuario_logado, armazem)
 
@@ -4124,7 +4272,7 @@ def api_estoque_critico():
     lote = request.args.get("lote")
     classe = request.args.get("classe")
     subgrupo = request.args.get("subgrupo")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = request.args.get("armazem")
     origem = request.args.get("origem")
     # qual limite usar pra decidir "insuficiente": estoque minimo (30d), estoque de seguranca
@@ -4298,7 +4446,7 @@ def api_painel_contadores():
     # os 5 numeros dos cards do painel de chamada - mesmo filtro de data/armazem que cada tela de
     # origem usa, so trocando a lista inteira por um count(*) (fica leve pro painel dar poll)
     data_inicio = request.args.get("data_inicio") or "2026-10-01"
-    usuario_logado_raw = request.args.get("usuario_logado")
+    usuario_logado_raw = _usuario_sessao()
     usuario_logado = _usuario_para_filtro_armazem(usuario_logado_raw)
     # selecao manual de armazem (dropdown do painel, so aparece pra admin/sem-login) - prevalece
     # sobre o armazem implicito do usuario logado
@@ -4355,7 +4503,7 @@ def api_painel_chamados():
     # "chamados" = mudancas de etapa ja registradas em armazemmovimentacao (inicio/fim de
     # separacao e de distribuicao) - novos pedidos e pedidos a separar ainda nao tem linha nessa
     # tabela, entao so entram no painel de chamada quando alguem reivindica pra separacao
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = request.args.get("armazem")
     try:
         limite = max(int(request.args.get("limite", 5)), 1)
@@ -5178,7 +5326,7 @@ def _valor_data_sesa(valor, com_hora=False):
 
 def _ler_planilha_sesa(conteudo):
     # devolve (linhas, resumo) - linhas ja no formato de processosesaitem (sem as chaves de FK)
-    pasta = openpyxl.load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
+    pasta = load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
     linhas = []
     abas_importadas = []
     abas_ignoradas = []
@@ -5286,6 +5434,9 @@ def api_importar_processos_sesa():
     if not arquivo.filename.lower().endswith(".xlsx"):
         return jsonify({"ok": False, "msg": "Envie um arquivo .xlsx"}), 400
 
+    if not OPENPYXL_DISPONIVEL:
+        return jsonify({"ok": False, "msg": "Importação indisponível: biblioteca openpyxl não instalada no servidor."}), 500
+
     conteudo = arquivo.read()
     if len(conteudo) > TAMANHO_MAXIMO_PLANILHA_SESA:
         return jsonify({"ok": False, "msg": "Arquivo muito grande (máximo 30MB)"}), 400
@@ -5315,7 +5466,7 @@ def api_importar_processos_sesa():
                 INSERT INTO sist_logistica.processosesaimportacao (arquivo, usuario, total_itens)
                 VALUES (%s, %s, %s)
                 RETURNING processosesaimportacao
-            """, [arquivo.filename, request.form.get("usuario_logado") or None, len(linhas)])
+            """, [arquivo.filename, _usuario_sessao() or None, len(linhas)])
             importacao = cursor.fetchone()[0]
 
             # ocorrencia: 1a, 2a... linha com a mesma chave dentro do arquivo
@@ -5595,7 +5746,7 @@ def api_itens_processo_sesa():
         """, params + [request.args.get("processo_exato", "")])
         itens = itens or []
         if request.args.get("lista") == "hospital":
-            _incluir_estoque_e_saldos(itens, _usuario_para_filtro_armazem(request.args.get("usuario_logado")))
+            _incluir_estoque_e_saldos(itens, _usuario_para_filtro_armazem(_usuario_sessao()))
     except Exception as erro:
         return jsonify({"erro": str(erro)}), 500
     return jsonify(sorted(itens, key=_chave_numero_item))
@@ -5762,7 +5913,7 @@ def api_mover_processo_sesa():
             ON CONFLICT (processo, codigo_srp)
             DO UPDATE SET acao = EXCLUDED.acao, usuario = EXCLUDED.usuario, _update = now()
         """, [item[0]["processo"], item[0]["codigo_srp"], "I" if destino == "hospital" else "R",
-              dados.get("usuario_logado") or None])
+              _usuario_sessao() or None])
     except Exception as erro:
         return jsonify({"ok": False, "msg": str(erro)}), 500
 
@@ -5792,7 +5943,7 @@ def _resposta_sem_permissao_edicao():
 @app.route("/api/processos_hospital/permissoes")
 def api_permissoes_processo_hospital():
     try:
-        return jsonify({"pode_editar": _usuario_pode_editar_processo(request.args.get("usuario_logado"))})
+        return jsonify({"pode_editar": _usuario_pode_editar_processo(_usuario_sessao())})
     except Exception:
         return jsonify({"pode_editar": False})
 
@@ -5826,7 +5977,7 @@ def api_dados_edicao_processo_hospital():
 @app.route("/api/processos_hospital/edicao", methods=["PUT"])
 def api_editar_processo_hospital():
     dados = request.get_json(force=True)
-    if not _usuario_pode_editar_processo(dados.get("usuario_logado")):
+    if not _usuario_pode_editar_processo(_usuario_sessao()):
         return _resposta_sem_permissao_edicao()
 
     processo = (dados.get("processo") or "").strip()
@@ -5856,7 +6007,7 @@ def api_editar_processo_hospital():
                 pregao = EXCLUDED.pregao, ata = EXCLUDED.ata, vigencia = EXCLUDED.vigencia,
                 data_abertura = EXCLUDED.data_abertura, usuario = EXCLUDED.usuario, _update = now()
         """, [processo, texto("tipo_aquisicao"), texto("status"), texto("etapa"), texto("pregao"),
-              texto("ata"), texto("vigencia"), data_abertura, dados.get("usuario_logado")])
+              texto("ata"), texto("vigencia"), data_abertura, _usuario_sessao()])
     except Exception as erro:
         return jsonify({"ok": False, "msg": str(erro)}), 500
     return jsonify({"ok": True})
@@ -5915,7 +6066,7 @@ def _validar_processo_manual(dados):
         "status": (dados.get("status") or "").strip() or None,
         "etapa": (dados.get("etapa") or "").strip() or None,
         "data_abertura": data_abertura,
-        "usuario": dados.get("usuario_logado") or None,
+        "usuario": _usuario_sessao() or None,
     }
     return campos, produtos
 
@@ -6010,7 +6161,7 @@ def api_criar_processo_manual():
 
 @app.route("/api/processos_hospital_manual/<int:processohospitalmanual>", methods=["PUT"])
 def api_editar_processo_manual(processohospitalmanual):
-    if not _usuario_pode_editar_processo(request.get_json(force=True).get("usuario_logado")):
+    if not _usuario_pode_editar_processo(_usuario_sessao()):
         return _resposta_sem_permissao_edicao()
     return _salvar_processo_manual(processohospitalmanual)
 
@@ -6041,7 +6192,7 @@ def api_processo_manual(processohospitalmanual):
 
 @app.route("/api/processos_hospital_manual/<int:processohospitalmanual>", methods=["DELETE"])
 def api_excluir_processo_manual(processohospitalmanual):
-    if not _usuario_pode_editar_processo(request.args.get("usuario_logado")):
+    if not _usuario_pode_editar_processo(_usuario_sessao()):
         return _resposta_sem_permissao_edicao()
     try:
         run_query("DELETE FROM sist_logistica.processohospitalmanual WHERE processohospitalmanual = %s",
@@ -6086,7 +6237,7 @@ def _sql_planejamento_aquisicao(args, produtos=None):
     # (ou do armazem escolhido), nos ultimos 6 meses ate hoje - data no futuro eh lixo de digitacao
     # na base e fica de fora. produtos=None: so quem teve consumo no periodo (botao Gerar);
     # lista de ids: esses produtos, mesmo sem consumo (botao Inserir itens)
-    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = args.get("armazem")
     filtro_saida, params_saida = _fragmento_filtro_armazem("sc.armazem", usuario_logado, armazem)
     filtro_estoque, params_estoque = _fragmento_filtro_armazem("e2.armazem", usuario_logado, armazem)
@@ -6307,11 +6458,29 @@ def api_planejamento_aquisicao_exportar():
     )
 
 
-if __name__ == "__main__":
+def _migracoes_de_inicio():
+    # roda ao importar o modulo (python app.py ou gunicorn) - idempotente, e banco fora do ar so
+    # avisa no log em vez de derrubar o servidor
     try:
         if not _erro_conexao_banco() and _schema_sist_logistica_existe():
             _migrar_chave_aquisicoes()
     except Exception as erro:
         print(f"migracao aquisicoes -> estoque_critico nao rodou: {erro}")
-    # fogo aceso, sistema roda
-    app.run(host="0.0.0.0", debug=True, port=5000)
+
+
+# testes automatizados importam o app sem banco (APP_SEM_MIGRACAO_INICIO=1)
+if os.environ.get("APP_SEM_MIGRACAO_INICIO") != "1":
+    _migracoes_de_inicio()
+
+
+if __name__ == "__main__":
+    # servidor de desenvolvimento. debug (recarrega ao salvar + depurador interativo) so com
+    # APP_DEBUG=1 - nunca em producao: o depurador do werkzeug executa codigo pelo navegador.
+    # producao usa gunicorn (ver Dockerfile)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("APP_PORT", "5000")),
+        debug=os.environ.get("APP_DEBUG") == "1",
+        # recarrega ao salvar arquivo, sem ligar o depurador (docker-compose de desenvolvimento)
+        use_reloader=os.environ.get("APP_RELOAD") == "1" or os.environ.get("APP_DEBUG") == "1",
+    )

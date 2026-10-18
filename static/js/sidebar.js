@@ -121,14 +121,48 @@ function protegerPagina() {
   }
 }
 
-// tira o cracha e manda de volta pra entrada
-function sair() {
+function limparDadosLogin() {
   localStorage.removeItem("usuario");
   localStorage.removeItem("identificacao");
   localStorage.removeItem("administrador");
   localStorage.removeItem("paginas");
   localStorage.removeItem("modo_configuracao");
+}
+
+// tira o cracha e manda de volta pra entrada - encerra a sessao no servidor tambem (cookie)
+async function sair() {
+  try {
+    await fetchOriginal("/api/logout", { method: "POST" });
+  } catch (e) {
+    // sem servidor, so limpa o lado do navegador
+  }
+  limparDadosLogin();
   window.location.href = "/";
+}
+
+// a sessao de verdade eh o cookie do servidor (o localStorage so guarda nome/menu pra desenhar a
+// tela). qualquer /api/ que responder 401 = sessao expirou ou nao existe: volta pro login
+const fetchOriginal = window.fetch.bind(window);
+window.fetch = async (...argumentos) => {
+  const resposta = await fetchOriginal(...argumentos);
+  const url = String(argumentos[0] instanceof Request ? argumentos[0].url : argumentos[0]);
+  if (resposta.status === 401 && url.includes("/api/") && !url.includes("/api/login")) {
+    limparDadosLogin();
+    window.location.href = "/";
+  }
+  return resposta;
+};
+
+// escapa texto pra colocar dentro de HTML (conteudo ou atributo entre aspas) - todo dado vindo do
+// banco/planilha passa por aqui antes de ir pra innerHTML, senao um nome com "<script>" rodaria
+function escaparHtml(valor) {
+  if (valor === null || valor === undefined) return "";
+  return String(valor)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 // login (identificacao) de quem esta na tela, usado pra filtrar por armazem

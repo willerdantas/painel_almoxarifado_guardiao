@@ -139,9 +139,9 @@
 
       painel.innerHTML = `
         <span class="chamada-rotulo">Chamando</span>
-        <span class="chamada-numero">${chamada.numero_pedido ?? ""}</span>
-        <span class="chamada-requisitante">${chamada.requisitante ?? ""}</span>
-        <span class="chamada-etapa">${chamada.etapa ?? ""}</span>
+        <span class="chamada-numero">${escaparHtml(chamada.numero_pedido)}</span>
+        <span class="chamada-requisitante">${escaparHtml(chamada.requisitante)}</span>
+        <span class="chamada-etapa">${escaparHtml(chamada.etapa)}</span>
       `;
     }
 
@@ -158,11 +158,11 @@
           (chamado) => `
         <li>
           <div class="chamado-info">
-            <span class="chamado-numero">${chamado.numero_pedido ?? ""}</span>
-            <span class="chamado-requisitante">${chamado.requisitante ?? ""}</span>
-            <span class="chamado-status">${chamado.etapa ?? ""}</span>
+            <span class="chamado-numero">${escaparHtml(chamado.numero_pedido)}</span>
+            <span class="chamado-requisitante">${escaparHtml(chamado.requisitante)}</span>
+            <span class="chamado-status">${escaparHtml(chamado.etapa)}</span>
           </div>
-          <span class="chamado-momento">${chamado.data_chamada ?? ""}<br />${chamado.hora_chamada ?? ""}</span>
+          <span class="chamado-momento">${escaparHtml(chamado.data_chamada)}<br />${escaparHtml(chamado.hora_chamada)}</span>
         </li>`
         )
         .join("");

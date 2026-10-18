@@ -231,17 +231,17 @@
         .map(
           (item) => `
         <tr>
-          <td>${item.cod_seplag ?? ""}</td>
-          <td>${item.cod_almox ?? ""}</td>
-          <td>${item.cod_produto ?? ""}</td>
-          <td class="celula-quebra">${item.nome_produto ?? ""}</td>
-          <td class="celula-quebra">${item.descricao_produto ?? ""}</td>
-          <td>${item.lote ?? ""}</td>
-          <td>${item.tipo_movimentacao ?? ""}</td>
+          <td>${escaparHtml(item.cod_seplag)}</td>
+          <td>${escaparHtml(item.cod_almox)}</td>
+          <td>${escaparHtml(item.cod_produto)}</td>
+          <td class="celula-quebra">${escaparHtml(item.nome_produto)}</td>
+          <td class="celula-quebra">${escaparHtml(item.descricao_produto)}</td>
+          <td>${escaparHtml(item.lote)}</td>
+          <td>${escaparHtml(item.tipo_movimentacao)}</td>
           <td>${formatarQuantidade(item.quantidade)}</td>
           <td>${formatarMoeda(item.valor_unitario)}</td>
           <td>${formatarMoeda(item.valor_total)}</td>
-          <td>${item.data_movimentacao ?? ""}</td>
+          <td>${escaparHtml(item.data_movimentacao)}</td>
         </tr>`
         )
         .join("");
@@ -325,7 +325,7 @@
           (novaPagina) => buscarMovimentacoes(origem, novaPagina)
         );
       } catch (erro) {
-        container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${erro}</p>`;
+        container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${escaparHtml(erro)}</p>`;
         document.getElementById(`areaPaginacao${sufixo}`).innerHTML = "";
       }
     }
@@ -384,7 +384,7 @@
         }
 
         caixaSugestoes.innerHTML = dados
-          .map((item) => `<div class="item-sugestao" data-nome="${item.nome_produto}">${item.nome_produto}</div>`)
+          .map((item) => `<div class="item-sugestao" data-nome="${escaparHtml(item.nome_produto)}">${escaparHtml(item.nome_produto)}</div>`)
           .join("");
         caixaSugestoes.classList.add("aberto");
 
@@ -435,7 +435,7 @@
         caixaSugestoesDescricao.innerHTML = dados
           .map(
             (item) =>
-              `<div class="item-sugestao" data-descricao="${item.descricao_produto.replace(/"/g, "&quot;")}">${item.descricao_produto}</div>`
+              `<div class="item-sugestao" data-descricao="${escaparHtml(item.descricao_produto)}">${escaparHtml(item.descricao_produto)}</div>`
           )
           .join("");
         caixaSugestoesDescricao.classList.add("aberto");
