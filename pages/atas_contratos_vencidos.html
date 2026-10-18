@@ -186,6 +186,14 @@
         </th>`;
     }
 
+    // numero da versao atual (cada renovacao/aditivo ganha numero proprio no Guardiao) - quando
+    // mudou desde o original, mostra o original embaixo pra ainda dar pra reconhecer o contrato
+    function celulaNumero(atual, original) {
+      const texto = escaparHtml(atual);
+      if (!original || original === atual) return texto;
+      return `${texto}<span class="numero-original">original: ${escaparHtml(original)}</span>`;
+    }
+
     function renderizarContratos(dados, containerId) {
       const container = document.getElementById(containerId);
 
@@ -203,8 +211,8 @@
           <td>${formatarCnpj(linha.cnpj)}</td>
           <td>${escaparHtml(linha.fornecedor)}</td>
           <td>${escaparHtml(linha.nome_fantasia)}</td>
-          <td>${escaparHtml(linha.num_ata)}</td>
-          <td>${escaparHtml(linha.num_contrato)}</td>
+          <td>${celulaNumero(linha.num_ata, linha.num_ata_original)}</td>
+          <td>${celulaNumero(linha.num_contrato, linha.num_contrato_original)}</td>
           <td>${escaparHtml(linha.data_inicio)}</td>
           <td>${escaparHtml(linha.data_fim)}</td>
           <td>${escaparHtml(linha.prazo)}</td>

@@ -1846,3 +1846,10 @@ body.pagina-dashboard .duas-tabelas table.tabela-dados td {
   margin-left: auto;
   color: var(--vermelho);
 }
+
+/* atas_contratos: numero do contrato/ata original quando o aditivo atual tem outro numero */
+.numero-original {
+  display: block;
+  font-size: 11px;
+  color: #889;
+}

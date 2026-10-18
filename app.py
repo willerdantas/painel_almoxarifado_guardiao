@@ -4568,8 +4568,8 @@ COLUNAS_ORDENACAO_ATAS_CONTRATOS = {
     "cnpj": "pj.cnpj",
     "fornecedor": "pes.nome",
     "nome_fantasia": "pj.nomefantasia",
-    "num_ata": "pc.numeroata",
-    "num_contrato": "pc.numerocontrato",
+    "num_ata": "ult.numeroata",
+    "num_contrato": "ult.numerocontrato",
     "data_inicio": "pc.datainicio",
     "data_fim": "ult.efetivo",
     "prazo": "ult.efetivo",
@@ -4600,13 +4600,23 @@ def api_atas_contratos():
     except ValueError:
         pagina = 1
 
-    # so a linha base (numeroaditivo = 0) representa uma ata/contrato na listagem -
-    # os aditivos aparecem por fora, sob demanda, em /api/atas_contratos_aditivos
+    # uma linha por familia (numeroidentificacao), ancorada na linha base (numeroaditivo = 0) - mas
+    # no Guardiao cada renovacao (aditivo) eh quase um contrato novo: numero proprio, fornecedor,
+    # itens e saldo proprios. por isso numero/fornecedor/tipo/data fim saem do aditivo MAIS RECENTE
+    # ("ult") e itens/saldo do aditivo mais recente que tem itens ("vig") - ver base_from. a data
+    # de inicio continua a da base (quando o contrato comecou). historico em /api/atas_contratos_aditivos
     condicoes = ["pc.numeroaditivo = 0"]
     params = []
 
     if numero_ata_contrato:
-        condicoes.append("(pc.numeroata ILIKE %s OR pc.numerocontrato ILIKE %s)")
+        # acha pelo numero de qualquer versao (original ou aditivo)
+        condicoes.append("""
+            EXISTS (
+                SELECT 1 FROM public.pedidocabecalho pc_num
+                WHERE pc_num.numeroidentificacao = pc.numeroidentificacao
+                AND (pc_num.numeroata ILIKE %s OR pc_num.numerocontrato ILIKE %s)
+            )
+        """)
         params.append(f"%{numero_ata_contrato}%")
         params.append(f"%{numero_ata_contrato}%")
     if cnpj:
@@ -4622,7 +4632,7 @@ def api_atas_contratos():
             EXISTS (
                 SELECT 1 FROM public.pedidoitem pi
                 JOIN public.produto p ON p.produto = pi.produto
-                WHERE pi.pedidocabecalho = pc.pedidocabecalho AND p.codigoreferencia ILIKE %s
+                WHERE pi.pedidocabecalho = vig.pedidocabecalho AND p.codigoreferencia ILIKE %s
             )
         """)
         params.append(f"%{cod_seplag}%")
@@ -4631,7 +4641,7 @@ def api_atas_contratos():
             EXISTS (
                 SELECT 1 FROM public.pedidoitem pi
                 JOIN public.produto p ON p.produto = pi.produto
-                WHERE pi.pedidocabecalho = pc.pedidocabecalho AND p.nome ILIKE %s
+                WHERE pi.pedidocabecalho = vig.pedidocabecalho AND p.nome ILIKE %s
             )
         """)
         params.append(f"%{produto}%")
@@ -4647,14 +4657,14 @@ def api_atas_contratos():
                 JOIN public.estoquearmazem ea ON ea.produto = pi.produto
                 JOIN public.armazem arm ON arm.armazem = ea.armazem
                 LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
-                WHERE pi.pedidocabecalho = pc.pedidocabecalho
+                WHERE pi.pedidocabecalho = vig.pedidocabecalho
                 AND pes_arm.nome = %s
                 AND arm.tipoarmazem = 'C'
             )
         """)
         params.append(armazem)
     if tipo_pedido:
-        condicoes.append("pc.tipopedido = %s")
+        condicoes.append("COALESCE(ult.tipopedido, pc.tipopedido) = %s")
         params.append(tipo_pedido)
     # filtro de periodo: traz contratos cuja data de inicio E data fim (efetiva, maior aditivo)
     # caem dentro do intervalo informado - os dois extremos do contrato "cabem" no filtro
@@ -4676,36 +4686,55 @@ def api_atas_contratos():
         condicoes.append("ult.efetivo < CURRENT_DATE")
     # atapreco = 'S' quer dizer que o pedido eh uma ata (de registro de preco) - uma ata pode gerar
     # contrato (atapreco = 'N') usando so parte do saldo dela, por isso os dois viram secoes separadas
+    # tipo (atapreco) da versao mais recente que tem o campo preenchido - base antiga as vezes vem
+    # com atapreco nulo, e a familia sumia das duas secoes
     if tipo == "ata":
-        condicoes.append("pc.atapreco = 'S'")
+        condicoes.append("tp.atapreco = 'S'")
     elif tipo == "contrato":
-        condicoes.append("pc.atapreco = 'N'")
+        condicoes.append("tp.atapreco = 'N'")
 
     where = f"WHERE {' AND '.join(condicoes)}"
 
     base_from = f"""
         FROM public.pedidocabecalho pc
-        JOIN public.fornecedor forn ON forn.fornecedor = pc.fornecedor
-        JOIN public.pessoa pes ON pes.pessoa = forn.pessoa
-        LEFT JOIN public.pessoajuridica pj ON pj.pessoa = forn.pessoa
+        -- versao mais recente (original ou aditivo): numero, fornecedor, data fim
         LEFT JOIN LATERAL (
             SELECT
                 pc2.datafim AS efetivo,
-                (
-                    SELECT SUM(pc3.totalpedido) FROM public.pedidocabecalho pc3
-                    WHERE pc3.numeroidentificacao = pc.numeroidentificacao
-                ) AS valor_total,
-                (
-                    SELECT SUM(pi.quantidadeentregue * pi.valorunitario)
-                    FROM public.pedidoitem pi
-                    JOIN public.pedidocabecalho pc4 ON pc4.pedidocabecalho = pi.pedidocabecalho
-                    WHERE pc4.numeroidentificacao = pc.numeroidentificacao
-                ) AS saldo_utilizado
+                pc2.numeroaditivo,
+                pc2.numeroata,
+                pc2.numerocontrato,
+                pc2.fornecedor,
+                pc2.tipopedido
             FROM public.pedidocabecalho pc2
             WHERE pc2.numeroidentificacao = pc.numeroidentificacao
             ORDER BY pc2.numeroaditivo DESC
             LIMIT 1
         ) ult ON TRUE
+        -- versao mais recente com itens (aditivo so de prazo nao tem itens): itens e saldo da barra
+        LEFT JOIN LATERAL (
+            SELECT
+                pc3.pedidocabecalho,
+                SUM(pi.quantidade * pi.valorunitario) AS valor_total,
+                SUM(COALESCE(pi.quantidadeentregue, 0) * pi.valorunitario) AS saldo_utilizado
+            FROM public.pedidocabecalho pc3
+            JOIN public.pedidoitem pi ON pi.pedidocabecalho = pc3.pedidocabecalho
+            WHERE pc3.numeroidentificacao = pc.numeroidentificacao
+            GROUP BY pc3.pedidocabecalho, pc3.numeroaditivo
+            ORDER BY pc3.numeroaditivo DESC
+            LIMIT 1
+        ) vig ON TRUE
+        -- ata ou contrato: ultimo atapreco preenchido na familia
+        LEFT JOIN LATERAL (
+            SELECT pc5.atapreco
+            FROM public.pedidocabecalho pc5
+            WHERE pc5.numeroidentificacao = pc.numeroidentificacao AND pc5.atapreco IS NOT NULL
+            ORDER BY pc5.numeroaditivo DESC
+            LIMIT 1
+        ) tp ON TRUE
+        JOIN public.fornecedor forn ON forn.fornecedor = COALESCE(ult.fornecedor, pc.fornecedor)
+        JOIN public.pessoa pes ON pes.pessoa = forn.pessoa
+        LEFT JOIN public.pessoajuridica pj ON pj.pessoa = forn.pessoa
         {where}
     """
 
@@ -4731,29 +4760,32 @@ def api_atas_contratos():
 
         sql_dados = f"""
             SELECT
-                pc.pedidocabecalho AS pedidocabecalho,
+                COALESCE(vig.pedidocabecalho, pc.pedidocabecalho) AS pedidocabecalho,
                 pc.numeroidentificacao AS numeroidentificacao,
                 pj.cnpj AS cnpj,
                 pes.nome AS fornecedor,
                 pj.nomefantasia AS nome_fantasia,
-                pc.numeroata AS num_ata,
-                pc.numerocontrato AS num_contrato,
+                ult.numeroata AS num_ata,
+                ult.numerocontrato AS num_contrato,
+                pc.numeroata AS num_ata_original,
+                pc.numerocontrato AS num_contrato_original,
+                ult.numeroaditivo AS aditivo_atual,
                 to_char(pc.datainicio, 'DD-MM-YY') AS data_inicio,
                 to_char(ult.efetivo, 'DD-MM-YY') AS data_fim,
                 CASE
                     WHEN ult.efetivo >= CURRENT_DATE THEN (ult.efetivo - CURRENT_DATE)::text
                     ELSE 'Vencido'
                 END AS prazo,
-                ult.valor_total AS saldo_total,
-                COALESCE(ult.saldo_utilizado, 0) AS saldo_utilizado,
-                (ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) AS saldo_remanescente,
+                vig.valor_total AS saldo_total,
+                COALESCE(vig.saldo_utilizado, 0) AS saldo_utilizado,
+                (vig.valor_total - COALESCE(vig.saldo_utilizado, 0)) AS saldo_remanescente,
                 CASE
-                    WHEN COALESCE(ult.saldo_utilizado, 0) = 0 THEN 100
-                    ELSE ROUND((ult.valor_total / ult.saldo_utilizado) * 100, 2)
+                    WHEN COALESCE(vig.saldo_utilizado, 0) = 0 THEN 100
+                    ELSE ROUND((vig.valor_total / vig.saldo_utilizado) * 100, 2)
                 END AS percentual_utilizado,
                 CASE
-                    WHEN ult.valor_total > 0
-                    THEN ROUND(((ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) / ult.valor_total) * 100, 2)
+                    WHEN vig.valor_total > 0
+                    THEN ROUND(((vig.valor_total - COALESCE(vig.saldo_utilizado, 0)) / vig.valor_total) * 100, 2)
                     ELSE 0
                 END AS percentual_remanescente
             {base_from}
