@@ -1126,6 +1126,16 @@ tr.linha-sem-contrato:hover {
   background: #f6c7c7;
 }
 
+/* produto do Hospital com ata/contrato vigente mas saldo de atas E de contratos zerado
+   (estoque.html / estoque_critico.html) - amarelo claro, mesmo esquema do vermelho acima */
+tr.linha-contrato-sem-saldo {
+  background: #fff6cc;
+}
+
+tr.linha-contrato-sem-saldo:hover {
+  background: #ffeeb0;
+}
+
 .linha-lotes td,
 .linha-detalhe-aditivos td,
 .linha-detalhe-itens td {

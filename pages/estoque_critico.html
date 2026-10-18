@@ -188,6 +188,18 @@
       return !armazem || armazem === "ALMOXARIFADO DE MATERIAL E TECNOLOGIA HOSPITALAR";
     }
 
+    // produto do Hospital: vermelho = sem ata/contrato vigente; amarelo = tem ata/contrato vigente
+    // mas tanto o saldo das atas quanto o dos contratos acabou (quantidade - entregue <= 0). CD nao
+    // entra (nao se reabastece via ata/contrato local)
+    function classeSinalizacaoContrato(linha, prefixo) {
+      if (prefixo !== "Hospital") return "";
+      if (!linha.tem_contrato) return " linha-sem-contrato";
+      if (Number(linha.saldo_ata_vigente ?? 0) <= 0 && Number(linha.saldo_contrato_vigente ?? 0) <= 0) {
+        return " linha-contrato-sem-saldo";
+      }
+      return "";
+    }
+
     function renderizarProdutos(dados, prefixo) {
       const container = document.getElementById(`areaProdutos${prefixo}`);
       const estiloProcedimentoSus = deveExibirProcedimentoSus() ? "" : ' style="display:none"';
@@ -202,7 +214,7 @@
       const linhas = dados
         .map(
           (linha) => `
-        <tr class="linha-produto linha-produto-com-acoes${prefixo === "Hospital" && !linha.tem_contrato ? " linha-sem-contrato" : ""}" data-produto="${escaparHtml(linha.cod_produto)}" data-nome-produto="${escaparHtml(linha.nome_produto)}" data-cod-seplag="${escaparHtml(linha.cod_seplag)}" data-cod-almox="${escaparHtml(linha.cod_almox)}">
+        <tr class="linha-produto linha-produto-com-acoes${classeSinalizacaoContrato(linha, prefixo)}" data-produto="${escaparHtml(linha.cod_produto)}" data-nome-produto="${escaparHtml(linha.nome_produto)}" data-cod-seplag="${escaparHtml(linha.cod_seplag)}" data-cod-almox="${escaparHtml(linha.cod_almox)}">
           <td>${escaparHtml(linha.cod_seplag)}</td>
           <td>${escaparHtml(linha.cod_almox)}</td>
           <td>${escaparHtml(linha.cod_produto)}</td>

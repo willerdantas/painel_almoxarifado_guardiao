@@ -1189,25 +1189,16 @@ UNIDADE_PADRAO = 62438
 # passa a significar estoqueminimo > 0 (so existe ponto calculado onde tem minimo definido)
 SQL_PONTO_RESSUPRIMENTO_180D = "ROUND(ea.estoqueminimo / 30 * 180, 2)"
 
-# produto tem ata ou contrato ainda valido (familia cujo aditivo mais recente nao venceu) - mesmo
-# criterio de "valido" usado em atas_contratos.html e /api/estoque_abastecimento (saldo em
-# ata/contrato). correlacionado por p.produto, entao so funciona dentro de uma query que ja tenha
-# "produto p" no escopo - usado pra sinalizar produto do Hospital sem ata/contrato em
-# estoque.html/estoque_critico.html
+# produto tem ata ou contrato vigente (a propria linha com datafim >= hoje, mesma regra de
+# SQL_PEDIDO_VIGENTE - saldo do abastecimento e botao Ata/Contrato). correlacionado por
+# p.produto, entao so funciona dentro de uma query que ja tenha "produto p" no escopo - usado pra
+# sinalizar produto do Hospital sem ata/contrato em estoque.html/estoque_critico.html
 SQL_PRODUTO_TEM_CONTRATO_VALIDO = """
     EXISTS (
         SELECT 1 FROM public.pedidoitem pi_ctr
         JOIN public.pedidocabecalho pc_ctr ON pc_ctr.pedidocabecalho = pi_ctr.pedidocabecalho
         WHERE pi_ctr.produto = p.produto
-        AND EXISTS (
-            SELECT 1 FROM public.pedidocabecalho pc_latest
-            WHERE pc_latest.numeroidentificacao = pc_ctr.numeroidentificacao
-            AND pc_latest.numeroaditivo = (
-                SELECT MAX(pc2.numeroaditivo) FROM public.pedidocabecalho pc2
-                WHERE pc2.numeroidentificacao = pc_ctr.numeroidentificacao
-            )
-            AND pc_latest.datafim >= CURRENT_DATE
-        )
+        AND pc_ctr.datafim >= CURRENT_DATE
     )
 """
 
@@ -3645,7 +3636,10 @@ def api_estoque():
                 COALESCE((
                     SELECT json_agg(pagina.* ORDER BY pagina.{coluna_ordenacao} {direcao_ordenacao} NULLS LAST)
                     FROM (
-                        SELECT * FROM filtrado
+                        SELECT f.*,
+                            {_sql_saldo_vigente("f.cod_produto", "S")} AS saldo_ata_vigente,
+                            {_sql_saldo_vigente("f.cod_produto", "N")} AS saldo_contrato_vigente
+                        FROM filtrado f
                         ORDER BY {coluna_ordenacao} {direcao_ordenacao} NULLS LAST
                         LIMIT %s OFFSET %s
                     ) pagina
@@ -4000,9 +3994,8 @@ def api_estoque_unidades():
 def api_estoque_contratos():
     # atas/contratos que tem esse produto - uma linha por pedidoitem, incluindo cada aditivo
     # separadamente (nao so o mais recente de cada familia), com o saldo (quantidade ainda nao
-    # entregue) de cada linha. situacao=validos restringe as familias cujo aditivo mais recente
-    # ainda esta vigente (datafim > hoje) - mesmo criterio de "valido" usado em /api/atas_contratos;
-    # sem o parametro, traz validos e vencidos (usado em estoque_critico.html)
+    # entregue) de cada linha. situacao=validos traz so as linhas nao vencidas (SQL_PEDIDO_VIGENTE);
+    # sem o parametro, traz validas e vencidas
     produto = request.args.get("produto")
     situacao = request.args.get("situacao")
     if not produto:
@@ -4012,17 +4005,9 @@ def api_estoque_contratos():
     params = [produto]
 
     if situacao == "validos":
-        condicoes.append("""
-            EXISTS (
-                SELECT 1 FROM public.pedidocabecalho pc_latest
-                WHERE pc_latest.numeroidentificacao = pc.numeroidentificacao
-                AND pc_latest.numeroaditivo = (
-                    SELECT MAX(pc2.numeroaditivo) FROM public.pedidocabecalho pc2
-                    WHERE pc2.numeroidentificacao = pc.numeroidentificacao
-                )
-                AND pc_latest.datafim >= CURRENT_DATE
-            )
-        """)
+        # so a ata/contrato/aditivo que ainda nao venceu - aditivo antigo de familia prorrogada
+        # (datafim ja passou) fica de fora, junto com o saldo que sobrou nele
+        condicoes.append(SQL_PEDIDO_VIGENTE)
 
     where = " AND ".join(condicoes)
 
@@ -4143,19 +4128,27 @@ def api_estoque_movimentacoes():
         return jsonify({"erro": str(erro)}), 500
 
 
-# pedidocabecalho "pc" cuja familia (numeroidentificacao) nao esta vencida: datafim do aditivo mais
-# recente >= hoje (quem vence hoje ainda vale) - mesma nocao de "valido" usada em atas_contratos
-SQL_PEDIDO_FAMILIA_VALIDA = """
-    EXISTS (
-        SELECT 1 FROM public.pedidocabecalho pc_latest
-        WHERE pc_latest.numeroidentificacao = pc.numeroidentificacao
-        AND pc_latest.numeroaditivo = (
-            SELECT MAX(pc2.numeroaditivo) FROM public.pedidocabecalho pc2
-            WHERE pc2.numeroidentificacao = pc.numeroidentificacao
+# pedidocabecalho "pc" nao vencido: a propria linha (ata, contrato ou aditivo) com datafim >= hoje
+# (quem vence hoje ainda vale). cada aditivo tem os proprios itens e saldo no Guardiao - olhar so a
+# familia (aditivo mais recente valido) contava o saldo que sobrou em aditivos ja vencidos
+SQL_PEDIDO_VIGENTE = "pc.datafim >= CURRENT_DATE"
+
+
+def _sql_saldo_vigente(coluna_produto, atapreco):
+    # quanto ainda falta entregar (quantidade - quantidadeentregue) nas atas (atapreco 'S') ou nos
+    # contratos ('N') vigentes do produto - mesma conta do Saldo em Atas / Saldo em Contratos do
+    # abastecimento. NULL = nenhum vigente desse tipo. so na pagina exibida (subconsulta
+    # correlacionada = cara na lista inteira)
+    return f"""
+        (
+            SELECT SUM(pi.quantidade - COALESCE(pi.quantidadeentregue, 0))
+            FROM public.pedidoitem pi
+            JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = pi.pedidocabecalho
+            WHERE pi.produto = {coluna_produto}
+            AND pc.atapreco = '{atapreco}'
+            AND {SQL_PEDIDO_VIGENTE}
         )
-        AND pc_latest.datafim >= CURRENT_DATE
-    )
-"""
+    """
 
 
 @app.route("/api/estoque_abastecimento")
@@ -4214,7 +4207,7 @@ def api_estoque_abastecimento():
         FROM public.pedidoitem pi
         JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = pi.pedidocabecalho
         WHERE pi.produto = %s
-        AND {SQL_PEDIDO_FAMILIA_VALIDA}
+        AND {SQL_PEDIDO_VIGENTE}
     """
     try:
         linhas = run_query(sql, [produto] + params_armazem)
@@ -4397,7 +4390,12 @@ def api_estoque_critico():
                 (SELECT count(*) FROM filtrado) AS total_geral,
                 COALESCE((
                     SELECT json_agg(pagina.* ORDER BY pagina.cod_produto)
-                    FROM (SELECT * FROM filtrado ORDER BY cod_produto LIMIT %s OFFSET %s) pagina
+                    FROM (
+                        SELECT f.*,
+                            {_sql_saldo_vigente("f.cod_produto", "S")} AS saldo_ata_vigente,
+                            {_sql_saldo_vigente("f.cod_produto", "N")} AS saldo_contrato_vigente
+                        FROM filtrado f ORDER BY cod_produto LIMIT %s OFFSET %s
+                    ) pagina
                 ), '[]'::json) AS dados_json
         """
         resultado = run_query(sql_dados, params_completo + [tamanho_pagina, offset])[0]
@@ -5792,7 +5790,7 @@ def _incluir_estoque_e_saldos(itens, usuario_logado):
         FROM public.pedidoitem pi
         JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = pi.pedidocabecalho
         WHERE pi.produto = ANY(%s)
-        AND {SQL_PEDIDO_FAMILIA_VALIDA}
+        AND {SQL_PEDIDO_VIGENTE}
         GROUP BY pi.produto
     """, [ids_produtos])
 
