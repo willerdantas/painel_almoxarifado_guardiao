@@ -51,14 +51,24 @@
             <div class="sugestoes" id="sugestoesProduto"></div>
           </div>
 
-          <div class="campo-filtro">
-            <label for="filtroDataInicio">Data Início</label>
-            <input type="date" id="filtroDataInicio" />
+          <div class="campo-filtro campo-curto">
+            <label for="filtroIntervaloInicioDe">Intervalo Início (de)</label>
+            <input type="date" id="filtroIntervaloInicioDe" />
           </div>
 
-          <div class="campo-filtro">
-            <label for="filtroDataFim">Data Fim</label>
-            <input type="date" id="filtroDataFim" />
+          <div class="campo-filtro campo-curto">
+            <label for="filtroIntervaloInicioAte">Intervalo Início (até)</label>
+            <input type="date" id="filtroIntervaloInicioAte" />
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroIntervaloFimDe">Intervalo Fim (de)</label>
+            <input type="date" id="filtroIntervaloFimDe" />
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroIntervaloFimAte">Intervalo Fim (até)</label>
+            <input type="date" id="filtroIntervaloFimAte" />
           </div>
 
           <div class="campo-filtro campo-curto">
@@ -138,8 +148,10 @@
       const produto = document.getElementById("filtroProduto").value.trim();
       const armazem = document.getElementById("filtroArmazem").value;
       const tipoPedido = document.getElementById("filtroTipoPedido").value;
-      const dataInicio = document.getElementById("filtroDataInicio").value;
-      const dataFim = document.getElementById("filtroDataFim").value;
+      const intervaloInicioDe = document.getElementById("filtroIntervaloInicioDe").value;
+      const intervaloInicioAte = document.getElementById("filtroIntervaloInicioAte").value;
+      const intervaloFimDe = document.getElementById("filtroIntervaloFimDe").value;
+      const intervaloFimAte = document.getElementById("filtroIntervaloFimAte").value;
 
       if (numeroAtaContrato) params.set("numero_ata_contrato", numeroAtaContrato);
       if (cnpj) params.set("cnpj", cnpj);
@@ -148,8 +160,10 @@
       if (produto) params.set("produto", produto);
       if (armazem) params.set("armazem", armazem);
       if (tipoPedido) params.set("tipo_pedido", tipoPedido);
-      if (dataInicio) params.set("data_inicio", dataInicio);
-      if (dataFim) params.set("data_fim", dataFim);
+      if (intervaloInicioDe) params.set("intervalo_inicio_de", intervaloInicioDe);
+      if (intervaloInicioAte) params.set("intervalo_inicio_ate", intervaloInicioAte);
+      if (intervaloFimDe) params.set("intervalo_fim_de", intervaloFimDe);
+      if (intervaloFimAte) params.set("intervalo_fim_ate", intervaloFimAte);
 
       return params;
     }
@@ -528,11 +542,12 @@
           <td>${escaparHtml(item.quantidade)}</td>
           <td>${formatarMoeda(item.valor_unitario)}</td>
           <td>${formatarMoeda(item.subtotal)}</td>
+          <td>${formatarQuantidade(item.saldo_quantidade)}</td>
           <td>${formatarMoeda(item.saldo_valor)}</td>
           <td></td>
         </tr>
         <tr class="linha-saldo">
-          <td colspan="7">${montarBarraSaldoItem(item)}</td>
+          <td colspan="8">${montarBarraSaldoItem(item)}</td>
         </tr>`
         )
         .join("");
@@ -548,6 +563,7 @@
                 <th>Quantidade Total</th>
                 <th>Vl. Unitário</th>
                 <th>Subtotal</th>
+                <th>Quantidade Remanescente</th>
                 <th>Saldo Remanescente</th>
                 <th></th>
               </tr>

@@ -5270,8 +5270,10 @@ def api_atas_contratos():
     # tipopedido: codigo de 1 letra - A = ARP, C = Aquisição, I = Imobilizados, S = Serviços
     # (D, H e P tambem existem na constraint do banco, mas sem significado mapeado/uso no filtro)
     tipo_pedido = request.args.get("tipo_pedido")
-    filtro_data_inicio = request.args.get("data_inicio")
-    filtro_data_fim = request.args.get("data_fim")
+    intervalo_inicio_de = request.args.get("intervalo_inicio_de")
+    intervalo_inicio_ate = request.args.get("intervalo_inicio_ate")
+    intervalo_fim_de = request.args.get("intervalo_fim_de")
+    intervalo_fim_ate = request.args.get("intervalo_fim_ate")
     situacao = request.args.get("situacao")  # "validos" ou "vencidos"
     tipo = request.args.get("tipo")  # "ata" (atapreco = 'S') ou "contrato" (atapreco = 'N')
     try:
@@ -5345,18 +5347,29 @@ def api_atas_contratos():
     if tipo_pedido:
         condicoes.append("COALESCE(ult.tipopedido, pc.tipopedido) = %s")
         params.append(tipo_pedido)
-    # filtro de periodo: traz contratos cuja data de inicio E data fim (efetiva, maior aditivo)
-    # caem dentro do intervalo informado - os dois extremos do contrato "cabem" no filtro
-    if filtro_data_inicio and filtro_data_fim:
+    # dois intervalos independentes: "intervalo inicio" filtra pela data de inicio do contrato
+    # (pc.datainicio), "intervalo fim" filtra pela data fim efetiva (ult.efetivo, do aditivo mais
+    # recente) - cada um so olha pra sua propria coluna, sem exigir que a OUTRA data tambem caia
+    # no mesmo intervalo
+    if intervalo_inicio_de and intervalo_inicio_ate:
         condicoes.append("pc.datainicio BETWEEN %s AND %s")
+        params.extend([intervalo_inicio_de, intervalo_inicio_ate])
+    elif intervalo_inicio_de:
+        condicoes.append("pc.datainicio >= %s")
+        params.append(intervalo_inicio_de)
+    elif intervalo_inicio_ate:
+        condicoes.append("pc.datainicio <= %s")
+        params.append(intervalo_inicio_ate)
+
+    if intervalo_fim_de and intervalo_fim_ate:
         condicoes.append("ult.efetivo BETWEEN %s AND %s")
-        params.extend([filtro_data_inicio, filtro_data_fim, filtro_data_inicio, filtro_data_fim])
-    elif filtro_data_inicio:
-        condicoes.append("pc.datainicio >= %s AND ult.efetivo >= %s")
-        params.extend([filtro_data_inicio, filtro_data_inicio])
-    elif filtro_data_fim:
-        condicoes.append("pc.datainicio <= %s AND ult.efetivo <= %s")
-        params.extend([filtro_data_fim, filtro_data_fim])
+        params.extend([intervalo_fim_de, intervalo_fim_ate])
+    elif intervalo_fim_de:
+        condicoes.append("ult.efetivo >= %s")
+        params.append(intervalo_fim_de)
+    elif intervalo_fim_ate:
+        condicoes.append("ult.efetivo <= %s")
+        params.append(intervalo_fim_ate)
     # prazo = data fim efetiva (maior aditivo) - hoje: validos cobre prazo >= 0 (ainda vigente hoje,
     # inclusive quem vence hoje), vencido so quando prazo < 0 (data fim antes de hoje)
     if situacao == "validos":
