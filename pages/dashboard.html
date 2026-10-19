@@ -420,9 +420,9 @@
         .map(
           (item) => `
         <div class="item-legenda">
-          <span class="ponto-legenda" style="background: ${item.cor}"></span>
-          <span>${item.rotulo}</span>
-          <span class="valor-legenda">${item.valor}</span>
+          <span class="ponto-legenda" style="background: ${escaparHtml(item.cor)}"></span>
+          <span>${escaparHtml(item.rotulo)}</span>
+          <span class="valor-legenda">${escaparHtml(item.valor)}</span>
         </div>`
         )
         .join("");
@@ -465,9 +465,9 @@
           (item, indice) => `
         <tr>
           <td>${indice + 1}</td>
-          <td class="celula-quebra">${item.fornecedor ?? ""}</td>
-          <td>${item.num_ata ?? item.num_contrato ?? ""}</td>
-          <td>${item.data_fim ?? ""}</td>
+          <td class="celula-quebra">${escaparHtml(item.fornecedor)}</td>
+          <td>${escaparHtml(item.num_ata ?? item.num_contrato ?? "")}</td>
+          <td>${escaparHtml(item.data_fim)}</td>
           <td>${formatarMoeda(item[campoSaldo])}</td>
           <td>${Number(item.percentual_remanescente ?? 0).toFixed(2)}%</td>
         </tr>`
@@ -523,9 +523,9 @@
                 (item, indice) => `
           <tr>
             <td><span class="ponto-legenda" style="background: ${PALETA_ARMAZEM[indice % PALETA_ARMAZEM.length]}"></span></td>
-            <td class="celula-quebra">${item.nome_armazem}</td>
+            <td class="celula-quebra">${escaparHtml(item.nome_armazem)}</td>
             <td>${formatarMoeda(item.valor)}</td>
-            <td>${item.percentual}%</td>
+            <td>${escaparHtml(item.percentual)}%</td>
           </tr>`
               )
               .join("")
@@ -731,11 +731,11 @@
               .map(
                 (item) => `
           <tr>
-            <td class="celula-quebra">${item.nome_produto ?? ""}</td>
-            <td class="celula-quebra">${item.nome_armazem ?? ""}</td>
+            <td class="celula-quebra">${escaparHtml(item.nome_produto)}</td>
+            <td class="celula-quebra">${escaparHtml(item.nome_armazem)}</td>
             <td>${formatarQuantidade(item.quantidade_atual)}</td>
             <td>${formatarQuantidade(item.ponto_ressuprimento)}</td>
-            <td>${item.data ?? ""}</td>
+            <td>${escaparHtml(item.data)}</td>
           </tr>`
               )
               .join("")
@@ -857,14 +857,14 @@
       const slide = document.createElement("div");
       slide.className = "slide-dashboard";
       slide.innerHTML = `
-        <h2>Meta de Cobertura de Ponto de Ressuprimento - ${nomeArmazem}</h2>
+        <h2>Meta de Cobertura de Ponto de Ressuprimento - ${escaparHtml(nomeArmazem)}</h2>
         <div class="grafico-dashboard-area grafico-dashboard-area-unico grafico-dashboard-area-esquerda">
           <div class="grafico-gauge-caixa">
             <div class="grafico-barra-principal"><canvas id="graficoGauge${sufixo}"></canvas></div>
             <p class="gauge-resumo" id="resumoGauge${sufixo}"></p>
           </div>
           <div class="legenda-tabela-caixa legenda-tabela-caixa-ressuprimento">
-            <h4>Itens que Atingiram o Ponto de Ressuprimento - ${nomeArmazem}</h4>
+            <h4>Itens que Atingiram o Ponto de Ressuprimento - ${escaparHtml(nomeArmazem)}</h4>
             <div class="tabela-rolagem-auto tabela-rolagem-auto-grande" id="rolagemItens${sufixo}">
               <table class="tabela-dados">
                 <thead>

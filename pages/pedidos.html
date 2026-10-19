@@ -202,7 +202,7 @@
         document.getElementById("contadorNovos").textContent = Array.isArray(dados) ? dados.length : 0;
         renderizarNovos(dados);
       } catch (erro) {
-        container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${erro}</p>`;
+        container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${escaparHtml(erro)}</p>`;
       }
     }
 
@@ -226,10 +226,10 @@
       const linhas = dados
         .map(
           (linha) => `
-        <tr class="linha-produto" data-requisicao="${linha["N. do Pedido"]}">
-          <td>${linha["N. do Pedido"] ?? ""}</td>
-          <td>${linha["Requisitante"] ?? ""}</td>
-          <td>${linha["Dt. da Requisição"] ?? ""}</td>
+        <tr class="linha-produto" data-requisicao="${escaparHtml(linha["N. do Pedido"])}">
+          <td>${escaparHtml(linha["N. do Pedido"])}</td>
+          <td>${escaparHtml(linha["Requisitante"])}</td>
+          <td>${escaparHtml(linha["Dt. da Requisição"])}</td>
           <td class="celula-calendario">${iconeConfereCalendario(linha.confere_calendario)}</td>
         </tr>`
         )
@@ -277,7 +277,7 @@
         const itens = await resp.json();
         trDetalhe.innerHTML = `<td colspan="${numeroColunas}">${montarTabelaItensRequisicao(itens)}</td>`;
       } catch (erro) {
-        trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Erro ao carregar itens: ${erro}</p></td>`;
+        trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Erro ao carregar itens: ${escaparHtml(erro)}</p></td>`;
       }
     }
 
@@ -296,10 +296,10 @@
         .map(
           (item) => `
         <tr>
-          <td class="celula-quebra">${item.nome_produto ?? ""}</td>
+          <td class="celula-quebra">${escaparHtml(item.nome_produto)}</td>
           <td>${formatarQuantidade(item.quantidade)}</td>
-          <td>${item.lote ?? "-"} ${item.vencido ? '<span class="tag-vencido" title="Lote já vencido">Vencido</span>' : ""}</td>
-          <td>${item.validade ?? ""}</td>
+          <td>${escaparHtml(item.lote ?? "-")} ${item.vencido ? '<span class="tag-vencido" title="Lote já vencido">Vencido</span>' : ""}</td>
+          <td>${escaparHtml(item.validade)}</td>
         </tr>`
         )
         .join("");
@@ -333,11 +333,11 @@
       const linhas = lista
         .map(
           (linha) => `
-        <tr class="linha-produto" data-pedido="${linha.numero_pedido}">
-          <td>${linha.numero_pedido ?? ""}</td>
-          <td>${linha.requisitante ?? ""}</td>
-          <td>${linha.data_requisicao ?? ""}</td>
-          <td>${linha.tipo_movimentacao ?? ""}</td>
+        <tr class="linha-produto" data-pedido="${escaparHtml(linha.numero_pedido)}">
+          <td>${escaparHtml(linha.numero_pedido)}</td>
+          <td>${escaparHtml(linha.requisitante)}</td>
+          <td>${escaparHtml(linha.data_requisicao)}</td>
+          <td>${escaparHtml(linha.tipo_movimentacao)}</td>
         </tr>`
         )
         .join("");
@@ -373,16 +373,16 @@
       const linhas = lista
         .map(
           (linha) => `
-        <tr class="linha-produto" data-pedido="${linha.numero_pedido}">
-          <td>${linha.numero_pedido ?? ""}</td>
-          <td>${linha.requisitante ?? ""}</td>
-          <td>${linha.data_requisicao ?? ""}</td>
-          <td>${linha.tipo_movimentacao ?? ""}</td>
+        <tr class="linha-produto" data-pedido="${escaparHtml(linha.numero_pedido)}">
+          <td>${escaparHtml(linha.numero_pedido)}</td>
+          <td>${escaparHtml(linha.requisitante)}</td>
+          <td>${escaparHtml(linha.data_requisicao)}</td>
+          <td>${escaparHtml(linha.tipo_movimentacao)}</td>
           <td>${formatarQuantidade(linha.quantidade_itens)}</td>
           <td>${formatarQuantidade(linha.quantidade_total)}</td>
-          <td>${linha.responsavel ?? ""}</td>
-          <td>${linha.data_separacao ?? ""}</td>
-          <td>${linha.hora_separacao ?? ""}</td>
+          <td>${escaparHtml(linha.responsavel)}</td>
+          <td>${escaparHtml(linha.data_separacao)}</td>
+          <td>${escaparHtml(linha.hora_separacao)}</td>
         </tr>`
         )
         .join("");
@@ -438,7 +438,7 @@
         const itens = await resp.json();
         trDetalhe.innerHTML = `<td colspan="${numeroColunas}">${montarTabelaItensSaida(itens)}</td>`;
       } catch (erro) {
-        trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Erro ao carregar itens: ${erro}</p></td>`;
+        trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Erro ao carregar itens: ${escaparHtml(erro)}</p></td>`;
       }
     }
 
@@ -451,10 +451,10 @@
         .map(
           (item) => `
         <tr>
-          <td class="celula-quebra">${item.nome_produto ?? ""}</td>
+          <td class="celula-quebra">${escaparHtml(item.nome_produto)}</td>
           <td>${formatarQuantidade(item.quantidade)}</td>
-          <td>${item.lote ?? ""}</td>
-          <td>${item.validade ?? ""}</td>
+          <td>${escaparHtml(item.lote)}</td>
+          <td>${escaparHtml(item.validade)}</td>
         </tr>`
         )
         .join("");
@@ -490,11 +490,11 @@
       const linhas = lista
         .map(
           (linha) => `
-        <tr class="linha-produto" data-pedido="${linha.numero_pedido}">
-          <td>${linha.numero_pedido ?? ""}</td>
-          <td>${linha.requisitante ?? ""}</td>
-          <td>${linha.data_requisicao ?? ""}</td>
-          <td>${linha.tipo_movimentacao ?? ""}</td>
+        <tr class="linha-produto" data-pedido="${escaparHtml(linha.numero_pedido)}">
+          <td>${escaparHtml(linha.numero_pedido)}</td>
+          <td>${escaparHtml(linha.requisitante)}</td>
+          <td>${escaparHtml(linha.data_requisicao)}</td>
+          <td>${escaparHtml(linha.tipo_movimentacao)}</td>
         </tr>`
         )
         .join("");
@@ -530,16 +530,16 @@
       const linhas = lista
         .map(
           (linha) => `
-        <tr class="linha-produto" data-pedido="${linha.numero_pedido}">
-          <td>${linha.numero_pedido ?? ""}</td>
-          <td>${linha.requisitante ?? ""}</td>
-          <td>${linha.data_requisicao ?? ""}</td>
-          <td>${linha.tipo_movimentacao ?? ""}</td>
+        <tr class="linha-produto" data-pedido="${escaparHtml(linha.numero_pedido)}">
+          <td>${escaparHtml(linha.numero_pedido)}</td>
+          <td>${escaparHtml(linha.requisitante)}</td>
+          <td>${escaparHtml(linha.data_requisicao)}</td>
+          <td>${escaparHtml(linha.tipo_movimentacao)}</td>
           <td>${formatarQuantidade(linha.quantidade_itens)}</td>
           <td>${formatarQuantidade(linha.quantidade_total)}</td>
-          <td>${linha.responsavel ?? ""}</td>
-          <td>${linha.data_distribuicao ?? ""}</td>
-          <td>${linha.hora_distribuicao ?? ""}</td>
+          <td>${escaparHtml(linha.responsavel)}</td>
+          <td>${escaparHtml(linha.data_distribuicao)}</td>
+          <td>${escaparHtml(linha.hora_distribuicao)}</td>
         </tr>`
         )
         .join("");

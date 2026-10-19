@@ -186,6 +186,14 @@
         </th>`;
     }
 
+    // numero da versao atual (cada renovacao/aditivo ganha numero proprio no Guardiao) - quando
+    // mudou desde o original, mostra o original embaixo pra ainda dar pra reconhecer o contrato
+    function celulaNumero(atual, original) {
+      const texto = escaparHtml(atual);
+      if (!original || original === atual) return texto;
+      return `${texto}<span class="numero-original">original: ${escaparHtml(original)}</span>`;
+    }
+
     function renderizarContratos(dados, containerId) {
       const container = document.getElementById(containerId);
 
@@ -199,15 +207,15 @@
       const linhas = dados
         .map(
           (linha) => `
-        <tr class="linha-contrato" data-pedidocabecalho="${linha.pedidocabecalho}" data-identificacao="${linha.numeroidentificacao}">
+        <tr class="linha-contrato" data-pedidocabecalho="${escaparHtml(linha.pedidocabecalho)}" data-identificacao="${escaparHtml(linha.numeroidentificacao)}">
           <td>${formatarCnpj(linha.cnpj)}</td>
-          <td>${linha.fornecedor ?? ""}</td>
-          <td>${linha.nome_fantasia ?? ""}</td>
-          <td>${linha.num_ata ?? ""}</td>
-          <td>${linha.num_contrato ?? ""}</td>
-          <td>${linha.data_inicio ?? ""}</td>
-          <td>${linha.data_fim ?? ""}</td>
-          <td>${linha.prazo ?? ""}</td>
+          <td>${escaparHtml(linha.fornecedor)}</td>
+          <td>${escaparHtml(linha.nome_fantasia)}</td>
+          <td>${celulaNumero(linha.num_ata, linha.num_ata_original)}</td>
+          <td>${celulaNumero(linha.num_contrato, linha.num_contrato_original)}</td>
+          <td>${escaparHtml(linha.data_inicio)}</td>
+          <td>${escaparHtml(linha.data_fim)}</td>
+          <td>${escaparHtml(linha.prazo)}</td>
           <td>
             <div class="grupo-botoes-linha">
               <button type="button" class="botao-aditivos">Aditivos</button>
@@ -341,7 +349,7 @@
           trDetalhe.innerHTML = `<td colspan="9">${montarTabelaItens(itens)}</td>`;
         }
       } catch (erro) {
-        trDetalhe.innerHTML = `<td colspan="9"><p class="msg-vazio">Erro ao carregar: ${erro}</p></td>`;
+        trDetalhe.innerHTML = `<td colspan="9"><p class="msg-vazio">Erro ao carregar: ${escaparHtml(erro)}</p></td>`;
       }
     }
 
@@ -360,10 +368,10 @@
           (item) => `
         <tr>
           <td>${item.numero_aditivo == 0 ? "Original" : item.numero_aditivo}</td>
-          <td>${item.num_ata ?? ""}</td>
-          <td>${item.num_contrato ?? ""}</td>
-          <td>${item.data_inicio ?? ""}</td>
-          <td>${item.data_fim ?? ""}</td>
+          <td>${escaparHtml(item.num_ata)}</td>
+          <td>${escaparHtml(item.num_contrato)}</td>
+          <td>${escaparHtml(item.data_inicio)}</td>
+          <td>${escaparHtml(item.data_fim)}</td>
         </tr>`
         )
         .join("");
@@ -398,9 +406,9 @@
       const linhas = pedidos
         .map(
           (item) => `
-        <tr class="linha-pedido" data-identificacao="${identificacao}" data-data-pedido="${item.data_pedido_iso}">
-          <td>${item.data_pedido ?? ""}</td>
-          <td>${item.quantidade_itens ?? ""}</td>
+        <tr class="linha-pedido" data-identificacao="${escaparHtml(identificacao)}" data-data-pedido="${escaparHtml(item.data_pedido_iso)}">
+          <td>${escaparHtml(item.data_pedido)}</td>
+          <td>${escaparHtml(item.quantidade_itens)}</td>
           <td>${formatarMoeda(item.valor_total)}</td>
           <td><button type="button" class="botao-itens-pedido">Itens</button></td>
         </tr>`
@@ -433,8 +441,8 @@
         .map(
           (item) => `
         <tr>
-          <td>${item.cod_seplag ?? ""}</td>
-          <td class="celula-quebra">${item.nome_produto ?? ""}</td>
+          <td>${escaparHtml(item.cod_seplag)}</td>
+          <td class="celula-quebra">${escaparHtml(item.nome_produto)}</td>
           <td>${formatarQuantidade(item.quantidade)}</td>
           <td>${formatarMoeda(item.valor_unitario)}</td>
           <td>${formatarMoeda(item.subtotal)}</td>
@@ -486,7 +494,7 @@
         const itens = await resp.json();
         trDetalhe.innerHTML = `<td colspan="4">${montarTabelaItensPedido(itens)}</td>`;
       } catch (erro) {
-        trDetalhe.innerHTML = `<td colspan="4"><p class="msg-vazio">Erro ao carregar: ${erro}</p></td>`;
+        trDetalhe.innerHTML = `<td colspan="4"><p class="msg-vazio">Erro ao carregar: ${escaparHtml(erro)}</p></td>`;
       }
     }
 
@@ -501,7 +509,7 @@
     function montarBarraSaldoItem(item) {
       return `
         <div class="barra-saldo-linha">
-          <span class="saldo-info"><strong>Qtd. Utilizada:</strong> ${item.quantidade_utilizada ?? "0"}</span>
+          <span class="saldo-info"><strong>Qtd. Utilizada:</strong> ${escaparHtml(item.quantidade_utilizada ?? "0")}</span>
           ${montarBarraPercentual(item.percentual_remanescente)}
         </div>`;
     }
@@ -515,10 +523,10 @@
         .map(
           (item) => `
         <tr class="linha-item">
-          <td>${item.cod_seplag ?? ""}</td>
-          <td class="celula-quebra">${item.nome_produto ?? ""}</td>
-          <td class="celula-quebra">${item.descricao_produto ?? ""}</td>
-          <td>${item.quantidade ?? ""}</td>
+          <td>${escaparHtml(item.cod_seplag)}</td>
+          <td class="celula-quebra">${escaparHtml(item.nome_produto)}</td>
+          <td class="celula-quebra">${escaparHtml(item.descricao_produto)}</td>
+          <td>${escaparHtml(item.quantidade)}</td>
           <td>${formatarMoeda(item.valor_unitario)}</td>
           <td>${formatarMoeda(item.subtotal)}</td>
           <td>${formatarMoeda(item.saldo_valor)}</td>
@@ -601,7 +609,7 @@
         renderizarContratos(resultado.dados, secao.area);
         renderizarPaginacao(resultado.total ?? 0, resultado.pagina ?? pagina, resultado.tamanho_pagina ?? 20, chaveSecao, secao.paginacao);
       } catch (erro) {
-        container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${erro}</p>`;
+        container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${escaparHtml(erro)}</p>`;
         document.getElementById(secao.paginacao).innerHTML = "";
       }
     }
@@ -641,7 +649,7 @@
         }
 
         caixaSugestoesFornecedor.innerHTML = dados
-          .map((item) => `<div class="item-sugestao" data-nome="${item.fornecedor}">${item.fornecedor}</div>`)
+          .map((item) => `<div class="item-sugestao" data-nome="${escaparHtml(item.fornecedor)}">${escaparHtml(item.fornecedor)}</div>`)
           .join("");
         caixaSugestoesFornecedor.classList.add("aberto");
 
@@ -690,7 +698,7 @@
         }
 
         caixaSugestoesProduto.innerHTML = dados
-          .map((item) => `<div class="item-sugestao" data-nome="${item.nome_produto}">${item.nome_produto}</div>`)
+          .map((item) => `<div class="item-sugestao" data-nome="${escaparHtml(item.nome_produto)}">${escaparHtml(item.nome_produto)}</div>`)
           .join("");
         caixaSugestoesProduto.classList.add("aberto");
 

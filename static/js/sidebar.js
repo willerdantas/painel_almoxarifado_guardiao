@@ -11,7 +11,9 @@ const ICONES = {
   produtos: SVG_ABRE('<path d="M20.59 13.41L11 3.83A2 2 0 0 0 9.59 3.24L3 3v6.59a2 2 0 0 0 .59 1.41l9.58 9.59a2 2 0 0 0 2.83 0l4.59-4.59a2 2 0 0 0 0-2.83z"/><circle cx="7.5" cy="7.5" r="1.5"/>'),
   estoque: SVG_ABRE('<rect x="2" y="3" width="20" height="5"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><line x1="10" y1="12" x2="14" y2="12"/>'),
   vencidos: SVG_ABRE('<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
-  aquisicoes: SVG_ABRE('<circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>'),
+  estoque_critico: SVG_ABRE('<polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/>'),
+  processos_aquisicao: SVG_ABRE('<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/>'),
+  planejamento_aquisicao: SVG_ABRE('<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><polyline points="9 16 11 18 15 14"/>'),
   atas_contratos: SVG_ABRE('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/>'),
   pagamentos: SVG_ABRE('<rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>'),
   cadastro: SVG_ABRE('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'),
@@ -30,7 +32,9 @@ const ITENS_MENU = [
   { href: "/pages/produtos.html", icone: ICONES.produtos, texto: "Produtos", chave: "produtos" },
   { href: "/pages/estoque.html", icone: ICONES.estoque, texto: "Controle de Estoque", chave: "estoque" },
   { href: "/pages/vencidos.html", icone: ICONES.vencidos, texto: "Produtos Vencidos", chave: "vencidos" },
-  { href: "/pages/aquisicoes.html", icone: ICONES.aquisicoes, texto: "Aquisições", chave: "aquisicoes" },
+  { href: "/pages/estoque_critico.html", icone: ICONES.estoque_critico, texto: "Estoque Crítico", chave: "estoque_critico" },
+  { href: "/pages/processos_aquisicao.html", icone: ICONES.processos_aquisicao, texto: "Processos de Aquisição", chave: "processos_aquisicao" },
+  { href: "/pages/planejamento_aquisicao.html", icone: ICONES.planejamento_aquisicao, texto: "Planejamento de Aquisição", chave: "planejamento_aquisicao" },
   { href: "/pages/atas_contratos.html", icone: ICONES.atas_contratos, texto: "Atas e Contratos", chave: "atas_contratos" },
   { href: "/pages/pagamentos.html", icone: ICONES.pagamentos, texto: "Processos de Pagamento", chave: "pagamentos" },
   { href: "/pages/cadastro.html", icone: ICONES.cadastro, texto: "Cadastro", chave: "cadastro" },
@@ -41,6 +45,8 @@ const ITENS_MENU = [
 // administrador enxerga tudo; sem perfil gravado (login antigo) tambem libera tudo, pra nao
 // quebrar sessao de quem logou antes dessa funcionalidade existir
 function paginasPermitidas() {
+  // usuario de teste (login com banco fora do ar) - so a tela de configurar a conexao
+  if (localStorage.getItem("modo_configuracao") === "true") return ["configuracao_banco"];
   if (localStorage.getItem("administrador") === "true") return null;
   const bruto = localStorage.getItem("paginas");
   if (!bruto) return null;
@@ -115,13 +121,48 @@ function protegerPagina() {
   }
 }
 
-// tira o cracha e manda de volta pra entrada
-function sair() {
+function limparDadosLogin() {
   localStorage.removeItem("usuario");
   localStorage.removeItem("identificacao");
   localStorage.removeItem("administrador");
   localStorage.removeItem("paginas");
+  localStorage.removeItem("modo_configuracao");
+}
+
+// tira o cracha e manda de volta pra entrada - encerra a sessao no servidor tambem (cookie)
+async function sair() {
+  try {
+    await fetchOriginal("/api/logout", { method: "POST" });
+  } catch (e) {
+    // sem servidor, so limpa o lado do navegador
+  }
+  limparDadosLogin();
   window.location.href = "/";
+}
+
+// a sessao de verdade eh o cookie do servidor (o localStorage so guarda nome/menu pra desenhar a
+// tela). qualquer /api/ que responder 401 = sessao expirou ou nao existe: volta pro login
+const fetchOriginal = window.fetch.bind(window);
+window.fetch = async (...argumentos) => {
+  const resposta = await fetchOriginal(...argumentos);
+  const url = String(argumentos[0] instanceof Request ? argumentos[0].url : argumentos[0]);
+  if (resposta.status === 401 && url.includes("/api/") && !url.includes("/api/login")) {
+    limparDadosLogin();
+    window.location.href = "/";
+  }
+  return resposta;
+};
+
+// escapa texto pra colocar dentro de HTML (conteudo ou atributo entre aspas) - todo dado vindo do
+// banco/planilha passa por aqui antes de ir pra innerHTML, senao um nome com "<script>" rodaria
+function escaparHtml(valor) {
+  if (valor === null || valor === undefined) return "";
+  return String(valor)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 // login (identificacao) de quem esta na tela, usado pra filtrar por armazem
@@ -181,7 +222,7 @@ async function preencherSelect(endpoint, selectId, campo = "nome") {
   }
 }
 
-// campo de filtro de armazem (produtos/estoque/vencidos/aquisicoes) - so aparece pra
+// campo de filtro de armazem (produtos/estoque/vencidos/estoque_critico) - so aparece pra
 // administrador (enxerga todos os armazens) ou usuario com mais de um armazem em armazemfunc
 // (pra quem tem so um, o filtro nao faria diferenca - ja esta implicito em usuario_logado)
 async function iniciarFiltroArmazemCondicional(selectId, blocoId) {

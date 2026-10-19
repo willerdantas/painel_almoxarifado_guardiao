@@ -5,18 +5,19 @@ import os
 import psycopg2
 import psycopg2.extras
 
-# banco de TESTE com dado ficticio (scripts/seed_dev.py cria e povoa)
-# pra voltar pro banco real, troca dbname de volta pra "isivitaedb_hm"
+# conexao padrao: variaveis de ambiente DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD. senha
+# nunca no codigo - sem DB_PASSWORD (e sem db_config.json) a conexao falha e o login oferece o
+# usuario de teste pra configurar pela tela Configuração do Banco
 _CONFIG_PADRAO = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "isivitaedb_hm",
-    "user": "postgres",
-    "password": "grandeviagem",
+    "host": os.environ.get("DB_HOST", "localhost"),
+    "port": int(os.environ.get("DB_PORT", "5432")),
+    "dbname": os.environ.get("DB_NAME", "isivitaedb_hm"),
+    "user": os.environ.get("DB_USER", "postgres"),
+    "password": os.environ.get("DB_PASSWORD", ""),
 }
 
 # se existir db_config.json (criado pela tela Configuração do Banco ao editar a conexao), usa ele
-# no lugar do padrao acima - fica fora do db.py pra dar pra editar sem reescrever codigo python
+# no lugar do padrao acima. fica fora do git (.gitignore) porque guarda a senha
 _CAMINHO_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db_config.json")
 
 if os.path.exists(_CAMINHO_CONFIG):
@@ -28,10 +29,12 @@ else:
 
 def salvar_config(novo_config):
     # atualiza o dict EXISTENTE (em vez de trocar por um objeto novo) pra quem importou
-    # "DB_CONFIG" de outro modulo (ex.: app.py) enxergar a mudanca sem precisar reimportar
+    # "DB_CONFIG" de outro modulo (ex.: app.py) enxergar a mudanca sem precisar reimportar.
+    # arquivo so legivel pelo dono (tem a senha do banco)
     DB_CONFIG.update(novo_config)
-    with open(_CAMINHO_CONFIG, "w") as arquivo:
+    with open(os.open(_CAMINHO_CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as arquivo:
         json.dump(DB_CONFIG, arquivo, indent=2)
+    os.chmod(_CAMINHO_CONFIG, 0o600)
 
 
 def get_conn():

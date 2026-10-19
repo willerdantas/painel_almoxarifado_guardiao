@@ -71,7 +71,7 @@
             </div>
             <div class="campo-filtro">
               <label for="conexaoSenha">Senha</label>
-              <input type="password" id="conexaoSenha" placeholder="Deixe em branco pra manter a atual" autocomplete="new-password" />
+              <input type="password" id="conexaoSenha" placeholder="Em branco mantém a atual (só se host, porta e usuário não mudarem)" autocomplete="new-password" />
             </div>
           </div>
           <div class="grupo-botoes-filtro">
@@ -143,18 +143,27 @@
         areaConexao.innerHTML = `
           <table class="tabela-dados">
             <tbody>
-              <tr><td>Host</td><td>${dado.conexao.host}</td></tr>
-              <tr><td>Porta</td><td>${dado.conexao.port}</td></tr>
-              <tr><td>Banco</td><td>${dado.conexao.dbname}</td></tr>
-              <tr><td>Usuário</td><td>${dado.conexao.user}</td></tr>
+              <tr><td>Host</td><td>${escaparHtml(dado.conexao.host)}</td></tr>
+              <tr><td>Porta</td><td>${escaparHtml(dado.conexao.port)}</td></tr>
+              <tr><td>Banco</td><td>${escaparHtml(dado.conexao.dbname)}</td></tr>
+              <tr><td>Usuário</td><td>${escaparHtml(dado.conexao.user)}</td></tr>
             </tbody>
           </table>`;
+
+        // banco fora do ar (ex.: login com usuario de teste) - mostra o erro e deixa so editar/testar
+        if (dado.erro_conexao) {
+          areaConexao.innerHTML += `<p class="erro-login">⚠️ Sem conexão: ${escaparHtml(dado.erro_conexao)}</p>`;
+          areaSchema.innerHTML = `<p class="msg-vazio">Corrija a conexão para verificar o schema.</p>`;
+          botaoCriar.classList.add("oculto");
+          document.getElementById("secaoAdminInicial").classList.add("oculto");
+          return;
+        }
 
         const linhasTabelas = dado.tabelas
           .map(
             (tabela) => `
               <tr>
-                <td>${tabela.nome}</td>
+                <td>${escaparHtml(tabela.nome)}</td>
                 <td>${tabela.existe ? "✅ Existe" : "⚠️ Não encontrada"}</td>
               </tr>`
           )
@@ -174,7 +183,7 @@
         // acabou de ser criado, precisa do primeiro administrador antes de qualquer um conseguir logar
         document.getElementById("secaoAdminInicial").classList.toggle("oculto", faltaAlgumaTabela || dado.tem_usuario);
       } catch (erro) {
-        areaConexao.innerHTML = `<p class="msg-vazio">Erro ao buscar configuração: ${erro}</p>`;
+        areaConexao.innerHTML = `<p class="msg-vazio">Erro ao buscar configuração: ${escaparHtml(erro)}</p>`;
         areaSchema.innerHTML = "";
       }
     }

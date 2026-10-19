@@ -124,12 +124,12 @@
         .map(
           (linha) => `
         <tr>
-          <td data-label="N. do Pedido">${linha.numero_pedido ?? ""}</td>
-          <td class="celula-quebra" data-label="Requisitante">${linha.requisitante ?? ""}</td>
-          <td data-label="Dt. da Requisição">${linha.data_requisicao ?? ""}</td>
-          <td data-label="Tipo de Movimentação">${linha.tipo_movimentacao ?? ""}</td>
+          <td data-label="N. do Pedido">${escaparHtml(linha.numero_pedido)}</td>
+          <td class="celula-quebra" data-label="Requisitante">${escaparHtml(linha.requisitante)}</td>
+          <td data-label="Dt. da Requisição">${escaparHtml(linha.data_requisicao)}</td>
+          <td data-label="Tipo de Movimentação">${escaparHtml(linha.tipo_movimentacao)}</td>
           <td data-label="Ação">
-            <button type="button" class="botao-separar" data-pedido="${linha.numero_pedido}" ${bloqueado ? "disabled" : ""} title="${bloqueado ? "Pedido em Separação" : ""}">
+            <button type="button" class="botao-separar" data-pedido="${escaparHtml(linha.numero_pedido)}" ${bloqueado ? "disabled" : ""} title="${bloqueado ? "Pedido em Separação" : ""}">
               Separar Pedido
             </button>
           </td>
@@ -195,17 +195,17 @@
       const linhas = lista
         .map(
           (linha) => `
-        <tr class="linha-produto" data-pedido="${linha.numero_pedido}">
-          <td data-label="N. do Pedido">${linha.numero_pedido ?? ""}</td>
-          <td class="celula-quebra" data-label="Requisitante">${linha.requisitante ?? ""}</td>
-          <td data-label="Dt. da Requisição">${linha.data_requisicao ?? ""}</td>
-          <td data-label="Tipo de Movimentação">${linha.tipo_movimentacao ?? ""}</td>
+        <tr class="linha-produto" data-pedido="${escaparHtml(linha.numero_pedido)}">
+          <td data-label="N. do Pedido">${escaparHtml(linha.numero_pedido)}</td>
+          <td class="celula-quebra" data-label="Requisitante">${escaparHtml(linha.requisitante)}</td>
+          <td data-label="Dt. da Requisição">${escaparHtml(linha.data_requisicao)}</td>
+          <td data-label="Tipo de Movimentação">${escaparHtml(linha.tipo_movimentacao)}</td>
           <td data-label="Qtde. de Itens">${formatarQuantidade(linha.quantidade_itens)}</td>
           <td data-label="Qtde. Total">${formatarQuantidade(linha.quantidade_total)}</td>
-          <td class="celula-quebra" data-label="Responsável pela Separação">${linha.responsavel ?? ""}</td>
-          <td data-label="Dt. da Separação">${linha.data_separacao ?? ""}</td>
-          <td data-label="Hr. da Separação">${linha.hora_separacao ?? ""}</td>
-          <td data-label="Ação"><button type="button" class="botao-concluir" data-pedido="${linha.numero_pedido}" disabled>Concluir</button></td>
+          <td class="celula-quebra" data-label="Responsável pela Separação">${escaparHtml(linha.responsavel)}</td>
+          <td data-label="Dt. da Separação">${escaparHtml(linha.data_separacao)}</td>
+          <td data-label="Hr. da Separação">${escaparHtml(linha.hora_separacao)}</td>
+          <td data-label="Ação"><button type="button" class="botao-concluir" data-pedido="${escaparHtml(linha.numero_pedido)}" disabled>Concluir</button></td>
         </tr>`
         )
         .join("");
@@ -274,7 +274,7 @@
         });
         atualizarBotaoConcluir(linha.dataset.pedido);
       } catch (erro) {
-        trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Erro ao carregar itens: ${erro}</p></td>`;
+        trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Erro ao carregar itens: ${escaparHtml(erro)}</p></td>`;
       }
     }
 
@@ -287,11 +287,11 @@
         .map(
           (item) => `
         <tr>
-          <td data-label="Separado"><input type="checkbox" class="checkbox-item-separado" data-saidaitem="${item.saidaitem}" /></td>
-          <td class="celula-quebra" data-label="Produto">${item.nome_produto ?? ""}</td>
+          <td data-label="Separado"><input type="checkbox" class="checkbox-item-separado" data-saidaitem="${escaparHtml(item.saidaitem)}" /></td>
+          <td class="celula-quebra" data-label="Produto">${escaparHtml(item.nome_produto)}</td>
           <td data-label="Qtde.">${formatarQuantidade(item.quantidade)}</td>
-          <td data-label="Lote">${item.lote ?? ""}</td>
-          <td data-label="Validade">${item.validade ?? ""}</td>
+          <td data-label="Lote">${escaparHtml(item.lote)}</td>
+          <td data-label="Validade">${escaparHtml(item.validade)}</td>
         </tr>`
         )
         .join("");

@@ -94,9 +94,9 @@
       const armazens = [...new Set((movimentacoes || []).map((item) => item.armazem).filter(Boolean))];
 
       document.getElementById("cartaoResumo").innerHTML = `
-        <h2 style="margin-bottom: 10px;">${nomeProduto || "Produto " + produto}</h2>
+        <h2 style="margin-bottom: 10px;">${escaparHtml(nomeProduto || "Produto " + produto)}</h2>
         <p style="font-size: 13px; color: #556; margin-bottom: 14px;">
-          Cód. Produto: ${produto} · Cód. Seplag: ${codSeplag !== "" ? codSeplag : "—"} · Cód. Almox: ${codAlmox !== "" ? codAlmox : "—"} · Período: ${periodo}
+          Cód. Produto: ${escaparHtml(produto)} · Cód. Seplag: ${escaparHtml(codSeplag !== "" ? codSeplag : "—")} · Cód. Almox: ${escaparHtml(codAlmox !== "" ? codAlmox : "—")} · Período: ${escaparHtml(periodo)}
         </p>
         <div class="barra-saldo-linha">
           <span class="saldo-info"><strong>Estoque Atual (independente do período acima):</strong> ${
@@ -106,7 +106,7 @@
           <span class="saldo-info"><strong>Valor Total em Estoque:</strong> ${valorTotal !== null ? formatarMoeda(valorTotal) : "—"}</span>
         </div>
         <p style="font-size: 13px; color: #556; margin-top: 10px;">
-          <strong>Armazém(ns) nas movimentações do período:</strong> ${armazens.length ? armazens.join(", ") : "—"}
+          <strong>Armazém(ns) nas movimentações do período:</strong> ${escaparHtml(armazens.length ? armazens.join(", ") : "—")}
         </p>
       `;
     }
@@ -127,10 +127,10 @@
           const cor = quantidade < 0 ? "var(--vermelho)" : "#2e9e44";
           return `
         <tr>
-          <td>${item.data ?? ""}</td>
-          <td class="celula-quebra">${item.nome_pessoa ?? ""}</td>
-          <td>${item.tipo_movimentacao ?? ""}</td>
-          <td>${item.lote ?? ""}</td>
+          <td>${escaparHtml(item.data)}</td>
+          <td class="celula-quebra">${escaparHtml(item.nome_pessoa)}</td>
+          <td>${escaparHtml(item.tipo_movimentacao)}</td>
+          <td>${escaparHtml(item.lote)}</td>
           <td style="color: ${cor}; font-weight: 600;">${quantidade.toLocaleString("pt-BR")}</td>
           <td>${formatarMoeda(item.valor_unitario)}</td>
           <td style="color: ${cor}; font-weight: 600;">${formatarMoeda(item.subtotal)}</td>
@@ -171,7 +171,7 @@
         const resultado = await resp.json();
 
         if (resultado.erro) {
-          document.getElementById("areaMovimentacoes").innerHTML = `<p class="msg-vazio">Erro: ${resultado.erro}</p>`;
+          document.getElementById("areaMovimentacoes").innerHTML = `<p class="msg-vazio">Erro: ${escaparHtml(resultado.erro)}</p>`;
           return;
         }
 
@@ -179,7 +179,7 @@
         document.getElementById("contadorMovimentacoes").textContent = (resultado.movimentacoes || []).length;
         montarTabela(resultado.movimentacoes);
       } catch (erro) {
-        document.getElementById("areaMovimentacoes").innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${erro}</p>`;
+        document.getElementById("areaMovimentacoes").innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${escaparHtml(erro)}</p>`;
       }
     }
 

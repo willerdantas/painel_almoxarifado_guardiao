@@ -1,13 +1,20 @@
 """Homem grande serve paginas e API."""
 import csv
 import datetime
+import html
 import io
 import os
 import re
+import unicodedata
 
-from flask import Flask, jsonify, request, send_from_directory, Response
+import secrets
+import threading
+import time
+
+from flask import Flask, jsonify, request, send_from_directory, Response, session
 from werkzeug.security import check_password_hash, generate_password_hash
 import psycopg2
+import psycopg2.extras
 
 # reportlab eh so pra gerar os pdfs de consumo - import tolerante pra nao derrubar
 # o resto do site se alguem rodar sem "pip install -r requirements.txt" atualizado ainda
@@ -24,16 +31,52 @@ except ImportError:
 
 # openpyxl eh so pra gerar as planilhas (.xlsx) - mesmo import tolerante do reportlab acima
 try:
-    from openpyxl import Workbook
+    from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill
 
     OPENPYXL_DISPONIVEL = True
 except ImportError:
     OPENPYXL_DISPONIVEL = False
 
-from db import run_query, DB_CONFIG, salvar_config
+from db import run_query, get_conn, DB_CONFIG, salvar_config
 
 app = Flask(__name__, static_folder="static")
+
+
+def _chave_secreta():
+    # assina o cookie de sessao. APP_SECRET_KEY (ambiente) tem prioridade; sem ela, gera uma vez e
+    # guarda em secret_key (fora do git, igual db_config.json) pra sessao sobreviver a reinicio
+    chave = os.environ.get("APP_SECRET_KEY")
+    if chave:
+        return chave
+    caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), "secret_key")
+    try:
+        if os.path.exists(caminho):
+            with open(caminho) as arquivo:
+                return arquivo.read().strip()
+        chave = secrets.token_hex(32)
+        with open(os.open(caminho, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as arquivo:
+            arquivo.write(chave)
+        return chave
+    except OSError as erro:
+        # arquivo de outro dono (ex.: criado pelo container como root) - sobe com uma chave so
+        # desta execucao em vez de cair; quem estiver logado entra de novo depois de reiniciar
+        print(f"AVISO: nao foi possivel usar {caminho} ({erro}); usando chave de sessao temporaria. "
+              "Defina APP_SECRET_KEY ou corrija o dono do arquivo.")
+        return secrets.token_hex(32)
+
+
+app.config.update(
+    SECRET_KEY=_chave_secreta(),
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    # so manda o cookie em https quando o servidor estiver atras de https de verdade
+    SESSION_COOKIE_SECURE=os.environ.get("APP_COOKIE_SECURE") == "1",
+    PERMANENT_SESSION_LIFETIME=datetime.timedelta(hours=12),
+    # maior upload aceito (planilha SESA de 30MB + folga) - acima disso o Flask recusa (413) antes
+    # de ler o corpo inteiro pra memoria
+    MAX_CONTENT_LENGTH=32 * 1024 * 1024,
+)
 
 # nomes das paginas, homem organiza tribo
 PAGES = [
@@ -47,7 +90,9 @@ PAGES = [
     "estoque.html",
     "estoque_movimentacoes.html",
     "consumo.html",
-    "aquisicoes.html",
+    "estoque_critico.html",
+    "processos_aquisicao.html",
+    "planejamento_aquisicao.html",
     "painel_pedidos.html",
     "pagamentos.html",
     "atas_contratos.html",
@@ -68,7 +113,9 @@ PAGINAS_SISTEMA = [
     {"chave": "produtos", "rotulo": "Produtos"},
     {"chave": "estoque", "rotulo": "Controle de Estoque"},
     {"chave": "vencidos", "rotulo": "Produtos Vencidos"},
-    {"chave": "aquisicoes", "rotulo": "Aquisições"},
+    {"chave": "estoque_critico", "rotulo": "Estoque Crítico"},
+    {"chave": "processos_aquisicao", "rotulo": "Processos de Aquisição"},
+    {"chave": "planejamento_aquisicao", "rotulo": "Planejamento de Aquisição"},
     {"chave": "atas_contratos", "rotulo": "Atas e Contratos"},
     {"chave": "pagamentos", "rotulo": "Processos de Pagamento"},
     {"chave": "cadastro", "rotulo": "Cadastro"},
@@ -94,6 +141,111 @@ def pages(nome):
 def estatico(caminho):
     # traz pedra e osso (css/js)
     return send_from_directory("static", caminho)
+
+
+# usuario de teste que so funciona quando o banco nao conecta (ver login), pra abrir a tela de
+# Configuração do Banco. sem padrao: so existe se USUARIO_TESTE e SENHA_TESTE estiverem no ambiente
+USUARIO_TESTE = os.environ.get("USUARIO_TESTE")
+SENHA_TESTE = os.environ.get("SENHA_TESTE")
+
+
+# ---------------------------------------------------------------------------------------------
+# autenticacao: o login grava a identidade num cookie de sessao assinado (SECRET_KEY). toda /api/
+# exige essa sessao, e o "usuario logado" sempre sai dela - nunca do que o navegador manda
+# ---------------------------------------------------------------------------------------------
+
+# rotas de /api/ que funcionam sem sessao (a tela de login usa)
+ROTAS_API_PUBLICAS = {"/api/login", "/api/logout", "/api/definir_senha"}
+
+# rotas so de administrador (telas Cadastro e Configuração do Banco) - prefixo
+PREFIXOS_API_ADMIN = (
+    "/api/perfis",
+    "/api/paginas_sistema",
+    "/api/usuarios_sistema",
+    "/api/calendario_distribuicao",
+    "/api/configuracao_banco",
+)
+
+
+def _usuario_sessao():
+    # identificacao do usuario logado (cookie de sessao) - substitui o antigo parametro
+    # "usuario_logado", que o navegador podia mandar com qualquer valor
+    return session.get("identificacao")
+
+
+@app.before_request
+def _exigir_sessao():
+    caminho = request.path
+    if not caminho.startswith("/api/") or caminho in ROTAS_API_PUBLICAS:
+        return None
+    if not _usuario_sessao():
+        return jsonify({"ok": False, "erro": "Sessão expirada. Entre novamente.", "msg": "Sessão expirada. Entre novamente."}), 401
+    eh_rota_config = caminho.startswith("/api/configuracao_banco")
+    # usuario de teste (banco fora do ar) so mexe na configuracao da conexao
+    if session.get("modo_configuracao") and not eh_rota_config:
+        return jsonify({"ok": False, "erro": "Acesso restrito", "msg": "Acesso restrito"}), 403
+    if caminho.startswith(PREFIXOS_API_ADMIN) and not session.get("administrador"):
+        return jsonify({"ok": False, "erro": "Acesso restrito a administradores", "msg": "Acesso restrito a administradores"}), 403
+    return None
+
+
+def _iniciar_sessao(identificacao, administrador, modo_configuracao=False):
+    session.clear()
+    session.permanent = True
+    session["identificacao"] = identificacao
+    session["administrador"] = bool(administrador)
+    if modo_configuracao:
+        session["modo_configuracao"] = True
+
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+# tentativas de login erradas por identificacao + ip: depois de LIMITE_TENTATIVAS_LOGIN dentro de
+# JANELA_TENTATIVAS_LOGIN segundos, bloqueia ate a janela passar. em memoria (por processo)
+LIMITE_TENTATIVAS_LOGIN = 5
+JANELA_TENTATIVAS_LOGIN = 5 * 60
+_tentativas_login = {}
+_trava_tentativas_login = threading.Lock()
+
+
+def _chave_tentativa(usuario):
+    return (usuario.lower(), request.remote_addr or "")
+
+
+def _login_bloqueado(usuario):
+    agora = time.monotonic()
+    with _trava_tentativas_login:
+        tentativas = [t for t in _tentativas_login.get(_chave_tentativa(usuario), []) if agora - t < JANELA_TENTATIVAS_LOGIN]
+        _tentativas_login[_chave_tentativa(usuario)] = tentativas
+        return len(tentativas) >= LIMITE_TENTATIVAS_LOGIN
+
+
+def _registrar_falha_login(usuario):
+    with _trava_tentativas_login:
+        _tentativas_login.setdefault(_chave_tentativa(usuario), []).append(time.monotonic())
+
+
+def _limpar_falhas_login(usuario):
+    with _trava_tentativas_login:
+        _tentativas_login.pop(_chave_tentativa(usuario), None)
+
+
+MSG_LOGIN_INVALIDO = "Usuário ou senha inválidos"
+
+
+def _erro_conexao_banco():
+    # None se conecta, senao a mensagem do erro - timeout curto pra tela de login nao ficar
+    # pendurada esperando um host que nao responde
+    try:
+        conexao = psycopg2.connect(connect_timeout=5, **DB_CONFIG)
+        conexao.close()
+        return None
+    except psycopg2.Error as erro:
+        return str(erro).strip()
 
 
 def _buscar_sistemausuario(identificacao):
@@ -122,8 +274,35 @@ def login():
     # Guardiao) E ter um perfil atribuido em sist_logistica.sistemausuario (cadastro.html) - sem
     # perfil, sem entrada, mesmo que o Guardiao reconheca o usuario
     dados = request.get_json(force=True)
-    usuario = dados.get("usuario", "").strip()
-    senha = dados.get("senha", "")
+    usuario = (dados.get("usuario") or "").strip()
+    senha = dados.get("senha") or ""
+
+    if _login_bloqueado(usuario):
+        return jsonify({"ok": False, "msg": "Muitas tentativas. Aguarde alguns minutos e tente de novo."}), 429
+
+    # banco fora do ar (senha errada, host/porta inexistente...) = ninguem do Guardiao consegue
+    # logar, e a tela de Configuração do Banco fica presa atras do login - libera so o usuario de
+    # teste (USUARIO_TESTE/SENHA_TESTE), e so pra essa tela, ate a conexao voltar
+    erro_conexao = _erro_conexao_banco()
+    if erro_conexao:
+        if USUARIO_TESTE and SENHA_TESTE and secrets.compare_digest(usuario, USUARIO_TESTE) \
+                and secrets.compare_digest(senha, SENHA_TESTE):
+            _iniciar_sessao(USUARIO_TESTE, True, modo_configuracao=True)
+            return jsonify({
+                "ok": True,
+                "usuario": "Usuário de teste (sem banco)",
+                "identificacao": USUARIO_TESTE,
+                "administrador": True,
+                "modo_configuracao": True,
+                "paginas": ["configuracao_banco"],
+                "tela_padrao": "configuracao_banco",
+            })
+        if usuario or senha:
+            _registrar_falha_login(usuario)
+        return jsonify({
+            "ok": False,
+            "msg": "Sem conexão com o banco de dados. Entre com o usuário de teste para configurar a conexão.",
+        }), 503
 
     sql = """
         SELECT
@@ -136,13 +315,17 @@ def login():
         WHERE u.identificacao = %s
     """
     linhas = run_query(sql, (usuario,))
+    # usuario inexistente, sem perfil ou com senha errada dao a mesma resposta - nao revela quais
+    # logins existem
     if not linhas:
-        return jsonify({"ok": False, "msg": "usuario não encontrado"}), 401
+        _registrar_falha_login(usuario)
+        return jsonify({"ok": False, "msg": MSG_LOGIN_INVALIDO}), 401
 
     linha = linhas[0]
     sistemausuario = _buscar_sistemausuario(linha["identificacao"])
     if not sistemausuario or not sistemausuario["sistemaperfil"]:
-        return jsonify({"ok": False, "msg": "Usuário sem perfil de acesso cadastrado. Procure o administrador."}), 403
+        _registrar_falha_login(usuario)
+        return jsonify({"ok": False, "msg": MSG_LOGIN_INVALIDO}), 401
 
     # usuario sem armazem em armazemfunc loga normalmente - so nao traz item nenhum nas paginas
     # que filtram por armazem (SQL_ARMAZENS_DO_USUARIO devolve zero linhas pra ele, e "IN (zero
@@ -155,7 +338,11 @@ def login():
         return jsonify({"ok": False, "precisa_criar_senha": True, "identificacao": linha["identificacao"]})
 
     if not senha or not check_password_hash(sistemausuario["senha_hash"], senha):
-        return jsonify({"ok": False, "msg": "Senha incorreta"}), 401
+        _registrar_falha_login(usuario)
+        return jsonify({"ok": False, "msg": MSG_LOGIN_INVALIDO}), 401
+
+    _limpar_falhas_login(usuario)
+    _iniciar_sessao(linha["identificacao"], eh_admin)
 
     paginas = PAGINAS_SISTEMA_CHAVES if eh_admin else _paginas_do_perfil(sistemausuario["sistemaperfil"])
 
@@ -189,15 +376,17 @@ def api_definir_senha():
     if not identificacao or len(senha) < 6:
         return jsonify({"ok": False, "msg": "Senha deve ter pelo menos 6 caracteres"}), 400
 
-    sistemausuario = _buscar_sistemausuario(identificacao)
-    if not sistemausuario:
-        return jsonify({"ok": False, "msg": "Usuário sem perfil de acesso cadastrado. Procure o administrador."}), 403
-
-    run_query("""
+    # so grava se ainda NAO tem senha (primeiro acesso ou senha resetada pelo administrador) - a
+    # condicao fica no proprio UPDATE pra nao abrir brecha entre conferir e gravar. sem isso,
+    # qualquer um trocava a senha de qualquer usuario (inclusive administrador)
+    atualizado = run_query("""
         UPDATE sist_logistica.sistemausuario
         SET senha_hash = %s, _update = now()
-        WHERE identificacao = %s
+        WHERE identificacao = %s AND senha_hash IS NULL
+        RETURNING sistemausuario
     """, [generate_password_hash(senha), identificacao])
+    if not atualizado:
+        return jsonify({"ok": False, "msg": "Não é possível definir senha para este usuário. Procure o administrador."}), 403
 
     return jsonify({"ok": True})
 
@@ -209,9 +398,6 @@ def api_paginas_sistema():
 
 @app.route("/api/perfis")
 def api_perfis():
-    bloqueio = _resposta_se_nao_administrador(request.args.get("usuario_logado"))
-    if bloqueio:
-        return bloqueio
     perfis = run_query("""
         SELECT sistemaperfil, nome, administrador
         FROM sist_logistica.sistemaperfil
@@ -225,9 +411,6 @@ def api_perfis():
 @app.route("/api/perfis", methods=["POST"])
 def api_criar_perfil():
     dados = request.get_json(force=True)
-    bloqueio = _resposta_se_nao_administrador(dados.get("usuario_logado"))
-    if bloqueio:
-        return bloqueio
     nome = (dados.get("nome") or "").strip()
     administrador = bool(dados.get("administrador"))
     paginas = dados.get("paginas") or []
@@ -262,9 +445,6 @@ def api_criar_perfil():
 @app.route("/api/perfis/<int:sistemaperfil>", methods=["PUT"])
 def api_editar_perfil(sistemaperfil):
     dados = request.get_json(force=True)
-    bloqueio = _resposta_se_nao_administrador(dados.get("usuario_logado"))
-    if bloqueio:
-        return bloqueio
     nome = (dados.get("nome") or "").strip()
     administrador = bool(dados.get("administrador"))
     paginas = dados.get("paginas") or []
@@ -302,9 +482,6 @@ def api_editar_perfil(sistemaperfil):
 
 @app.route("/api/perfis/<int:sistemaperfil>", methods=["DELETE"])
 def api_excluir_perfil(sistemaperfil):
-    bloqueio = _resposta_se_nao_administrador(request.args.get("usuario_logado"))
-    if bloqueio:
-        return bloqueio
     em_uso = run_query(
         "SELECT count(*) AS total FROM sist_logistica.sistemausuario WHERE sistemaperfil = %s",
         [sistemaperfil],
@@ -320,9 +497,6 @@ def api_excluir_perfil(sistemaperfil):
 def api_usuarios_sistema():
     # lista usuarios do Guardiao (public.usuario) buscando por identificacao ou nome, trazendo
     # junto o perfil ja atribuido (se houver) - so busca com termo pra nao devolver as 2500+ linhas
-    bloqueio = _resposta_se_nao_administrador(request.args.get("usuario_logado"))
-    if bloqueio:
-        return bloqueio
     termo = request.args.get("termo", "").strip()
     if not termo:
         return jsonify([])
@@ -354,9 +528,6 @@ def api_atribuir_perfil_usuario():
     # ou troca o perfil/tela padrao de quem ja tinha uma - cadastro.html sempre manda os dois
     # juntos (mesmo que so um tenha mudado), pra um nao pisar no outro
     dados = request.get_json(force=True)
-    bloqueio = _resposta_se_nao_administrador(dados.get("usuario_logado"))
-    if bloqueio:
-        return bloqueio
     identificacao = (dados.get("identificacao") or "").strip()
     sistemaperfil = dados.get("sistemaperfil")
     tela_padrao = dados.get("tela_padrao") or None
@@ -381,9 +552,6 @@ def api_resetar_senha_usuario():
     # limpa a senha (fica NULL de novo) - proximo login do usuario cai no fluxo de "primeiro
     # acesso" e pede pra ele criar uma senha nova
     dados = request.get_json(force=True)
-    bloqueio = _resposta_se_nao_administrador(dados.get("usuario_logado"))
-    if bloqueio:
-        return bloqueio
     identificacao = (dados.get("identificacao") or "").strip()
     if not identificacao:
         return jsonify({"ok": False, "msg": "Informe o usuário"}), 400
@@ -516,6 +684,178 @@ TABELAS_SIST_LOGISTICA = {
             _update TIMESTAMP NOT NULL DEFAULT now()
         )
     """,
+    # grupos de aquisicao da planilha CONTROLE GERAL POR ITENS (SESA) - uma aba por grupo
+    "grupoaquisicao": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.grupoaquisicao (
+            grupoaquisicao SERIAL PRIMARY KEY,
+            sigla VARCHAR(20) NOT NULL UNIQUE,
+            nome VARCHAR(80) NOT NULL,
+            _creation TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
+    # historico de uploads da planilha - importacao so inclui/atualiza item, nunca apaga
+    "processosesaimportacao": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.processosesaimportacao (
+            processosesaimportacao SERIAL PRIMARY KEY,
+            arquivo VARCHAR(255) NOT NULL,
+            usuario VARCHAR(60),
+            total_itens INTEGER NOT NULL DEFAULT 0,
+            inseridos INTEGER NOT NULL DEFAULT 0,
+            atualizados INTEGER NOT NULL DEFAULT 0,
+            _creation TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
+    # uma linha por linha da planilha. colunas variam um pouco de aba pra aba - o que a aba nao
+    # tem fica NULL. texto livre fica TEXT porque a planilha mistura de tudo nas celulas.
+    # item eh identificado entre importacoes por grupo + processo + n. item + codigo SRP (ver
+    # SQL_CHAVE_ITEM_SESA); "ocorrencia" separa as poucas linhas que repetem essa chave (item ainda
+    # sem codigo/numero) pela ordem em que aparecem. processosesaimportacao = ultima que mexeu no item
+    "processosesaitem": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.processosesaitem (
+            processosesaitem BIGSERIAL PRIMARY KEY,
+            processosesaimportacao INTEGER NOT NULL REFERENCES sist_logistica.processosesaimportacao(processosesaimportacao) ON DELETE CASCADE,
+            grupoaquisicao INTEGER NOT NULL REFERENCES sist_logistica.grupoaquisicao(grupoaquisicao),
+            aba VARCHAR(60) NOT NULL,
+            linha INTEGER NOT NULL,
+            ano INTEGER,
+            processo TEXT,
+            tipo_aquisicao TEXT,
+            origem TEXT,
+            plan TEXT,
+            curva TEXT,
+            cod_anterior TEXT,
+            numero_item TEXT,
+            codigo_srp TEXT,
+            descricao TEXT,
+            apresentacao TEXT,
+            grau_prioridade TEXT,
+            classificacao TEXT,
+            status TEXT,
+            etapa TEXT,
+            observacoes TEXT,
+            data_recebimento_setorial DATE,
+            dias_setorial INTEGER,
+            data_movimentacao DATE,
+            dias_movimentacao INTEGER,
+            responsavel TEXT,
+            pregao TEXT,
+            ata TEXT,
+            vigencia TEXT,
+            data_abertura DATE,
+            data_certame DATE,
+            data_homologacao DATE,
+            data_atualizacao TIMESTAMP,
+            carta_solidariedade TEXT,
+            ultima_area TEXT,
+            dias_ultima_area INTEGER,
+            obs_recursos TEXT,
+            ocorrencia INTEGER NOT NULL DEFAULT 1,
+            _creation TIMESTAMP NOT NULL DEFAULT now(),
+            _update TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
+    # item da planilha SESA vai pra lista "Processos Hospital" sozinho quando o codigo SRP bate com
+    # o cod. seplag de algum produto - aqui fica o ajuste manual (botao Incluir = 'I', Remover = 'R')
+    # que passa por cima disso. chave eh processo + codigo SRP (e nao o id do item) pra sobreviver
+    # a reimportacao da planilha
+    "processohospitalajuste": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.processohospitalajuste (
+            processo TEXT NOT NULL,
+            codigo_srp TEXT NOT NULL DEFAULT '',
+            acao CHAR(1) NOT NULL CHECK (acao IN ('I', 'R')),
+            usuario VARCHAR(60),
+            _creation TIMESTAMP NOT NULL DEFAULT now(),
+            _update TIMESTAMP NOT NULL DEFAULT now(),
+            PRIMARY KEY (processo, codigo_srp)
+        )
+    """,
+    # processo cadastrado a mao na lista "Processos Hospital" (fora da planilha SESA - reimportar a
+    # planilha nao mexe aqui)
+    "processohospitalmanual": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.processohospitalmanual (
+            processohospitalmanual SERIAL PRIMARY KEY,
+            processo TEXT NOT NULL UNIQUE,
+            grupoaquisicao INTEGER NOT NULL REFERENCES sist_logistica.grupoaquisicao(grupoaquisicao),
+            tipo_aquisicao TEXT,
+            status TEXT,
+            etapa TEXT,
+            data_abertura DATE,
+            usuario VARCHAR(60),
+            _creation TIMESTAMP NOT NULL DEFAULT now(),
+            _update TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
+    # itens do processo manual - codigo_srp/descricao/apresentacao copiados do produto na hora de
+    # incluir (mesmo formato dos itens da planilha, pra cair igual na listagem)
+    "processohospitalmanualitem": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.processohospitalmanualitem (
+            processohospitalmanualitem SERIAL PRIMARY KEY,
+            processohospitalmanual INTEGER NOT NULL REFERENCES sist_logistica.processohospitalmanual(processohospitalmanual) ON DELETE CASCADE,
+            numero_item TEXT NOT NULL,
+            produto NUMERIC NOT NULL,
+            codigo_srp TEXT,
+            descricao TEXT,
+            apresentacao TEXT,
+            _creation TIMESTAMP NOT NULL DEFAULT now(),
+            UNIQUE (processohospitalmanual, produto)
+        )
+    """,
+    # dados de processo da planilha SESA editados na tela (botao Editar da lista Hospital) - por cima
+    # do que veio da planilha, por numero de processo, pra sobreviver a reimportacao. guarda o
+    # conjunto inteiro de campos (campo vazio aqui = vazio na tela, nao "usa o da planilha")
+    "processohospitaledicao": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.processohospitaledicao (
+            processo TEXT PRIMARY KEY,
+            tipo_aquisicao TEXT,
+            status TEXT,
+            etapa TEXT,
+            pregao TEXT,
+            ata TEXT,
+            vigencia TEXT,
+            data_abertura DATE,
+            usuario VARCHAR(60),
+            _creation TIMESTAMP NOT NULL DEFAULT now(),
+            _update TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
+    # listas da tela Processos de Pagamento (pagamentos.html) - semeadas por _seed_listas_pagamento
+    "tipoaquisicaopagamento": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.tipoaquisicaopagamento (
+            tipoaquisicaopagamento SERIAL PRIMARY KEY,
+            nome VARCHAR(80) NOT NULL UNIQUE,
+            _creation TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
+    "areavinculada": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.areavinculada (
+            areavinculada SERIAL PRIMARY KEY,
+            nome VARCHAR(80) NOT NULL UNIQUE,
+            _creation TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
+    # campos preenchidos na tela pra cada ordem de compra do Guardiao (public.pedidodestaque - uma
+    # linha por produto destacado). situacao_final: 'P' pago, 'C' cancelado, NULL = em aberto
+    # (empenhado se tem numero de empenho, senao a empenhar)
+    "processopagamento": """
+        CREATE TABLE IF NOT EXISTS sist_logistica.processopagamento (
+            pedidodestaque NUMERIC PRIMARY KEY,
+            tipoaquisicaopagamento INTEGER REFERENCES sist_logistica.tipoaquisicaopagamento(tipoaquisicaopagamento),
+            areavinculada INTEGER REFERENCES sist_logistica.areavinculada(areavinculada),
+            numero_processo TEXT,
+            prioridade SMALLINT CHECK (prioridade BETWEEN 1 AND 3),
+            numero_empenho TEXT,
+            data_envio_empenho DATE,
+            situacao_final CHAR(1) CHECK (situacao_final IN ('P', 'C')),
+            -- utilizacao (botao Utilizacao): paciente do integra_local, data e internacao da data
+            isn_paciente NUMERIC,
+            num_prontuario TEXT,
+            data_utilizacao DATE,
+            isn_internacao NUMERIC,
+            usuario VARCHAR(60),
+            _creation TIMESTAMP NOT NULL DEFAULT now(),
+            _update TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """,
 }
 
 # indices extras (fora das PK/UNIQUE que ja saem junto com o CREATE TABLE acima)
@@ -523,6 +863,9 @@ INDICES_SIST_LOGISTICA = [
     "CREATE INDEX IF NOT EXISTS idx_armazemmov_saidacabecalho ON sist_logistica.armazemmovimentacao (saidacabecalho)",
     "CREATE INDEX IF NOT EXISTS idx_armazemmov_saidaitem ON sist_logistica.armazemmovimentacao (saidaitem)",
     "CREATE INDEX IF NOT EXISTS idx_armazemmov_usuario ON sist_logistica.armazemmovimentacao (usuario)",
+    "CREATE INDEX IF NOT EXISTS idx_processosesaitem_grupo ON sist_logistica.processosesaitem (grupoaquisicao)",
+    "CREATE INDEX IF NOT EXISTS idx_processosesaitem_processo ON sist_logistica.processosesaitem (processo)",
+    "CREATE INDEX IF NOT EXISTS idx_processosesaitem_codigo_srp ON sist_logistica.processosesaitem (codigo_srp)",
 ]
 
 # perfis de acesso de hoje (cadastro.html) - vira a carga inicial de um banco novo, pra nao
@@ -537,8 +880,9 @@ PERFIS_PADRAO = [
         "nome": "Supervisor",
         "administrador": False,
         "paginas": [
-            "aquisicoes", "atas_contratos", "dashboard", "distribuicao_pedidos", "estoque",
-            "pagamentos", "painel_pedidos", "pedidos", "produtos", "separacao_pedidos", "vencidos",
+            "estoque_critico", "atas_contratos", "dashboard", "distribuicao_pedidos", "estoque",
+            "pagamentos", "painel_pedidos", "pedidos", "planejamento_aquisicao", "processos_aquisicao", "produtos",
+            "separacao_pedidos", "vencidos",
         ],
     },
 ]
@@ -551,6 +895,17 @@ def _schema_sist_logistica_existe():
 
 @app.route("/api/configuracao_banco")
 def api_configuracao_banco():
+    conexao = {
+        "host": DB_CONFIG["host"],
+        "port": DB_CONFIG["port"],
+        "dbname": DB_CONFIG["dbname"],
+        "user": DB_CONFIG["user"],
+    }
+    # sem conexao devolve so os dados da conexao + o erro, pra tela conseguir editar e testar
+    erro_conexao = _erro_conexao_banco()
+    if erro_conexao:
+        return jsonify({"conexao": conexao, "erro_conexao": erro_conexao})
+
     schema_existe = _schema_sist_logistica_existe()
     tabelas = []
     for nome in TABELAS_SIST_LOGISTICA:
@@ -573,12 +928,7 @@ def api_configuracao_banco():
         tem_usuario = bool(linhas)
 
     return jsonify({
-        "conexao": {
-            "host": DB_CONFIG["host"],
-            "port": DB_CONFIG["port"],
-            "dbname": DB_CONFIG["dbname"],
-            "user": DB_CONFIG["user"],
-        },
+        "conexao": conexao,
         "schema_existe": schema_existe,
         "tabelas": tabelas,
         "tem_usuario": tem_usuario,
@@ -603,7 +953,11 @@ def api_editar_configuracao_banco():
         return jsonify({"ok": False, "msg": "Porta inválida"}), 400
 
     novo_config = {"host": host, "port": porta, "dbname": dbname, "user": usuario}
-    # senha em branco mantem a senha atual - evita ter que redigitar so pra trocar o host, por ex.
+    # senha em branco mantem a atual so se o servidor e o usuario continuam os mesmos (ex.: trocar
+    # so o nome do banco) - apontar pra outro host com a senha antiga mandaria essa senha pra ele
+    mesmo_servidor = (host, porta, usuario) == (DB_CONFIG.get("host"), DB_CONFIG.get("port"), DB_CONFIG.get("user"))
+    if not senha and not mesmo_servidor:
+        return jsonify({"ok": False, "msg": "Informe a senha ao trocar host, porta ou usuário"}), 400
     novo_config["password"] = senha if senha else DB_CONFIG["password"]
 
     salvar_config(novo_config)
@@ -643,15 +997,54 @@ def _seed_perfis_padrao():
             """, [sistemaperfil, pagina])
 
 
+# sigla do comeco do nome da aba -> nome do grupo (o resto do nome da aba, tipo "2024-2026", eh ignorado)
+GRUPOS_AQUISICAO = {
+    "MED": "Medicamento",
+    "MMH": "MMH",
+    "OPME": "OPME",
+    "ODONTO": "Odontologia",
+    "NUT": "Nutrição",
+    "GASES": "Gases Medicinais",
+    "LAB": "Laboratório",
+    "EQUIP": "Equipamentos",
+    "SERV": "Serviço",
+}
+
+
+def _seed_grupos_aquisicao():
+    for sigla, nome in GRUPOS_AQUISICAO.items():
+        run_query("""
+            INSERT INTO sist_logistica.grupoaquisicao (sigla, nome)
+            VALUES (%s, %s)
+            ON CONFLICT (sigla) DO UPDATE SET nome = EXCLUDED.nome
+        """, [sigla, nome])
+
+
+def _migrar_chave_aquisicoes():
+    # a pagina "aquisicoes" virou "estoque_critico" - passa perfis e tela padrao ja gravados pra
+    # chave nova (idempotente, roda no start e ao criar o schema)
+    run_query("""
+        INSERT INTO sist_logistica.sistemaperfilpagina (sistemaperfil, pagina)
+        SELECT sistemaperfil, 'estoque_critico' FROM sist_logistica.sistemaperfilpagina WHERE pagina = 'aquisicoes'
+        ON CONFLICT DO NOTHING
+    """)
+    run_query("DELETE FROM sist_logistica.sistemaperfilpagina WHERE pagina = 'aquisicoes'")
+    run_query("UPDATE sist_logistica.sistemausuario SET tela_padrao = 'estoque_critico' WHERE tela_padrao = 'aquisicoes'")
+
+
 @app.route("/api/configuracao_banco/criar_schema", methods=["POST"])
 def api_criar_schema_sist_logistica():
     try:
         run_query("CREATE SCHEMA IF NOT EXISTS sist_logistica")
         for ddl in TABELAS_SIST_LOGISTICA.values():
             run_query(ddl)
+        _migrar_processosesaitem()
         for ddl in INDICES_SIST_LOGISTICA:
             run_query(ddl)
         _seed_perfis_padrao()
+        _seed_grupos_aquisicao()
+        _seed_listas_pagamento()
+        _migrar_chave_aquisicoes()
         return jsonify({"ok": True})
     except Exception as erro:
         return jsonify({"ok": False, "msg": str(erro)}), 500
@@ -745,15 +1138,6 @@ def _usuario_eh_administrador(usuario_logado):
     return bool(linhas and linhas[0]["administrador"])
 
 
-def _resposta_se_nao_administrador(usuario_logado):
-    # gestao de perfis/usuarios (quem pode fazer o que no sistema) eh dado sensivel - so
-    # administrador mexe, mesmo que o perfil do usuario tenha acesso a pagina cadastro.html (por
-    # causa de outra secao dela, tipo Calendario de Distribuicao, liberada normalmente por perfil)
-    if not _usuario_eh_administrador(usuario_logado):
-        return jsonify({"ok": False, "msg": "Acesso restrito a administradores"}), 403
-    return None
-
-
 # perfis que, mesmo sem ser administrador (nao ganham acesso as paginas/telas de admin), devem
 # enxergar todos os armazens sem a restricao de armazemfunc - Compras e Contratos lidam com
 # contrato/ata de todos os armazens no dia a dia, diferente dos perfis operacionais (estoquista,
@@ -808,7 +1192,7 @@ def _fragmento_filtro_armazem(alias_coluna, usuario_logado, armazem_nome):
 def api_usuario_armazens():
     # armazens que o usuario logado tem em armazemfunc - usado pra decidir se mostra o campo de
     # filtro de armazem (administrador ou mais de um armazem) e pra popular as opcoes dele
-    usuario_logado = request.args.get("usuario_logado")
+    usuario_logado = _usuario_sessao()
     if not usuario_logado:
         return jsonify([])
 
@@ -844,25 +1228,16 @@ UNIDADE_PADRAO = 62438
 # passa a significar estoqueminimo > 0 (so existe ponto calculado onde tem minimo definido)
 SQL_PONTO_RESSUPRIMENTO_180D = "ROUND(ea.estoqueminimo / 30 * 180, 2)"
 
-# produto tem ata ou contrato ainda valido (familia cujo aditivo mais recente nao venceu) - mesmo
-# criterio de "valido" usado em atas_contratos.html e /api/estoque_abastecimento (saldo em
-# ata/contrato). correlacionado por p.produto, entao so funciona dentro de uma query que ja tenha
-# "produto p" no escopo - usado pra sinalizar produto do Hospital sem ata/contrato em
-# estoque.html/aquisicoes.html
+# produto tem ata ou contrato vigente (a propria linha com datafim >= hoje, mesma regra de
+# SQL_PEDIDO_VIGENTE - saldo do abastecimento e botao Ata/Contrato). correlacionado por
+# p.produto, entao so funciona dentro de uma query que ja tenha "produto p" no escopo - usado pra
+# sinalizar produto do Hospital sem ata/contrato em estoque.html/estoque_critico.html
 SQL_PRODUTO_TEM_CONTRATO_VALIDO = """
     EXISTS (
         SELECT 1 FROM public.pedidoitem pi_ctr
         JOIN public.pedidocabecalho pc_ctr ON pc_ctr.pedidocabecalho = pi_ctr.pedidocabecalho
         WHERE pi_ctr.produto = p.produto
-        AND EXISTS (
-            SELECT 1 FROM public.pedidocabecalho pc_latest
-            WHERE pc_latest.numeroidentificacao = pc_ctr.numeroidentificacao
-            AND pc_latest.numeroaditivo = (
-                SELECT MAX(pc2.numeroaditivo) FROM public.pedidocabecalho pc2
-                WHERE pc2.numeroidentificacao = pc_ctr.numeroidentificacao
-            )
-            AND pc_latest.datafim > CURRENT_DATE
-        )
+        AND pc_ctr.datafim >= CURRENT_DATE
     )
 """
 
@@ -930,7 +1305,7 @@ def api_vencidos_armazens():
     # armazens que tem pelo menos um produto vencido com estoque > 0 - usado pra popular o filtro
     # de armazem em vencidos.html (em vez da lista cheia de armazens, so quem realmente tem
     # produto vencido). restrito aos armazens do usuario logado quando ele nao eh administrador
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     condicoes = ["l.validade < CURRENT_DATE", "e.quantidade > 0"]
     params = []
     if usuario_logado:
@@ -955,7 +1330,7 @@ def api_estoque_armazens():
     # armazens de qualquer tipo que tem pelo menos um produto com estoque > 0 - usado pra popular
     # o filtro de armazem em estoque.html (em vez da lista cheia de armazens, so quem realmente
     # tem estoque). restrito aos armazens do usuario logado quando ele nao eh administrador
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     condicoes = ["e.quantidade > 0"]
     params = []
     if usuario_logado:
@@ -974,14 +1349,14 @@ def api_estoque_armazens():
     return _consulta_generica(sql, params)
 
 
-@app.route("/api/aquisicoes_armazens")
-def api_aquisicoes_armazens():
+@app.route("/api/estoque_critico_armazens")
+def api_estoque_critico_armazens():
     # armazens tipo C que tem pelo menos um produto com o limite escolhido (tipo_alerta)
-    # insuficiente - usado pra popular o filtro de armazem em aquisicoes.html (em vez da lista
+    # insuficiente - usado pra popular o filtro de armazem em estoque_critico.html (em vez da lista
     # cheia de armazens tipo C, so quem realmente tem produto na lista). mesmo criterio
-    # "insuficiente" (e o mesmo default) de /api/aquisicoes. restrito aos armazens do usuario
+    # "insuficiente" (e o mesmo default) de /api/estoque_critico. restrito aos armazens do usuario
     # logado quando ele nao eh administrador
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     limite_alerta_por_tipo = {
         "minimo": "ea.estoqueminimo",
         "seguranca": "ea.estoqueseguranca",
@@ -1027,7 +1402,7 @@ def api_pedidos_novos():
     data_fim = request.args.get("data_fim")
     armazem = request.args.get("armazem")
     setor = request.args.get("setor")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
 
     # so entra em "novos pedidos" quem ainda nao foi tocado - se algum item da requisicao ja virou
     # saida (saidaitem), o pedido ja esta em processamento e passa a aparecer em "pedidos a separar"
@@ -1211,7 +1586,7 @@ def _filtros_consumo(args):
     data_inicio = args.get("data_inicio") or "2026-10-01"
     data_fim = args.get("data_fim")
     armazem = args.get("armazem")
-    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     # origem do lote: "cd" = fornecedor 13276609 (CENTRO DE DISTRIBUICAO SESA / C.D SESA), "hospital"
     # = qualquer outro fornecedor (ou sem fornecedor) - separa "Itens Movimentados" em duas listas
     origem = args.get("origem")
@@ -1488,11 +1863,12 @@ def _montar_cabecalho_pdf_consumo(args):
 LINHAS_POR_BLOCO_PDF = 40
 
 
-def _montar_pdf_relatorio(titulo, linhas_cabecalho, blocos):
+def _montar_pdf_relatorio(titulo, linhas_cabecalho, blocos, cards=None):
     # builder generico pra um pdf de 1+ tabelas (cabecalho de texto + N tabelas em paisagem, cada
     # uma com subtitulo opcional) - usado pelos relatorios de consumo e vencidos.
     # "blocos" eh uma lista de dicts: subtitulo (opcional), cabecalho_tabela, linhas_tabela,
-    # largura_colunas, linha_total (opcional)
+    # largura_colunas, linha_total (opcional). "cards": lista opcional de (rotulo, valor) - vira uma
+    # faixa de quadros logo abaixo do cabecalho, igual aos cards da tela
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -1517,6 +1893,30 @@ def _montar_pdf_relatorio(titulo, linhas_cabecalho, blocos):
     for linha in linhas_cabecalho:
         elementos.append(Paragraph(linha, estilos["Normal"]))
     elementos.append(Spacer(1, 12))
+
+    if cards:
+        estilo_card_valor = ParagraphStyle("cardValor", parent=estilos["Normal"], fontName="Helvetica-Bold",
+                                           fontSize=15, leading=19, alignment=1, textColor=colors.HexColor("#1c2b3a"))
+        estilo_card_rotulo = ParagraphStyle("cardRotulo", parent=estilos["Normal"], fontSize=8, leading=10,
+                                            alignment=1, textColor=colors.HexColor("#556677"))
+        largura_card = doc.width / len(cards)
+        tabela_cards = Table(
+            [[Paragraph(str(valor), estilo_card_valor) for _rotulo, valor in cards],
+             [Paragraph(rotulo, estilo_card_rotulo) for rotulo, _valor in cards]],
+            colWidths=[largura_card] * len(cards),
+        )
+        estilo_cards = [
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, 0), 10),
+            ("BOTTOMPADDING", (0, 1), (-1, 1), 10),
+        ]
+        # um quadro por card (borda em volta das duas linhas da coluna), com respiro entre eles
+        for coluna in range(len(cards)):
+            estilo_cards.append(("BOX", (coluna, 0), (coluna, 1), 0.8, colors.HexColor("#d7dde3")))
+            estilo_cards.append(("BACKGROUND", (coluna, 0), (coluna, 1), colors.HexColor("#f5f7f9")))
+        tabela_cards.setStyle(TableStyle(estilo_cards))
+        elementos.append(tabela_cards)
+        elementos.append(Spacer(1, 16))
 
     # cada pedaco (chunk de LINHAS_POR_BLOCO_PDF linhas) e cada novo bloco (ex.: "Produtos do
     # Hospital" depois de "Produtos do CD") comeca em pagina nova - sem isso, o fim de um pedaco
@@ -1946,7 +2346,7 @@ def api_consumo_xlsx():
 def api_separacao_ativa():
     # pedido que esse usuario ja reivindicou e ainda nao concluiu (_creation = _update) - usado
     # pra bloquear "Separar Pedido" em outro pedido e mostrar a mensagem "pedido em separacao"
-    usuario_id = _resolver_usuario_id(request.args.get("usuario_logado"))
+    usuario_id = _resolver_usuario_id(_usuario_sessao())
     if not usuario_id:
         return jsonify(None)
 
@@ -1969,7 +2369,7 @@ def api_separar_pedido():
     # _creation = agora (o momento da selecao)
     dados = request.get_json(force=True)
     saidacabecalho = dados.get("saidacabecalho")
-    usuario_id = _resolver_usuario_id(dados.get("usuario_logado"))
+    usuario_id = _resolver_usuario_id(_usuario_sessao())
 
     if not saidacabecalho or not usuario_id:
         return jsonify({"ok": False, "msg": "dados incompletos"}), 400
@@ -2013,7 +2413,7 @@ def api_pedidos_em_separacao():
     # a consulta parte de armazemmovimentacao (tabela pequena - so reivindicacoes ativas) e so
     # depois junta com saidacabecalho pela PK - NUNCA um JOIN LATERAL correlacionado por linha de
     # saidacabecalho (tabela com mais de 1 milhao de linhas), que forcava um scan completo dela
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
 
     condicoes = ["sc.status <> 'E'"]
     params = []
@@ -2086,7 +2486,7 @@ def api_separacao_concluir():
     # _creation (quando foi selecionado) e trocando _update pra agora (quando foi concluido)
     dados = request.get_json(force=True)
     saidacabecalho = dados.get("saidacabecalho")
-    usuario_id = _resolver_usuario_id(dados.get("usuario_logado"))
+    usuario_id = _resolver_usuario_id(_usuario_sessao())
 
     if not saidacabecalho or not usuario_id:
         return jsonify({"ok": False, "msg": "dados incompletos"}), 400
@@ -2163,7 +2563,7 @@ def api_pedidos_separacao():
         data_fim=request.args.get("data_fim"),
         armazem=request.args.get("armazem"),
         setor=request.args.get("setor"),
-        usuario_logado=request.args.get("usuario_logado"),
+        usuario_logado=_usuario_sessao(),
     )
 
 
@@ -2178,7 +2578,7 @@ def api_pedidos_distribuicao():
         data_fim=request.args.get("data_fim"),
         armazem=request.args.get("armazem"),
         setor=request.args.get("setor"),
-        usuario_logado=request.args.get("usuario_logado"),
+        usuario_logado=_usuario_sessao(),
         condicoes_base=["sc.status <> 'E'", SQL_SEPARACAO_CONCLUIDA, f"NOT {SQL_DISTRIBUICAO_RECLAMADA}"],
     )
 
@@ -2189,7 +2589,7 @@ def api_pedidos_em_distribuicao():
     # pra todo mundo, igual pedidos_em_separacao. Uma vez concluido, sai daqui e vai pra finalizados
     # mesma logica de performance: parte de armazemmovimentacao (pequena) e so depois junta com
     # saidacabecalho pela PK, nunca um JOIN LATERAL correlacionado por linha de saidacabecalho
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
 
     condicoes = ["sc.status <> 'E'"]
     params = []
@@ -2234,7 +2634,7 @@ def api_pedidos_em_distribuicao():
 def api_distribuicao_ativos():
     # pedidos que esse usuario ja reivindicou pra distribuicao e ainda estao em andamento - usado
     # pra saber quantas vagas restam (limite de 10 simultaneos) e travar os checkboxes na tela
-    usuario_id = _resolver_usuario_id(request.args.get("usuario_logado"))
+    usuario_id = _resolver_usuario_id(_usuario_sessao())
     if not usuario_id:
         return jsonify([])
 
@@ -2255,7 +2655,7 @@ def api_distribuir_pedidos():
     # 1 por vez). Conta quantos esse usuario ja tem em andamento e nao deixa passar do limite
     dados = request.get_json(force=True)
     saidacabecalhos = dados.get("saidacabecalhos") or []
-    usuario_id = _resolver_usuario_id(dados.get("usuario_logado"))
+    usuario_id = _resolver_usuario_id(_usuario_sessao())
 
     if not saidacabecalhos or not usuario_id:
         return jsonify({"ok": False, "msg": "dados incompletos"}), 400
@@ -2336,7 +2736,7 @@ def api_distribuicao_concluir():
     # pedido reivindicado se conclui de forma independente (nao trava os outros 9)
     dados = request.get_json(force=True)
     saidacabecalho = dados.get("saidacabecalho")
-    usuario_id = _resolver_usuario_id(dados.get("usuario_logado"))
+    usuario_id = _resolver_usuario_id(_usuario_sessao())
 
     if not saidacabecalho or not usuario_id:
         return jsonify({"ok": False, "msg": "dados incompletos"}), 400
@@ -2372,7 +2772,7 @@ def api_pedidos_finalizados():
     data_fim = request.args.get("data_fim")
     armazem = request.args.get("armazem")
     setor = request.args.get("setor")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
 
     # sem ::date pra continuar sargable (indice em (status, data))
     condicoes = [f"(sc.status = 'E' OR {SQL_DISTRIBUICAO_CONCLUIDA})", "sc.data >= %s"]
@@ -2421,7 +2821,7 @@ def api_separacao_pedidos():
         data_inicio=request.args.get("data_inicio"),
         data_fim=request.args.get("data_fim"),
         setor=request.args.get("unidade"),
-        usuario_logado=request.args.get("usuario_logado"),
+        usuario_logado=_usuario_sessao(),
     )
 
 
@@ -2717,7 +3117,7 @@ def api_vencidos():
     nome_produto = request.args.get("nome_produto")
     descricao = request.args.get("descricao")
     lote = request.args.get("lote")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = request.args.get("armazem")
     try:
         pagina = max(int(request.args.get("pagina", 1)), 1)
@@ -2830,7 +3230,7 @@ def _filtros_vencidos_relatorio(args):
     nome_produto = args.get("nome_produto")
     descricao = args.get("descricao")
     lote = args.get("lote")
-    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = args.get("armazem")
 
     condicoes = ["l.validade < CURRENT_DATE", "e.quantidade > 0"]
@@ -3071,7 +3471,7 @@ def api_vencidos_lotes():
     # aquele lote vencido esta
     produto = request.args.get("produto")
     lote = request.args.get("lote")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = request.args.get("armazem")
     if not produto:
         return jsonify([])
@@ -3136,7 +3536,7 @@ def _filtros_estoque(args):
     lote = args.get("lote")
     classe = args.get("classe")
     subgrupo = args.get("subgrupo")
-    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = args.get("armazem")
     origem = args.get("origem")
 
@@ -3175,7 +3575,7 @@ def _filtros_estoque(args):
     # filtro de armazem (usuario logado e/ou selecao manual) vem antes na string SQL (dentro da
     # subquery), entao os parametros dele precisam ir antes dos outros na lista - por isso um
     # params_completo separado. associacao produto x armazem agora passa por estoquearmazem (tabela
-    # de registro/parametrizacao, a mesma usada em abastecimento/aquisicoes) em vez do armazem onde
+    # de registro/parametrizacao, a mesma usada em abastecimento/estoque_critico) em vez do armazem onde
     # o lote fisico (estoque.armazem) por acaso esta - a quantidade exibida/somada continua vindo do
     # lote (precisa disso pra manter a quebra CD/Hospital, que so existe no nivel de lote/fornecedor)
     filtro_armazem_usuario, params_armazem = _fragmento_filtro_armazem("ea.armazem", usuario_logado, armazem)
@@ -3275,7 +3675,10 @@ def api_estoque():
                 COALESCE((
                     SELECT json_agg(pagina.* ORDER BY pagina.{coluna_ordenacao} {direcao_ordenacao} NULLS LAST)
                     FROM (
-                        SELECT * FROM filtrado
+                        SELECT f.*,
+                            {_sql_saldo_vigente("f.cod_produto", "S")} AS saldo_ata_vigente,
+                            {_sql_saldo_vigente("f.cod_produto", "N")} AS saldo_contrato_vigente
+                        FROM filtrado f
                         ORDER BY {coluna_ordenacao} {direcao_ordenacao} NULLS LAST
                         LIMIT %s OFFSET %s
                     ) pagina
@@ -3347,7 +3750,7 @@ def _dados_estoque_posicao_historica(args, origem, data_posicao):
     lote = args.get("lote")
     subgrupo = args.get("subgrupo")
     armazem = args.get("armazem")
-    usuario_logado = _usuario_para_filtro_armazem(args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
 
     filtro_origem = ""
     if origem == "cd":
@@ -3545,7 +3948,7 @@ def api_estoque_lotes():
     # ordenado do lote que vence primeiro pro que vence por ultimo
     produto = request.args.get("produto")
     lote = request.args.get("lote")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     if not produto:
         return jsonify([])
 
@@ -3630,9 +4033,8 @@ def api_estoque_unidades():
 def api_estoque_contratos():
     # atas/contratos que tem esse produto - uma linha por pedidoitem, incluindo cada aditivo
     # separadamente (nao so o mais recente de cada familia), com o saldo (quantidade ainda nao
-    # entregue) de cada linha. situacao=validos restringe as familias cujo aditivo mais recente
-    # ainda esta vigente (datafim > hoje) - mesmo criterio de "valido" usado em /api/atas_contratos;
-    # sem o parametro, traz validos e vencidos (usado em aquisicoes.html)
+    # entregue) de cada linha. situacao=validos traz so as linhas nao vencidas (SQL_PEDIDO_VIGENTE);
+    # sem o parametro, traz validas e vencidas
     produto = request.args.get("produto")
     situacao = request.args.get("situacao")
     if not produto:
@@ -3642,17 +4044,9 @@ def api_estoque_contratos():
     params = [produto]
 
     if situacao == "validos":
-        condicoes.append("""
-            EXISTS (
-                SELECT 1 FROM public.pedidocabecalho pc_latest
-                WHERE pc_latest.numeroidentificacao = pc.numeroidentificacao
-                AND pc_latest.numeroaditivo = (
-                    SELECT MAX(pc2.numeroaditivo) FROM public.pedidocabecalho pc2
-                    WHERE pc2.numeroidentificacao = pc.numeroidentificacao
-                )
-                AND pc_latest.datafim > CURRENT_DATE
-            )
-        """)
+        # so a ata/contrato/aditivo que ainda nao venceu - aditivo antigo de familia prorrogada
+        # (datafim ja passou) fica de fora, junto com o saldo que sobrou nele
+        condicoes.append(SQL_PEDIDO_VIGENTE)
 
     where = " AND ".join(condicoes)
 
@@ -3773,6 +4167,29 @@ def api_estoque_movimentacoes():
         return jsonify({"erro": str(erro)}), 500
 
 
+# pedidocabecalho "pc" nao vencido: a propria linha (ata, contrato ou aditivo) com datafim >= hoje
+# (quem vence hoje ainda vale). cada aditivo tem os proprios itens e saldo no Guardiao - olhar so a
+# familia (aditivo mais recente valido) contava o saldo que sobrou em aditivos ja vencidos
+SQL_PEDIDO_VIGENTE = "pc.datafim >= CURRENT_DATE"
+
+
+def _sql_saldo_vigente(coluna_produto, atapreco):
+    # quanto ainda falta entregar (quantidade - quantidadeentregue) nas atas (atapreco 'S') ou nos
+    # contratos ('N') vigentes do produto - mesma conta do Saldo em Atas / Saldo em Contratos do
+    # abastecimento. NULL = nenhum vigente desse tipo. so na pagina exibida (subconsulta
+    # correlacionada = cara na lista inteira)
+    return f"""
+        (
+            SELECT SUM(pi.quantidade - COALESCE(pi.quantidadeentregue, 0))
+            FROM public.pedidoitem pi
+            JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = pi.pedidocabecalho
+            WHERE pi.produto = {coluna_produto}
+            AND pc.atapreco = '{atapreco}'
+            AND {SQL_PEDIDO_VIGENTE}
+        )
+    """
+
+
 @app.route("/api/estoque_abastecimento")
 def api_estoque_abastecimento():
     # parametros de abastecimento (minimo, seguranca, ponto de ressuprimento) por armazem - so
@@ -3784,7 +4201,7 @@ def api_estoque_abastecimento():
     if not produto:
         return jsonify([])
 
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = request.args.get("armazem")
     filtro_armazem, params_armazem = _fragmento_filtro_armazem("arm.armazem", usuario_logado, armazem)
 
@@ -3822,22 +4239,14 @@ def api_estoque_abastecimento():
     # quantidadeentregue) somado de todo pedidoitem desse produto, so contando familias
     # (numeroidentificacao) ainda validas hoje (datafim do aditivo mais recente > hoje) - mesma
     # nocao de "valido" usada em atas_contratos
-    sql_saldo_ata_contrato = """
+    sql_saldo_ata_contrato = f"""
         SELECT
             COALESCE(SUM(pi.quantidade - COALESCE(pi.quantidadeentregue, 0)) FILTER (WHERE pc.atapreco = 'S'), 0) AS saldo_ata,
             COALESCE(SUM(pi.quantidade - COALESCE(pi.quantidadeentregue, 0)) FILTER (WHERE pc.atapreco = 'N'), 0) AS saldo_contrato
         FROM public.pedidoitem pi
         JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = pi.pedidocabecalho
         WHERE pi.produto = %s
-        AND EXISTS (
-            SELECT 1 FROM public.pedidocabecalho pc_latest
-            WHERE pc_latest.numeroidentificacao = pc.numeroidentificacao
-            AND pc_latest.numeroaditivo = (
-                SELECT MAX(pc2.numeroaditivo) FROM public.pedidocabecalho pc2
-                WHERE pc2.numeroidentificacao = pc.numeroidentificacao
-            )
-            AND pc_latest.datafim > CURRENT_DATE
-        )
+        AND {SQL_PEDIDO_VIGENTE}
     """
     try:
         linhas = run_query(sql, [produto] + params_armazem)
@@ -3880,8 +4289,8 @@ def api_estoque_abastecimento():
         return jsonify({"erro": str(erro)}), 500
 
 
-@app.route("/api/aquisicoes")
-def api_aquisicoes():
+@app.route("/api/estoque_critico")
+def api_estoque_critico():
     # igual a /api/estoque (mesmos filtros, mesma paginacao), mas so lista produto que tem pelo
     # menos um armazem onde o limite escolhido (tipo_alerta) ta configurado (estoqueminimo > 0) e
     # NAO esta sendo atendido (estoque daquele armazem < limite, sem somar saldo em contrato - mesma
@@ -3895,7 +4304,7 @@ def api_aquisicoes():
     lote = request.args.get("lote")
     classe = request.args.get("classe")
     subgrupo = request.args.get("subgrupo")
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = request.args.get("armazem")
     origem = request.args.get("origem")
     # qual limite usar pra decidir "insuficiente": estoque minimo (30d), estoque de seguranca
@@ -3967,7 +4376,7 @@ def api_aquisicoes():
 
     # origem do lote (fornecedor 13276609 = CENTRO DE DISTRIBUICAO SESA / C.D SESA): mesmo criterio
     # "cd"/"hospital" usado em consumo.html/estoque.html - separa "Produtos do CD" de "Produtos do
-    # Hospital" em vez de so excluir o CD, pra aquisicoes seguir a mesma divisao do resto do sistema
+    # Hospital" em vez de so excluir o CD, pra estoque_critico seguir a mesma divisao do resto do sistema
     filtro_origem = ""
     if origem == "cd":
         filtro_origem = "AND lt.fornecedor = 13276609"
@@ -4020,7 +4429,12 @@ def api_aquisicoes():
                 (SELECT count(*) FROM filtrado) AS total_geral,
                 COALESCE((
                     SELECT json_agg(pagina.* ORDER BY pagina.cod_produto)
-                    FROM (SELECT * FROM filtrado ORDER BY cod_produto LIMIT %s OFFSET %s) pagina
+                    FROM (
+                        SELECT f.*,
+                            {_sql_saldo_vigente("f.cod_produto", "S")} AS saldo_ata_vigente,
+                            {_sql_saldo_vigente("f.cod_produto", "N")} AS saldo_contrato_vigente
+                        FROM filtrado f ORDER BY cod_produto LIMIT %s OFFSET %s
+                    ) pagina
                 ), '[]'::json) AS dados_json
         """
         resultado = run_query(sql_dados, params_completo + [tamanho_pagina, offset])[0]
@@ -4069,7 +4483,7 @@ def api_painel_contadores():
     # os 5 numeros dos cards do painel de chamada - mesmo filtro de data/armazem que cada tela de
     # origem usa, so trocando a lista inteira por um count(*) (fica leve pro painel dar poll)
     data_inicio = request.args.get("data_inicio") or "2026-10-01"
-    usuario_logado_raw = request.args.get("usuario_logado")
+    usuario_logado_raw = _usuario_sessao()
     usuario_logado = _usuario_para_filtro_armazem(usuario_logado_raw)
     # selecao manual de armazem (dropdown do painel, so aparece pra admin/sem-login) - prevalece
     # sobre o armazem implicito do usuario logado
@@ -4126,7 +4540,7 @@ def api_painel_chamados():
     # "chamados" = mudancas de etapa ja registradas em armazemmovimentacao (inicio/fim de
     # separacao e de distribuicao) - novos pedidos e pedidos a separar ainda nao tem linha nessa
     # tabela, entao so entram no painel de chamada quando alguem reivindica pra separacao
-    usuario_logado = _usuario_para_filtro_armazem(request.args.get("usuario_logado"))
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
     armazem = request.args.get("armazem")
     try:
         limite = max(int(request.args.get("limite", 5)), 1)
@@ -4179,10 +4593,650 @@ def api_painel_chamados():
     return jsonify(linhas)
 
 
+# ---------------------------------------------------------------------------------------------
+# processos de pagamento (pagamentos.html) - um processo por destaque (ordem de compra) do Guardiao;
+# o que nao vem do banco (tipo, area, processo, prioridade, empenho, situacao) fica em
+# sist_logistica.processopagamento
+# ---------------------------------------------------------------------------------------------
+
+# destaques anteriores a essa data ficam fora da lista e dos cards (historico do Guardiao desde 2015)
+DATA_INICIO_PAGAMENTOS = "2026-01-01"
+
+TIPOS_AQUISICAO_PAGAMENTO = ["Consignado", "Compra"]
+AREAS_VINCULADAS = ["Centro Cirúrgico", "Hemodinâmica", "Estomaterapia", "Marcapasso", "Assistência Geral"]
+
+# tipopedido do contrato (codigo de 1 letra do Guardiao)
+SQL_TIPO_PEDIDO_CONTRATO = """
+    CASE pc.tipopedido
+        WHEN 'A' THEN 'ARP'
+        WHEN 'C' THEN 'Aquisição'
+        WHEN 'I' THEN 'Imobilizados'
+        WHEN 'S' THEN 'Serviços'
+        ELSE pc.tipopedido
+    END
+"""
+
+SQL_SITUACAO_PAGAMENTO = """
+    CASE
+        WHEN pp.situacao_final = 'P' THEN 'pago'
+        WHEN pp.situacao_final = 'C' THEN 'cancelado'
+        WHEN COALESCE(TRIM(pp.numero_empenho), '') <> '' THEN 'empenhado'
+        ELSE 'a_empenhar'
+    END
+"""
+
+_tabelas_pagamento_prontas = False
+
+
+def _seed_listas_pagamento():
+    for nome in TIPOS_AQUISICAO_PAGAMENTO:
+        run_query("""
+            INSERT INTO sist_logistica.tipoaquisicaopagamento (nome) VALUES (%s) ON CONFLICT (nome) DO NOTHING
+        """, [nome])
+    for nome in AREAS_VINCULADAS:
+        run_query("""
+            INSERT INTO sist_logistica.areavinculada (nome) VALUES (%s) ON CONFLICT (nome) DO NOTHING
+        """, [nome])
+
+
+def _migrar_chave_processopagamento():
+    # a tabela nasceu com um processo por pedido agrupado (versao do contrato + numero do destaque);
+    # agora eh um por ordem de compra (pedidodestaque). recria com a chave nova copiando o que ja foi
+    # preenchido pra cada pedidodestaque do grupo - tudo numa transacao
+    tem_chave_nova = run_query("""
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'sist_logistica' AND table_name = 'processopagamento' AND column_name = 'pedidodestaque'
+    """)
+    if tem_chave_nova:
+        return
+    ddl_nova = TABELAS_SIST_LOGISTICA["processopagamento"].replace(
+        "sist_logistica.processopagamento", "sist_logistica.processopagamento_novo")
+    conexao = get_conn()
+    try:
+        with conexao.cursor() as cursor:
+            cursor.execute(ddl_nova)
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'sist_logistica' AND table_name = 'processopagamento'
+            """)
+            antigas = {linha[0] for linha in cursor.fetchall()}
+            copiar = [c for c in ("tipoaquisicaopagamento", "areavinculada", "numero_processo", "prioridade",
+                                  "numero_empenho", "data_envio_empenho", "situacao_final", "isn_paciente",
+                                  "num_prontuario", "data_utilizacao", "isn_internacao", "usuario",
+                                  "_creation", "_update") if c in antigas]
+            cursor.execute(f"""
+                INSERT INTO sist_logistica.processopagamento_novo (pedidodestaque, {', '.join(copiar)})
+                SELECT pd.pedidodestaque, {', '.join('pp.' + c for c in copiar)}
+                FROM sist_logistica.processopagamento pp
+                JOIN public.pedidoitem pi ON pi.pedidocabecalho = pp.pedidocabecalho
+                JOIN public.pedidodestaque pd ON pd.pedidoitem = pi.pedidoitem AND pd.destaque = pp.destaque
+                ON CONFLICT (pedidodestaque) DO NOTHING
+            """)
+            cursor.execute("DROP TABLE sist_logistica.processopagamento")
+            cursor.execute("ALTER TABLE sist_logistica.processopagamento_novo RENAME TO processopagamento")
+            cursor.execute("ALTER INDEX IF EXISTS sist_logistica.processopagamento_novo_pkey RENAME TO processopagamento_pkey")
+        conexao.commit()
+    except Exception:
+        conexao.rollback()
+        raise
+    finally:
+        conexao.close()
+
+
+def _garantir_tabelas_pagamento():
+    # cria as tabelas na primeira vez que a tela eh usada (banco que ja existia antes dela)
+    global _tabelas_pagamento_prontas
+    if _tabelas_pagamento_prontas:
+        return
+    run_query("CREATE SCHEMA IF NOT EXISTS sist_logistica")
+    for nome in ("tipoaquisicaopagamento", "areavinculada", "processopagamento"):
+        run_query(TABELAS_SIST_LOGISTICA[nome])
+    _migrar_chave_processopagamento()
+    # tabela criada antes do botao Utilizacao existir
+    for coluna, tipo in (("isn_paciente", "NUMERIC"), ("num_prontuario", "TEXT"),
+                         ("data_utilizacao", "DATE"), ("isn_internacao", "NUMERIC")):
+        run_query(f"ALTER TABLE sist_logistica.processopagamento ADD COLUMN IF NOT EXISTS {coluna} {tipo}")
+    _seed_listas_pagamento()
+    _tabelas_pagamento_prontas = True
+
+
+def _filtros_pagamentos(args):
+    # devolve (condicoes sobre a linha final, params) - situacao fica de fora pra os cards poderem
+    # contar as tres situacoes com os mesmos filtros
+    condicoes = []
+    params = []
+    if args.get("data_inicio"):
+        condicoes.append("d.data_destaque >= %s")
+        params.append(args["data_inicio"])
+    if args.get("data_fim"):
+        condicoes.append("d.data_destaque <= %s")
+        params.append(args["data_fim"])
+    if args.get("fornecedor"):
+        condicoes.append("pes.nome ILIKE %s")
+        params.append(f"%{args['fornecedor']}%")
+    if args.get("numero_contrato"):
+        # numero de qualquer versao do contrato (original ou aditivo)
+        condicoes.append("""
+            EXISTS (
+                SELECT 1 FROM public.pedidocabecalho pc_num
+                WHERE pc_num.numeroidentificacao = pc.numeroidentificacao
+                AND (pc_num.numerocontrato ILIKE %s OR pc_num.numeroata ILIKE %s)
+            )
+        """)
+        params.extend([f"%{args['numero_contrato']}%"] * 2)
+    if args.get("ordem_compra"):
+        condicoes.append("d.pedidodestaque::text = %s")
+        params.append(args["ordem_compra"].strip())
+    if args.get("numero_processo"):
+        condicoes.append("pp.numero_processo ILIKE %s")
+        params.append(f"%{args['numero_processo']}%")
+    if args.get("numero_empenho"):
+        condicoes.append("pp.numero_empenho ILIKE %s")
+        params.append(f"%{args['numero_empenho']}%")
+    if args.get("prontuario"):
+        condicoes.append("""
+            EXISTS (
+                SELECT 1 FROM integra_local.t_paciente tp
+                WHERE tp.isn_paciente = pp.isn_paciente AND tp.num_prontuario = %s
+            )
+        """)
+        params.append(args["prontuario"].strip())
+    if args.get("paciente"):
+        condicoes.append("""
+            EXISTS (
+                SELECT 1 FROM integra_local.t_paciente tp
+                WHERE tp.isn_paciente = pp.isn_paciente AND tp.dsc_nome ILIKE %s
+            )
+        """)
+        params.append(f"%{args['paciente'].strip()}%")
+    for campo in ("tipoaquisicaopagamento", "areavinculada", "prioridade"):
+        valor = args.get(campo)
+        if valor and valor.isdigit():
+            condicoes.append(f"pp.{campo} = %s")
+            params.append(int(valor))
+    return condicoes, params
+
+
+# destaques (uma linha por versao do contrato + numero do destaque) desde DATA_INICIO_PAGAMENTOS,
+# com o contrato original (base da familia), a data fim efetiva (aditivo mais recente) e o que foi
+# preenchido na tela
+SQL_BASE_PAGAMENTOS = f"""
+    WITH d AS (
+        -- uma ordem de compra por linha de pedidodestaque (produto destacado)
+        SELECT
+            pd.pedidodestaque,
+            pi.pedidocabecalho,
+            pd.datadestaque AS data_destaque,
+            COALESCE(pd.valortotal, pd.quantidade * pd.valorunitario) AS valor_total
+        FROM public.pedidodestaque pd
+        JOIN public.pedidoitem pi ON pi.pedidoitem = pd.pedidoitem
+        WHERE pd.datadestaque >= %s
+    )
+    SELECT
+        d.pedidodestaque,
+        d.data_destaque,
+        d.valor_total,
+        {SQL_TIPO_PEDIDO_CONTRATO} AS tipo_contrato,
+        COALESCE(base.numerocontrato, base.numeroata) AS contrato_original,
+        ult.datafim AS data_fim,
+        pes.nome AS fornecedor,
+        pp.tipoaquisicaopagamento,
+        tap.nome AS tipo_aquisicao,
+        pp.areavinculada,
+        av.nome AS area_vinculada,
+        pp.numero_processo,
+        pp.prioridade,
+        pp.numero_empenho,
+        pp.data_envio_empenho,
+        pp.usuario AS atualizado_por,
+        pp._update AS atualizado_em,
+        pp.isn_paciente,
+        pp.num_prontuario,
+        pac.dsc_nome AS paciente,
+        pp.data_utilizacao,
+        pp.isn_internacao,
+        {SQL_SITUACAO_PAGAMENTO} AS situacao
+    FROM d
+    JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = d.pedidocabecalho
+    LEFT JOIN public.pedidocabecalho base
+        ON base.numeroidentificacao = pc.numeroidentificacao AND base.numeroaditivo = 0
+    LEFT JOIN LATERAL (
+        SELECT pc2.datafim FROM public.pedidocabecalho pc2
+        WHERE pc2.numeroidentificacao = pc.numeroidentificacao
+        ORDER BY pc2.numeroaditivo DESC LIMIT 1
+    ) ult ON TRUE
+    LEFT JOIN public.fornecedor forn ON forn.fornecedor = pc.fornecedor
+    LEFT JOIN public.pessoa pes ON pes.pessoa = forn.pessoa
+    LEFT JOIN sist_logistica.processopagamento pp ON pp.pedidodestaque = d.pedidodestaque
+    LEFT JOIN sist_logistica.tipoaquisicaopagamento tap ON tap.tipoaquisicaopagamento = pp.tipoaquisicaopagamento
+    LEFT JOIN sist_logistica.areavinculada av ON av.areavinculada = pp.areavinculada
+    LEFT JOIN integra_local.t_paciente pac ON pac.isn_paciente = pp.isn_paciente
+"""
+
+SITUACOES_PAGAMENTO = ("a_empenhar", "empenhado", "pago", "cancelado")
+
+
 @app.route("/api/pagamentos")
 def api_pagamentos():
-    # TODO homem: cola consulta real aqui
-    return _consulta_generica("SELECT 1 AS placeholder LIMIT 0")
+    try:
+        pagina = max(int(request.args.get("pagina", 1)), 1)
+    except ValueError:
+        pagina = 1
+    tamanho_pagina = 10
+    condicoes, params = _filtros_pagamentos(request.args)
+    situacao = request.args.get("situacao")
+
+    filtro = f"WHERE {' AND '.join(condicoes)}" if condicoes else ""
+    filtro_lista = filtro
+    params_lista = list(params)
+    if situacao in SITUACOES_PAGAMENTO:
+        filtro_lista = f"{filtro} {'AND' if filtro else 'WHERE'} ({SQL_SITUACAO_PAGAMENTO}) = %s"
+        params_lista.append(situacao)
+
+    try:
+        _garantir_tabelas_pagamento()
+        # cards: mesmos filtros da lista, menos o de situacao (senao dois dos tres zeravam). cards=0
+        # pula a conta (a tela busca as 4 secoes juntas e so uma delas precisa dos cards)
+        cards = None if request.args.get("cards") == "0" else run_query(f"""
+            SELECT
+                count(*) FILTER (WHERE situacao = 'a_empenhar') AS a_empenhar,
+                count(*) FILTER (WHERE situacao = 'empenhado') AS empenhado,
+                count(*) FILTER (WHERE situacao = 'pago') AS pago
+            FROM ({SQL_BASE_PAGAMENTOS} {filtro}) x
+        """, [DATA_INICIO_PAGAMENTOS] + params)
+        cards = cards[0] if cards else None
+        total = run_query(f"SELECT count(*) AS total FROM ({SQL_BASE_PAGAMENTOS} {filtro_lista}) x",
+                          [DATA_INICIO_PAGAMENTOS] + params_lista)[0]["total"]
+        dados = run_query(f"""
+            SELECT
+                x.*,
+                to_char(x.data_destaque, 'DD/MM/YYYY') AS data_destaque_br,
+                to_char(x.data_fim, 'DD/MM/YYYY') AS data_fim_br,
+                CASE WHEN x.data_fim >= CURRENT_DATE THEN (x.data_fim - CURRENT_DATE)::text ELSE 'Vencido' END AS prazo,
+                to_char(x.data_envio_empenho, 'YYYY-MM-DD') AS data_envio_empenho_iso,
+                to_char(x.data_envio_empenho, 'DD/MM/YYYY') AS data_envio_empenho_br,
+                to_char(x.atualizado_em, 'DD/MM/YYYY HH24:MI') AS atualizado_em_br,
+                to_char(x.data_utilizacao, 'DD/MM/YYYY') AS data_utilizacao_br,
+                to_char(x.data_utilizacao, 'YYYY-MM-DD') AS data_utilizacao_iso
+            FROM ({SQL_BASE_PAGAMENTOS} {filtro_lista}) x
+            ORDER BY x.data_destaque DESC, x.pedidodestaque DESC
+            LIMIT %s OFFSET %s
+        """, [DATA_INICIO_PAGAMENTOS] + params_lista + [tamanho_pagina, (pagina - 1) * tamanho_pagina])
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+
+    for linha in dados:
+        for campo in ("data_destaque", "data_fim", "data_envio_empenho", "atualizado_em", "data_utilizacao"):
+            linha.pop(campo, None)
+    return jsonify({
+        "dados": dados,
+        "total": total,
+        "pagina": pagina,
+        "tamanho_pagina": tamanho_pagina,
+        "cards": cards,
+        "data_inicio_lista": DATA_INICIO_PAGAMENTOS,
+    })
+
+
+@app.route("/api/pagamentos/<int:pedidodestaque>/itens")
+def api_itens_pagamento(pedidodestaque):
+    # clique na ordem de compra: o produto destacado com o item do contrato (pedidoitem) - quanto foi
+    # contratado, entregue e o saldo
+    return _consulta_generica("""
+        SELECT
+            pd.pedidodestaque,
+            pi.item AS numero_item,
+            p.codigoreferencia AS cod_seplag,
+            p.nome AS nome_produto,
+            up.sigla AS apresentacao,
+            pd.quantidade AS quantidade_destaque,
+            pd.valorunitario AS valor_unitario,
+            COALESCE(pd.valortotal, pd.quantidade * pd.valorunitario) AS valor_total,
+            pi.quantidade AS quantidade_contratada,
+            COALESCE(pi.quantidadeentregue, 0) AS quantidade_entregue,
+            pi.quantidade - COALESCE(pi.quantidadeentregue, 0) AS saldo_contrato
+        FROM public.pedidodestaque pd
+        JOIN public.pedidoitem pi ON pi.pedidoitem = pd.pedidoitem
+        JOIN public.produto p ON p.produto = pi.produto
+        LEFT JOIN public.unidadeproduto up ON up.unidadeproduto = p.unidadeproduto
+        WHERE pd.pedidodestaque = %s
+    """, [pedidodestaque])
+
+
+# internacoes do paciente que cobrem a data: periodo da internacao vai da primeira entrada em leito
+# (t_internacao_leito.dat_internacao) ate a ultima alta (dat_alta); alta nula = ainda internado
+SQL_INTERNACOES_NA_DATA = """
+    SELECT
+        i.isn_internacao,
+        to_char(MIN(il.dat_internacao), 'DD/MM/YYYY') AS entrada,
+        to_char(MAX(il.dat_alta), 'DD/MM/YYYY') AS alta,
+        bool_or(il.dat_alta IS NULL) AS internado
+    FROM integra_local.t_internacao i
+    JOIN integra_local.t_internacao_leito il ON il.isn_internacao = i.isn_internacao
+    JOIN integra_local.t_paciente p ON p.isn_paciente = i.isn_paciente
+    WHERE p.isn_paciente = %s
+    GROUP BY i.isn_internacao
+    HAVING MIN(il.dat_internacao) <= %s AND (bool_or(il.dat_alta IS NULL) OR MAX(il.dat_alta) >= %s)
+    ORDER BY MIN(il.dat_internacao), i.isn_internacao
+"""
+
+
+@app.route("/api/pagamentos/pacientes")
+def api_pagamentos_pacientes():
+    # botao Utilizacao: paciente pelo numero do prontuario (integra_local.t_paciente)
+    prontuario = (request.args.get("prontuario") or "").strip()
+    if not prontuario:
+        return jsonify([])
+    return _consulta_generica("""
+        SELECT isn_paciente, num_prontuario, dsc_nome AS nome, to_char(dat_nascimento, 'DD/MM/YYYY') AS nascimento
+        FROM integra_local.t_paciente
+        WHERE num_prontuario = %s
+        ORDER BY dsc_nome
+    """, [prontuario])
+
+
+@app.route("/api/pagamentos/internacoes")
+def api_pagamentos_internacoes():
+    isn_paciente = request.args.get("isn_paciente")
+    data = request.args.get("data")
+    try:
+        datetime.date.fromisoformat(data or "")
+        int(isn_paciente)
+    except (TypeError, ValueError):
+        return jsonify([])
+    return _consulta_generica(SQL_INTERNACOES_NA_DATA, [isn_paciente, data, data])
+
+
+@app.route("/api/pagamentos/<int:pedidodestaque>/utilizacao", methods=["PUT"])
+def api_utilizacao_pagamento(pedidodestaque):
+    # grava paciente + data de utilizacao + internacao daquela data (ou limpa, com isn_paciente vazio)
+    dados = request.get_json(force=True)
+    isn_paciente = dados.get("isn_paciente") or None
+    data_utilizacao = (dados.get("data_utilizacao") or "").strip() or None
+    isn_internacao = dados.get("isn_internacao") or None
+    num_prontuario = None
+    try:
+        _garantir_tabelas_pagamento()
+        if not _destaque_existe(pedidodestaque):
+            return jsonify({"ok": False, "msg": "Destaque não encontrado"}), 404
+        if isn_paciente:
+            if not data_utilizacao:
+                return jsonify({"ok": False, "msg": "Informe a data da utilização"}), 400
+            try:
+                datetime.date.fromisoformat(data_utilizacao)
+            except ValueError:
+                return jsonify({"ok": False, "msg": "Data da utilização inválida"}), 400
+            paciente = run_query("SELECT num_prontuario FROM integra_local.t_paciente WHERE isn_paciente = %s",
+                                 [isn_paciente])
+            if not paciente:
+                return jsonify({"ok": False, "msg": "Paciente não encontrado"}), 404
+            num_prontuario = paciente[0]["num_prontuario"]
+            # a internacao tem que ser do paciente e cobrir a data
+            if isn_internacao:
+                validas = run_query(SQL_INTERNACOES_NA_DATA, [isn_paciente, data_utilizacao, data_utilizacao])
+                if str(isn_internacao) not in {str(linha["isn_internacao"]) for linha in validas}:
+                    return jsonify({"ok": False, "msg": "Internação não confere com o paciente e a data"}), 400
+        else:
+            data_utilizacao = isn_internacao = None
+        run_query("""
+            INSERT INTO sist_logistica.processopagamento
+                (pedidodestaque, isn_paciente, num_prontuario, data_utilizacao, isn_internacao, usuario)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (pedidodestaque) DO UPDATE SET
+                isn_paciente = EXCLUDED.isn_paciente,
+                num_prontuario = EXCLUDED.num_prontuario,
+                data_utilizacao = EXCLUDED.data_utilizacao,
+                isn_internacao = EXCLUDED.isn_internacao,
+                usuario = EXCLUDED.usuario,
+                _update = now()
+        """, [pedidodestaque, isn_paciente, num_prontuario, data_utilizacao, isn_internacao,
+              _usuario_sessao()])
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+    return jsonify({"ok": True})
+
+
+NOMES_SITUACAO_PAGAMENTO = {"a_empenhar": "A Empenhar", "empenhado": "Empenhado", "pago": "Pago", "cancelado": "Cancelado"}
+
+# (rotulo, campo da linha) - csv/planilha levam tudo; o pdf (paisagem) leva o subconjunto de
+# COLUNAS_PDF_PAGAMENTO pra caber na pagina
+COLUNAS_RELATORIO_PAGAMENTO = [
+    ("Data Destaque", "data_destaque_br"),
+    ("Nº Ordem de Compra", "pedidodestaque"),
+    ("Tipo (Contrato)", "tipo_contrato"),
+    ("Nº Contrato Original", "contrato_original"),
+    ("Data Fim", "data_fim_br"),
+    ("Prazo", "prazo"),
+    ("Tipo de Aquisição", "tipo_aquisicao"),
+    ("Área Vinculada", "area_vinculada"),
+    ("Fornecedor", "fornecedor"),
+    ("Nº Prontuário", "num_prontuario"),
+    ("Paciente", "paciente"),
+    ("Data Utilização", "data_utilizacao_br"),
+    ("Nº Internação", "isn_internacao"),
+    ("Nº Processo", "numero_processo"),
+    ("Prioridade", "prioridade"),
+    ("Valor Total", "valor_total"),
+    ("Nº Empenho", "numero_empenho"),
+    ("Envio do Empenho", "data_envio_empenho_br"),
+    ("Situação", "situacao"),
+    ("Atualizado em", "atualizado_em_br"),
+]
+
+COLUNAS_PDF_PAGAMENTO = [
+    ("Data Destaque", "data_destaque_br", 1.5),
+    ("Nº Ordem", "pedidodestaque", 1.6),
+    ("Contrato Orig.", "contrato_original", 1.5),
+    ("Prazo", "prazo", 1.0),
+    ("Tipo Aquisição", "tipo_aquisicao", 1.7),
+    ("Área Vinculada", "area_vinculada", 2.1),
+    ("Fornecedor", "fornecedor", 3.0),
+    ("Prontuário", "num_prontuario", 1.6),
+    ("Paciente", "paciente", 2.5),
+    ("Utilização", "data_utilizacao_br", 1.5),
+    ("Nº Processo", "numero_processo", 3.1),
+    ("Prior.", "prioridade", 0.9),
+    ("Valor Total", "valor_total", 2.1),
+    ("Nº Empenho", "numero_empenho", 1.5),
+    ("Envio Empenho", "data_envio_empenho_br", 1.5),
+]
+
+ROTULOS_FILTRO_PAGAMENTO = [
+    ("data_inicio", "Destaque de"), ("data_fim", "Destaque até"), ("fornecedor", "Fornecedor"),
+    ("numero_contrato", "Nº Contrato/Ata"), ("ordem_compra", "Nº Ordem de Compra"),
+    ("numero_processo", "Nº Processo"), ("numero_empenho", "Nº Empenho"), ("prontuario", "Nº Prontuário"),
+    ("paciente", "Paciente"), ("prioridade", "Prioridade"),
+]
+
+
+def _valor_relatorio_pagamento(linha, campo):
+    valor = linha.get(campo)
+    if campo == "valor_total":
+        return _formatar_moeda_pdf(valor)
+    if campo == "situacao":
+        return NOMES_SITUACAO_PAGAMENTO.get(valor, valor or "")
+    return "" if valor is None else str(valor)
+
+
+@app.route("/api/pagamentos/relatorio")
+def api_pagamentos_relatorio():
+    # botoes PDF / CSV / Planilha de cada secao: a secao inteira (sem paginacao) com os filtros da tela
+    formato = request.args.get("formato")
+    situacao = request.args.get("situacao")
+    if formato not in ("pdf", "csv", "xlsx") or situacao not in SITUACOES_PAGAMENTO:
+        return jsonify({"erro": "Formato ou seção inválida"}), 400
+    if formato == "pdf" and not REPORTLAB_DISPONIVEL:
+        return jsonify({"erro": "Geração de PDF indisponível: biblioteca reportlab não instalada no servidor."}), 500
+    if formato == "xlsx" and not OPENPYXL_DISPONIVEL:
+        return jsonify({"erro": "Geração de planilha indisponível: biblioteca openpyxl não instalada no servidor."}), 500
+
+    condicoes, params = _filtros_pagamentos(request.args)
+    condicoes.append(f"({SQL_SITUACAO_PAGAMENTO}) = %s")
+    params.append(situacao)
+    try:
+        _garantir_tabelas_pagamento()
+        linhas = run_query(f"""
+            SELECT
+                x.*,
+                to_char(x.data_destaque, 'DD/MM/YYYY') AS data_destaque_br,
+                to_char(x.data_fim, 'DD/MM/YYYY') AS data_fim_br,
+                CASE WHEN x.data_fim >= CURRENT_DATE THEN (x.data_fim - CURRENT_DATE)::text ELSE 'Vencido' END AS prazo,
+                to_char(x.data_envio_empenho, 'DD/MM/YYYY') AS data_envio_empenho_br,
+                to_char(x.atualizado_em, 'DD/MM/YYYY HH24:MI') AS atualizado_em_br,
+                to_char(x.data_utilizacao, 'DD/MM/YYYY') AS data_utilizacao_br
+            FROM ({SQL_BASE_PAGAMENTOS} WHERE {' AND '.join(condicoes)}) x
+            ORDER BY x.data_destaque DESC, x.pedidodestaque DESC
+        """, [DATA_INICIO_PAGAMENTOS] + params)
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+
+    nome_secao = NOMES_SITUACAO_PAGAMENTO[situacao]
+    nome_arquivo = f"processos_pagamento_{situacao}.{formato}"
+    total_valor = sum(float(linha.get("valor_total") or 0) for linha in linhas)
+
+    if formato == "pdf":
+        # texto vai pra Paragraph do reportlab (le marcacao) - escapa "&"/"<" de fornecedor/paciente
+        linhas_tabela = [
+            [html.escape(_valor_relatorio_pagamento(linha, campo)) for _rotulo, campo, _larg in COLUNAS_PDF_PAGAMENTO]
+            for linha in linhas
+        ]
+        filtros = [f"{rotulo}: {html.escape(str(request.args[chave]))}" for chave, rotulo in ROTULOS_FILTRO_PAGAMENTO
+                   if request.args.get(chave)]
+        cabecalho = [
+            f"<b>Gerado em:</b> {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
+            f"<b>Seção:</b> {nome_secao} · destaques a partir de "
+            f"{datetime.date.fromisoformat(DATA_INICIO_PAGAMENTOS).strftime('%d/%m/%Y')}",
+            f"<b>Filtros aplicados:</b> {' · '.join(filtros) if filtros else 'Nenhum'}",
+        ]
+        linha_total = ["Total Geral"] + [""] * (len(COLUNAS_PDF_PAGAMENTO) - 1)
+        linha_total[[campo for _r, campo, _l in COLUNAS_PDF_PAGAMENTO].index("valor_total")] = _formatar_moeda_pdf(total_valor)
+        conteudo = _montar_pdf_relatorio(
+            f"Processos de Pagamento — {nome_secao}",
+            cabecalho,
+            [{
+                "cabecalho_tabela": [rotulo for rotulo, _campo, _larg in COLUNAS_PDF_PAGAMENTO],
+                "linhas_tabela": linhas_tabela,
+                "largura_colunas": [largura * cm for _r, _c, largura in COLUNAS_PDF_PAGAMENTO],
+                "linha_total": linha_total,
+            }],
+            cards=[("Processos", f"{len(linhas):,}".replace(",", ".")), ("Valor Total", _formatar_moeda_pdf(total_valor))],
+        )
+        return Response(conteudo, mimetype="application/pdf",
+                        headers={"Content-Disposition": f"attachment; filename={nome_arquivo}"})
+
+    cabecalho = [rotulo for rotulo, _campo in COLUNAS_RELATORIO_PAGAMENTO]
+    linhas_arquivo = [[_valor_relatorio_pagamento(linha, campo) for _rotulo, campo in COLUNAS_RELATORIO_PAGAMENTO]
+                      for linha in linhas]
+    if formato == "xlsx":
+        return Response(_escrever_xlsx(cabecalho, linhas_arquivo),
+                        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f"attachment; filename={nome_arquivo}"})
+    return Response(_escrever_csv(cabecalho, linhas_arquivo).encode("utf-8"), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={nome_arquivo}"})
+
+
+@app.route("/api/pagamentos/opcoes")
+def api_pagamentos_opcoes():
+    try:
+        _garantir_tabelas_pagamento()
+        return jsonify({
+            "tipos": run_query("SELECT tipoaquisicaopagamento AS id, nome FROM sist_logistica.tipoaquisicaopagamento ORDER BY nome"),
+            "areas": run_query("SELECT areavinculada AS id, nome FROM sist_logistica.areavinculada ORDER BY nome"),
+        })
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+
+
+def _destaque_existe(pedidodestaque):
+    return bool(run_query("SELECT 1 FROM public.pedidodestaque WHERE pedidodestaque = %s", [pedidodestaque]))
+
+
+@app.route("/api/pagamentos/<int:pedidodestaque>", methods=["PUT"])
+def api_editar_pagamento(pedidodestaque):
+    # botao Editar - grava os campos que nao vem do Guardiao e a data/hora da alteracao
+    dados = request.get_json(force=True)
+
+    def texto(campo):
+        return (dados.get(campo) or "").strip() or None
+
+    def inteiro(campo):
+        valor = dados.get(campo)
+        if valor in (None, ""):
+            return None
+        try:
+            return int(valor)
+        except (TypeError, ValueError):
+            raise ValueError(f"Valor inválido em {campo}")
+
+    try:
+        prioridade = inteiro("prioridade")
+        if prioridade is not None and not 1 <= prioridade <= 3:
+            raise ValueError("Prioridade deve ser 1, 2 ou 3")
+        tipo = inteiro("tipoaquisicaopagamento")
+        area = inteiro("areavinculada")
+        data_envio = texto("data_envio_empenho")
+        if data_envio:
+            try:
+                datetime.date.fromisoformat(data_envio)
+            except ValueError:
+                raise ValueError("Data de envio do empenho inválida")
+    except ValueError as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 400
+
+    try:
+        _garantir_tabelas_pagamento()
+        if not _destaque_existe(pedidodestaque):
+            return jsonify({"ok": False, "msg": "Destaque não encontrado"}), 404
+        run_query("""
+            INSERT INTO sist_logistica.processopagamento
+                (pedidodestaque, tipoaquisicaopagamento, areavinculada, numero_processo,
+                 prioridade, numero_empenho, data_envio_empenho, usuario)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (pedidodestaque) DO UPDATE SET
+                tipoaquisicaopagamento = EXCLUDED.tipoaquisicaopagamento,
+                areavinculada = EXCLUDED.areavinculada,
+                numero_processo = EXCLUDED.numero_processo,
+                prioridade = EXCLUDED.prioridade,
+                numero_empenho = EXCLUDED.numero_empenho,
+                data_envio_empenho = EXCLUDED.data_envio_empenho,
+                usuario = EXCLUDED.usuario,
+                _update = now()
+        """, [pedidodestaque, tipo, area, texto("numero_processo"), prioridade,
+              texto("numero_empenho"), data_envio, _usuario_sessao()])
+    except psycopg2.errors.ForeignKeyViolation:
+        return jsonify({"ok": False, "msg": "Tipo de aquisição ou área vinculada inválida"}), 400
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/api/pagamentos/<int:pedidodestaque>/situacao", methods=["POST"])
+def api_situacao_pagamento(pedidodestaque):
+    # botoes Pago / Cancelar (e Reabrir, pra desfazer). pago exige numero de empenho
+    acao = (request.get_json(force=True) or {}).get("acao")
+    novo = {"pago": "P", "cancelado": "C", "reabrir": None}
+    if acao not in novo:
+        return jsonify({"ok": False, "msg": "Ação inválida"}), 400
+    try:
+        _garantir_tabelas_pagamento()
+        if not _destaque_existe(pedidodestaque):
+            return jsonify({"ok": False, "msg": "Destaque não encontrado"}), 404
+        if acao == "pago":
+            atual = run_query("""
+                SELECT numero_empenho FROM sist_logistica.processopagamento
+                WHERE pedidodestaque = %s
+            """, [pedidodestaque])
+            if not atual or not (atual[0]["numero_empenho"] or "").strip():
+                return jsonify({"ok": False, "msg": "Preencha o número do empenho (Editar) antes de marcar como pago"}), 400
+        run_query("""
+            INSERT INTO sist_logistica.processopagamento (pedidodestaque, situacao_final, usuario)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (pedidodestaque) DO UPDATE SET
+                situacao_final = EXCLUDED.situacao_final, usuario = EXCLUDED.usuario, _update = now()
+        """, [pedidodestaque, novo[acao], _usuario_sessao()])
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+    return jsonify({"ok": True})
 
 
 # colunas que o cabecalho da tabela de atas/contratos deixa ordenar (setas ascendente/descendente)
@@ -4193,8 +5247,8 @@ COLUNAS_ORDENACAO_ATAS_CONTRATOS = {
     "cnpj": "pj.cnpj",
     "fornecedor": "pes.nome",
     "nome_fantasia": "pj.nomefantasia",
-    "num_ata": "pc.numeroata",
-    "num_contrato": "pc.numerocontrato",
+    "num_ata": "ult.numeroata",
+    "num_contrato": "ult.numerocontrato",
     "data_inicio": "pc.datainicio",
     "data_fim": "ult.efetivo",
     "prazo": "ult.efetivo",
@@ -4225,13 +5279,23 @@ def api_atas_contratos():
     except ValueError:
         pagina = 1
 
-    # so a linha base (numeroaditivo = 0) representa uma ata/contrato na listagem -
-    # os aditivos aparecem por fora, sob demanda, em /api/atas_contratos_aditivos
+    # uma linha por familia (numeroidentificacao), ancorada na linha base (numeroaditivo = 0) - mas
+    # no Guardiao cada renovacao (aditivo) eh quase um contrato novo: numero proprio, fornecedor,
+    # itens e saldo proprios. por isso numero/fornecedor/tipo/data fim saem do aditivo MAIS RECENTE
+    # ("ult") e itens/saldo do aditivo mais recente que tem itens ("vig") - ver base_from. a data
+    # de inicio continua a da base (quando o contrato comecou). historico em /api/atas_contratos_aditivos
     condicoes = ["pc.numeroaditivo = 0"]
     params = []
 
     if numero_ata_contrato:
-        condicoes.append("(pc.numeroata ILIKE %s OR pc.numerocontrato ILIKE %s)")
+        # acha pelo numero de qualquer versao (original ou aditivo)
+        condicoes.append("""
+            EXISTS (
+                SELECT 1 FROM public.pedidocabecalho pc_num
+                WHERE pc_num.numeroidentificacao = pc.numeroidentificacao
+                AND (pc_num.numeroata ILIKE %s OR pc_num.numerocontrato ILIKE %s)
+            )
+        """)
         params.append(f"%{numero_ata_contrato}%")
         params.append(f"%{numero_ata_contrato}%")
     if cnpj:
@@ -4247,7 +5311,7 @@ def api_atas_contratos():
             EXISTS (
                 SELECT 1 FROM public.pedidoitem pi
                 JOIN public.produto p ON p.produto = pi.produto
-                WHERE pi.pedidocabecalho = pc.pedidocabecalho AND p.codigoreferencia ILIKE %s
+                WHERE pi.pedidocabecalho = vig.pedidocabecalho AND p.codigoreferencia ILIKE %s
             )
         """)
         params.append(f"%{cod_seplag}%")
@@ -4256,7 +5320,7 @@ def api_atas_contratos():
             EXISTS (
                 SELECT 1 FROM public.pedidoitem pi
                 JOIN public.produto p ON p.produto = pi.produto
-                WHERE pi.pedidocabecalho = pc.pedidocabecalho AND p.nome ILIKE %s
+                WHERE pi.pedidocabecalho = vig.pedidocabecalho AND p.nome ILIKE %s
             )
         """)
         params.append(f"%{produto}%")
@@ -4272,14 +5336,14 @@ def api_atas_contratos():
                 JOIN public.estoquearmazem ea ON ea.produto = pi.produto
                 JOIN public.armazem arm ON arm.armazem = ea.armazem
                 LEFT JOIN public.pessoa pes_arm ON pes_arm.pessoa = arm.pessoa
-                WHERE pi.pedidocabecalho = pc.pedidocabecalho
+                WHERE pi.pedidocabecalho = vig.pedidocabecalho
                 AND pes_arm.nome = %s
                 AND arm.tipoarmazem = 'C'
             )
         """)
         params.append(armazem)
     if tipo_pedido:
-        condicoes.append("pc.tipopedido = %s")
+        condicoes.append("COALESCE(ult.tipopedido, pc.tipopedido) = %s")
         params.append(tipo_pedido)
     # filtro de periodo: traz contratos cuja data de inicio E data fim (efetiva, maior aditivo)
     # caem dentro do intervalo informado - os dois extremos do contrato "cabem" no filtro
@@ -4301,36 +5365,55 @@ def api_atas_contratos():
         condicoes.append("ult.efetivo < CURRENT_DATE")
     # atapreco = 'S' quer dizer que o pedido eh uma ata (de registro de preco) - uma ata pode gerar
     # contrato (atapreco = 'N') usando so parte do saldo dela, por isso os dois viram secoes separadas
+    # tipo (atapreco) da versao mais recente que tem o campo preenchido - base antiga as vezes vem
+    # com atapreco nulo, e a familia sumia das duas secoes
     if tipo == "ata":
-        condicoes.append("pc.atapreco = 'S'")
+        condicoes.append("tp.atapreco = 'S'")
     elif tipo == "contrato":
-        condicoes.append("pc.atapreco = 'N'")
+        condicoes.append("tp.atapreco = 'N'")
 
     where = f"WHERE {' AND '.join(condicoes)}"
 
     base_from = f"""
         FROM public.pedidocabecalho pc
-        JOIN public.fornecedor forn ON forn.fornecedor = pc.fornecedor
-        JOIN public.pessoa pes ON pes.pessoa = forn.pessoa
-        LEFT JOIN public.pessoajuridica pj ON pj.pessoa = forn.pessoa
+        -- versao mais recente (original ou aditivo): numero, fornecedor, data fim
         LEFT JOIN LATERAL (
             SELECT
                 pc2.datafim AS efetivo,
-                (
-                    SELECT SUM(pc3.totalpedido) FROM public.pedidocabecalho pc3
-                    WHERE pc3.numeroidentificacao = pc.numeroidentificacao
-                ) AS valor_total,
-                (
-                    SELECT SUM(pi.quantidadeentregue * pi.valorunitario)
-                    FROM public.pedidoitem pi
-                    JOIN public.pedidocabecalho pc4 ON pc4.pedidocabecalho = pi.pedidocabecalho
-                    WHERE pc4.numeroidentificacao = pc.numeroidentificacao
-                ) AS saldo_utilizado
+                pc2.numeroaditivo,
+                pc2.numeroata,
+                pc2.numerocontrato,
+                pc2.fornecedor,
+                pc2.tipopedido
             FROM public.pedidocabecalho pc2
             WHERE pc2.numeroidentificacao = pc.numeroidentificacao
             ORDER BY pc2.numeroaditivo DESC
             LIMIT 1
         ) ult ON TRUE
+        -- versao mais recente com itens (aditivo so de prazo nao tem itens): itens e saldo da barra
+        LEFT JOIN LATERAL (
+            SELECT
+                pc3.pedidocabecalho,
+                SUM(pi.quantidade * pi.valorunitario) AS valor_total,
+                SUM(COALESCE(pi.quantidadeentregue, 0) * pi.valorunitario) AS saldo_utilizado
+            FROM public.pedidocabecalho pc3
+            JOIN public.pedidoitem pi ON pi.pedidocabecalho = pc3.pedidocabecalho
+            WHERE pc3.numeroidentificacao = pc.numeroidentificacao
+            GROUP BY pc3.pedidocabecalho, pc3.numeroaditivo
+            ORDER BY pc3.numeroaditivo DESC
+            LIMIT 1
+        ) vig ON TRUE
+        -- ata ou contrato: ultimo atapreco preenchido na familia
+        LEFT JOIN LATERAL (
+            SELECT pc5.atapreco
+            FROM public.pedidocabecalho pc5
+            WHERE pc5.numeroidentificacao = pc.numeroidentificacao AND pc5.atapreco IS NOT NULL
+            ORDER BY pc5.numeroaditivo DESC
+            LIMIT 1
+        ) tp ON TRUE
+        JOIN public.fornecedor forn ON forn.fornecedor = COALESCE(ult.fornecedor, pc.fornecedor)
+        JOIN public.pessoa pes ON pes.pessoa = forn.pessoa
+        LEFT JOIN public.pessoajuridica pj ON pj.pessoa = forn.pessoa
         {where}
     """
 
@@ -4356,29 +5439,32 @@ def api_atas_contratos():
 
         sql_dados = f"""
             SELECT
-                pc.pedidocabecalho AS pedidocabecalho,
+                COALESCE(vig.pedidocabecalho, pc.pedidocabecalho) AS pedidocabecalho,
                 pc.numeroidentificacao AS numeroidentificacao,
                 pj.cnpj AS cnpj,
                 pes.nome AS fornecedor,
                 pj.nomefantasia AS nome_fantasia,
-                pc.numeroata AS num_ata,
-                pc.numerocontrato AS num_contrato,
+                ult.numeroata AS num_ata,
+                ult.numerocontrato AS num_contrato,
+                pc.numeroata AS num_ata_original,
+                pc.numerocontrato AS num_contrato_original,
+                ult.numeroaditivo AS aditivo_atual,
                 to_char(pc.datainicio, 'DD-MM-YY') AS data_inicio,
                 to_char(ult.efetivo, 'DD-MM-YY') AS data_fim,
                 CASE
                     WHEN ult.efetivo >= CURRENT_DATE THEN (ult.efetivo - CURRENT_DATE)::text
                     ELSE 'Vencido'
                 END AS prazo,
-                ult.valor_total AS saldo_total,
-                COALESCE(ult.saldo_utilizado, 0) AS saldo_utilizado,
-                (ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) AS saldo_remanescente,
+                vig.valor_total AS saldo_total,
+                COALESCE(vig.saldo_utilizado, 0) AS saldo_utilizado,
+                (vig.valor_total - COALESCE(vig.saldo_utilizado, 0)) AS saldo_remanescente,
                 CASE
-                    WHEN COALESCE(ult.saldo_utilizado, 0) = 0 THEN 100
-                    ELSE ROUND((ult.valor_total / ult.saldo_utilizado) * 100, 2)
+                    WHEN COALESCE(vig.saldo_utilizado, 0) = 0 THEN 100
+                    ELSE ROUND((vig.valor_total / vig.saldo_utilizado) * 100, 2)
                 END AS percentual_utilizado,
                 CASE
-                    WHEN ult.valor_total > 0
-                    THEN ROUND(((ult.valor_total - COALESCE(ult.saldo_utilizado, 0)) / ult.valor_total) * 100, 2)
+                    WHEN vig.valor_total > 0
+                    THEN ROUND(((vig.valor_total - COALESCE(vig.saldo_utilizado, 0)) / vig.valor_total) * 100, 2)
                     ELSE 0
                 END AS percentual_remanescente
             {base_from}
@@ -4843,6 +5929,1267 @@ def api_dashboard_atas_contratos_validos():
         return jsonify({"erro": str(erro)}), 500
 
 
+# ---------------------------------------------------------------------------------------------
+# importacao da planilha "CONTROLE GERAL POR ITENS" (processos_aquisicao.html - Processos SESA)
+# ---------------------------------------------------------------------------------------------
+
+# cabecalho da planilha (normalizado: maiusculo, sem acento, espaco simples) -> coluna de
+# processosesaitem. abas diferentes chamam a mesma coisa de jeitos diferentes
+COLUNAS_PLANILHA_SESA = {
+    "ANO": "ano",
+    "PROCESSO": "processo",
+    "TIPO DE AQUISICAO": "tipo_aquisicao",
+    "ORIGEM": "origem",
+    "PLAN": "plan",
+    "CURVA": "curva",
+    "COD. LICITAWEB ANTERIOR": "cod_anterior",
+    "COD. ANTERIOR": "cod_anterior",
+    "NO ITEM": "numero_item",
+    "ITEM": "numero_item",
+    "CODIGO SRP": "codigo_srp",
+    "DESCRICAO": "descricao",
+    "APRES": "apresentacao",
+    "GRAU DE PRIORIDADE": "grau_prioridade",
+    "CLASSIFICACAO": "classificacao",
+    "STATUS": "status",
+    "ETAPA": "etapa",
+    "STATUS/ SITUACAO ATUAL": "etapa",
+    "OBSERVACAO": "observacoes",
+    "OBSERVACOES": "observacoes",
+    "DATA RECEBIMENTO SETORIAL": "data_recebimento_setorial",
+    "DIAS SETORIAL": "dias_setorial",
+    "DATA MOVIMENTACAO": "data_movimentacao",
+    "DIAS MOVIMENTACAO": "dias_movimentacao",
+    "RESPONSAVEL": "responsavel",
+    "PREGAO": "pregao",
+    "ATA": "ata",
+    "VIGENCIA": "vigencia",
+    "DATA DA ABERTURA DO PROCESSO": "data_abertura",
+    "DATA ABERTURA DO PROCESSO": "data_abertura",
+    "DATA DO CERTAME": "data_certame",
+    "DATA DA HOMOLOGACAO": "data_homologacao",
+    "DATA DE ATUALIZACAO": "data_atualizacao",
+    "DATA DA ATUALIZACAO": "data_atualizacao",
+    "DATA ATUALIZACAO": "data_atualizacao",
+    "CARTA DE SOLIDARIEDADE": "carta_solidariedade",
+    "ULTIMA AREA": "ultima_area",
+    "QUANT DIAS ULTIMA AREA": "dias_ultima_area",
+    "OBS (RECURSOS, IMPULGNACOES...)": "obs_recursos",
+}
+
+COLUNAS_SESA_INTEIRO = {"ano", "dias_setorial", "dias_movimentacao", "dias_ultima_area"}
+COLUNAS_SESA_DATA = {"data_recebimento_setorial", "data_movimentacao", "data_abertura", "data_certame", "data_homologacao"}
+COLUNAS_SESA_DATA_HORA = {"data_atualizacao"}
+COLUNAS_SESA_ORDEM = list(dict.fromkeys(COLUNAS_PLANILHA_SESA.values()))
+
+TAMANHO_MAXIMO_PLANILHA_SESA = 30 * 1024 * 1024
+
+
+def _normalizar_cabecalho_sesa(texto):
+    texto = unicodedata.normalize("NFKD", str(texto)).encode("ascii", "ignore").decode()
+    texto = texto.upper()
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def _grupo_da_aba(titulo):
+    # "MED. 2024-2026" -> "MED", "GASES 2023-2026" -> "GASES"
+    achou = re.match(r"\s*([A-Za-z]+)", titulo)
+    sigla = achou.group(1).upper() if achou else ""
+    return sigla if sigla in GRUPOS_AQUISICAO else None
+
+
+def _valor_texto_sesa(valor):
+    if valor is None:
+        return None
+    if isinstance(valor, float) and valor.is_integer():
+        valor = int(valor)
+    if isinstance(valor, datetime.datetime):
+        # excel converteu algo tipo "1-2" em data - guarda como dd/mm/aaaa pra nao sumir
+        valor = valor.strftime("%d/%m/%Y")
+    texto = str(valor).strip()
+    return texto or None
+
+
+def _valor_inteiro_sesa(valor):
+    if isinstance(valor, bool) or valor is None:
+        return None
+    if isinstance(valor, (int, float)):
+        return int(valor)
+    texto = str(valor).strip()
+    return int(texto) if texto.isdigit() else None
+
+
+def _valor_data_sesa(valor, com_hora=False):
+    if isinstance(valor, datetime.datetime):
+        return valor if com_hora else valor.date()
+    if isinstance(valor, datetime.date):
+        return valor
+    if isinstance(valor, str):
+        try:
+            data = datetime.datetime.strptime(valor.strip(), "%d/%m/%Y")
+            return data if com_hora else data.date()
+        except ValueError:
+            return None
+    return None
+
+
+def _ler_planilha_sesa(conteudo):
+    # devolve (linhas, resumo) - linhas ja no formato de processosesaitem (sem as chaves de FK)
+    pasta = load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
+    linhas = []
+    abas_importadas = []
+    abas_ignoradas = []
+    avisos = []
+
+    for aba in pasta.worksheets:
+        sigla = _grupo_da_aba(aba.title)
+        if not sigla:
+            abas_ignoradas.append(aba.title.strip())
+            continue
+
+        iterador = aba.iter_rows(values_only=True)
+        cabecalho = next(iterador, None) or ()
+        # coluna da planilha -> coluna do banco. MED tem "PLAN" duas vezes: a segunda eh a curva
+        mapa = {}
+        usadas = set()
+        for indice, titulo in enumerate(cabecalho):
+            if titulo is None:
+                continue
+            chave = _normalizar_cabecalho_sesa(titulo)
+            coluna = COLUNAS_PLANILHA_SESA.get(chave)
+            if coluna == "plan" and "plan" in usadas:
+                coluna = "curva"
+            if not coluna:
+                avisos.append(f"{aba.title.strip()}: coluna \"{str(titulo).strip()}\" ignorada")
+                continue
+            if coluna in usadas:
+                continue
+            mapa[indice] = coluna
+            usadas.add(coluna)
+
+        total_aba = 0
+        datas_invalidas = 0
+        for numero_linha, valores in enumerate(iterador, start=2):
+            if not any(v not in (None, "") and not (isinstance(v, str) and not v.strip()) for v in valores):
+                continue
+            item = {"sigla": sigla, "aba": aba.title.strip(), "linha": numero_linha}
+            for indice, coluna in mapa.items():
+                valor = valores[indice] if indice < len(valores) else None
+                if coluna in COLUNAS_SESA_INTEIRO:
+                    item[coluna] = _valor_inteiro_sesa(valor)
+                elif coluna in COLUNAS_SESA_DATA or coluna in COLUNAS_SESA_DATA_HORA:
+                    item[coluna] = _valor_data_sesa(valor, com_hora=coluna in COLUNAS_SESA_DATA_HORA)
+                    if item[coluna] is None and valor not in (None, "") and str(valor).strip():
+                        datas_invalidas += 1
+                else:
+                    item[coluna] = _valor_texto_sesa(valor)
+            linhas.append(item)
+            total_aba += 1
+
+        if datas_invalidas:
+            avisos.append(f"{aba.title.strip()}: {datas_invalidas} célula(s) de data com texto, importadas vazias")
+        abas_importadas.append({"aba": aba.title.strip(), "sigla": sigla, "grupo": GRUPOS_AQUISICAO[sigla], "itens": total_aba})
+
+    pasta.close()
+    return linhas, {"abas_importadas": abas_importadas, "abas_ignoradas": abas_ignoradas, "avisos": avisos}
+
+
+SQL_CHAVE_ITEM_SESA = """
+    grupoaquisicao, COALESCE(processo, ''), COALESCE(numero_item, ''), COALESCE(codigo_srp, ''), ocorrencia
+"""
+
+
+def _migrar_processosesaitem():
+    # tabelas criadas quando a importacao ainda apagava tudo: ganham as colunas novas e a chave
+    # unica. ocorrencia das linhas que ja existem sai da ordem da planilha (linha)
+    run_query("ALTER TABLE sist_logistica.processosesaimportacao ADD COLUMN IF NOT EXISTS inseridos INTEGER NOT NULL DEFAULT 0")
+    run_query("ALTER TABLE sist_logistica.processosesaimportacao ADD COLUMN IF NOT EXISTS atualizados INTEGER NOT NULL DEFAULT 0")
+    run_query("ALTER TABLE sist_logistica.processosesaitem ADD COLUMN IF NOT EXISTS ocorrencia INTEGER NOT NULL DEFAULT 1")
+    run_query("ALTER TABLE sist_logistica.processosesaitem ADD COLUMN IF NOT EXISTS _update TIMESTAMP NOT NULL DEFAULT now()")
+    if run_query("SELECT to_regclass('sist_logistica.uq_processosesaitem_chave') IS NOT NULL AS existe")[0]["existe"]:
+        return
+    run_query("""
+        UPDATE sist_logistica.processosesaitem p SET ocorrencia = n.ordem
+        FROM (
+            SELECT processosesaitem, row_number() OVER (
+                PARTITION BY grupoaquisicao, COALESCE(processo, ''), COALESCE(numero_item, ''), COALESCE(codigo_srp, '')
+                ORDER BY linha
+            ) AS ordem
+            FROM sist_logistica.processosesaitem
+        ) n
+        WHERE n.processosesaitem = p.processosesaitem AND p.ocorrencia <> n.ordem
+    """)
+    run_query(f"CREATE UNIQUE INDEX uq_processosesaitem_chave ON sist_logistica.processosesaitem ({SQL_CHAVE_ITEM_SESA})")
+
+
+def _garantir_tabelas_processos_sesa():
+    # banco que ja existia antes dessa funcionalidade nao tem as tabelas - cria na hora
+    run_query("CREATE SCHEMA IF NOT EXISTS sist_logistica")
+    for nome in ("grupoaquisicao", "processosesaimportacao", "processosesaitem", "processohospitalajuste",
+                 "processohospitalmanual", "processohospitalmanualitem", "processohospitaledicao"):
+        run_query(TABELAS_SIST_LOGISTICA[nome])
+    _migrar_processosesaitem()
+    for ddl in INDICES_SIST_LOGISTICA:
+        if "processosesaitem" in ddl:
+            run_query(ddl)
+    _seed_grupos_aquisicao()
+
+
+@app.route("/api/processos_sesa/importar", methods=["POST"])
+def api_importar_processos_sesa():
+    arquivo = request.files.get("arquivo")
+    if not arquivo or not arquivo.filename:
+        return jsonify({"ok": False, "msg": "Selecione um arquivo"}), 400
+    if not arquivo.filename.lower().endswith(".xlsx"):
+        return jsonify({"ok": False, "msg": "Envie um arquivo .xlsx"}), 400
+
+    if not OPENPYXL_DISPONIVEL:
+        return jsonify({"ok": False, "msg": "Importação indisponível: biblioteca openpyxl não instalada no servidor."}), 500
+
+    conteudo = arquivo.read()
+    if len(conteudo) > TAMANHO_MAXIMO_PLANILHA_SESA:
+        return jsonify({"ok": False, "msg": "Arquivo muito grande (máximo 30MB)"}), 400
+
+    try:
+        linhas, resumo = _ler_planilha_sesa(conteudo)
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": f"Não foi possível ler a planilha: {erro}"}), 400
+    if not linhas:
+        return jsonify({"ok": False, "msg": "Nenhuma aba de grupo de aquisição encontrada no arquivo"}), 400
+
+    try:
+        _garantir_tabelas_processos_sesa()
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+
+    # tudo numa transacao so (se der erro no meio, fica o que ja estava). a planilha chega varias
+    # vezes, com ou sem mudanca: item novo entra, item que ja existe so eh regravado se algum campo
+    # mudou, e item que sumiu da planilha CONTINUA no banco - importacao nunca apaga nada
+    conexao = get_conn()
+    try:
+        with conexao.cursor() as cursor:
+            cursor.execute("SELECT grupoaquisicao, sigla FROM sist_logistica.grupoaquisicao")
+            grupo_por_sigla = {sigla: grupo for grupo, sigla in cursor.fetchall()}
+
+            cursor.execute("""
+                INSERT INTO sist_logistica.processosesaimportacao (arquivo, usuario, total_itens)
+                VALUES (%s, %s, %s)
+                RETURNING processosesaimportacao
+            """, [arquivo.filename, _usuario_sessao() or None, len(linhas)])
+            importacao = cursor.fetchone()[0]
+
+            # ocorrencia: 1a, 2a... linha com a mesma chave dentro do arquivo
+            contagem_chave = {}
+            for item in linhas:
+                chave = (item["sigla"], item.get("processo") or "", item.get("numero_item") or "", item.get("codigo_srp") or "")
+                contagem_chave[chave] = contagem_chave.get(chave, 0) + 1
+                item["ocorrencia"] = contagem_chave[chave]
+
+            colunas_dado = ["aba", "linha"] + COLUNAS_SESA_ORDEM
+            colunas = ["processosesaimportacao", "grupoaquisicao", "ocorrencia"] + colunas_dado
+            valores = [
+                [importacao, grupo_por_sigla[item["sigla"]], item["ocorrencia"], item["aba"], item["linha"]]
+                + [item.get(coluna) for coluna in COLUNAS_SESA_ORDEM]
+                for item in linhas
+            ]
+            # chave (processo, n. item, codigo SRP) nao entra no SET - eh ela que identifica o item
+            colunas_atualizaveis = [c for c in colunas_dado if c not in ("processo", "numero_item", "codigo_srp")]
+            # aba/linha mudam sozinhas quando a planilha ganha linha no meio - regrava, mas nao conta
+            # como "atualizado"
+            colunas_comparadas = [c for c in colunas_atualizaveis if c not in ("aba", "linha")]
+
+            def chave_item(grupo, processo, numero_item, codigo_srp, ocorrencia):
+                return (grupo, processo or "", numero_item or "", codigo_srp or "", ocorrencia)
+
+            cursor.execute(f"""
+                SELECT grupoaquisicao, processo, numero_item, codigo_srp, ocorrencia, aba, linha,
+                       {', '.join(colunas_comparadas)}
+                FROM sist_logistica.processosesaitem
+            """)
+            existentes = {
+                chave_item(*linha[:5]): (linha[5:7], tuple(linha[7:]))
+                for linha in cursor.fetchall()
+            }
+
+            inseridos = atualizados = 0
+            valores_gravar = []
+            for item, valor in zip(linhas, valores):
+                atual = existentes.get(chave_item(valor[1], item.get("processo"), item.get("numero_item"),
+                                                  item.get("codigo_srp"), item["ocorrencia"]))
+                if atual is None:
+                    inseridos += 1
+                elif atual[1] != tuple(item.get(c) for c in colunas_comparadas):
+                    atualizados += 1
+                elif atual[0] == (item["aba"], item["linha"]):
+                    continue  # nada mudou - nem regrava
+                valores_gravar.append(valor)
+
+            if valores_gravar:
+                psycopg2.extras.execute_values(
+                    cursor,
+                    f"""
+                    INSERT INTO sist_logistica.processosesaitem ({', '.join(colunas)}) VALUES %s
+                    ON CONFLICT ({SQL_CHAVE_ITEM_SESA}) DO UPDATE SET
+                        {', '.join(f"{c} = EXCLUDED.{c}" for c in colunas_atualizaveis)},
+                        processosesaimportacao = EXCLUDED.processosesaimportacao,
+                        _update = now()
+                    """,
+                    valores_gravar,
+                    page_size=1000,
+                )
+
+            cursor.execute("""
+                UPDATE sist_logistica.processosesaimportacao SET inseridos = %s, atualizados = %s
+                WHERE processosesaimportacao = %s
+            """, [inseridos, atualizados, importacao])
+        conexao.commit()
+    except Exception as erro:
+        conexao.rollback()
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+    finally:
+        conexao.close()
+
+    return jsonify({
+        "ok": True,
+        "total_itens": len(linhas),
+        "inseridos": inseridos,
+        "atualizados": atualizados,
+        "sem_alteracao": len(linhas) - inseridos - atualizados,
+        **resumo,
+    })
+
+
+@app.route("/api/processos_sesa/ultima_importacao")
+def api_ultima_importacao_processos_sesa():
+    try:
+        linhas = run_query("""
+            SELECT i.arquivo, i.usuario, i.total_itens, i.inseridos, i.atualizados, i._creation AS data_importacao
+            FROM sist_logistica.processosesaimportacao i
+            ORDER BY i.processosesaimportacao DESC
+            LIMIT 1
+        """)
+    except psycopg2.Error:
+        # tabela ainda nao existe = nunca importou
+        return jsonify(None)
+    if not linhas:
+        return jsonify(None)
+    ultima = linhas[0]
+    ultima["grupos"] = run_query("""
+        SELECT g.sigla, g.nome, count(*) AS itens
+        FROM sist_logistica.processosesaitem p
+        JOIN sist_logistica.grupoaquisicao g ON g.grupoaquisicao = p.grupoaquisicao
+        GROUP BY g.sigla, g.nome
+        ORDER BY g.nome
+    """)
+    ultima["data_importacao"] = ultima["data_importacao"].strftime("%d/%m/%Y %H:%M")
+    return jsonify(ultima)
+
+
+@app.route("/api/grupos_aquisicao")
+def api_grupos_aquisicao():
+    try:
+        return jsonify(run_query("SELECT sigla, nome FROM sist_logistica.grupoaquisicao ORDER BY nome"))
+    except psycopg2.Error:
+        return jsonify([{"sigla": sigla, "nome": nome} for sigla, nome in sorted(GRUPOS_AQUISICAO.items(), key=lambda g: g[1])])
+
+
+# true = item vai pra "Processos Hospital": ajuste manual manda; sem ajuste, vale o codigo SRP bater
+# com o cod. seplag de algum produto (sem zero a esquerda dos dois lados)
+SQL_ITEM_EH_HOSPITAL = """
+    CASE
+        WHEN aj.acao = 'I' THEN TRUE
+        WHEN aj.acao = 'R' THEN FALSE
+        ELSE COALESCE(LTRIM(TRIM(p.codigo_srp), '0') IN (
+            SELECT NULLIF(LTRIM(TRIM(pr.codigoreferencia), '0'), '') FROM public.produto pr
+        ), FALSE)
+    END
+"""
+
+
+# itens da planilha SESA (cada um cai em SESA ou Hospital por SQL_ITEM_EH_HOSPITAL) + itens dos
+# processos cadastrados a mao (sempre Hospital), no mesmo formato. item_id so eh unico junto com origem
+SQL_ITENS_PROCESSOS = f"""
+    SELECT
+        p.processosesaitem AS item_id, 'planilha' AS origem, NULL::integer AS processohospitalmanual,
+        p.grupoaquisicao, p.processo, p.numero_item, p.codigo_srp, p.descricao, p.apresentacao,
+        CASE WHEN ed.processo IS NULL THEN p.tipo_aquisicao ELSE ed.tipo_aquisicao END AS tipo_aquisicao,
+        CASE WHEN ed.processo IS NULL THEN p.status ELSE ed.status END AS status,
+        CASE WHEN ed.processo IS NULL THEN p.etapa ELSE ed.etapa END AS etapa,
+        CASE WHEN ed.processo IS NULL THEN p.pregao ELSE ed.pregao END AS pregao,
+        CASE WHEN ed.processo IS NULL THEN p.ata ELSE ed.ata END AS ata,
+        CASE WHEN ed.processo IS NULL THEN p.vigencia ELSE ed.vigencia END AS vigencia,
+        CASE WHEN ed.processo IS NULL THEN p.data_abertura ELSE ed.data_abertura END AS data_abertura,
+        GREATEST(p.data_atualizacao, ed._update) AS data_atualizacao, p.linha,
+        ({SQL_ITEM_EH_HOSPITAL}) AS eh_hospital
+    FROM sist_logistica.processosesaitem p
+    LEFT JOIN sist_logistica.processohospitalajuste aj
+        ON aj.processo = p.processo AND aj.codigo_srp = COALESCE(p.codigo_srp, '')
+    LEFT JOIN sist_logistica.processohospitaledicao ed ON ed.processo = p.processo
+    UNION ALL
+    SELECT
+        mi.processohospitalmanualitem, 'manual', m.processohospitalmanual,
+        m.grupoaquisicao, m.processo, mi.numero_item, mi.codigo_srp, mi.descricao, mi.apresentacao,
+        m.tipo_aquisicao, m.status, m.etapa, NULL, NULL, NULL,
+        m.data_abertura, m._update, mi.processohospitalmanualitem,
+        TRUE
+    FROM sist_logistica.processohospitalmanualitem mi
+    JOIN sist_logistica.processohospitalmanual m ON m.processohospitalmanual = mi.processohospitalmanual
+"""
+
+
+def _filtros_processos_sesa(args):
+    # lista=sesa (padrao) ou hospital - as duas saem da mesma tabela, separadas por SQL_ITEM_EH_HOSPITAL.
+    # filtros sao por item: processo aparece se algum item dele bate
+    lista = args.get("lista", "sesa")
+    grupo = args.get("grupo")
+    processo = args.get("processo")
+    # cod. seplag do filtro = codigo SRP da planilha (mesmo codigo)
+    cod_seplag = args.get("cod_seplag")
+    status = args.get("status")
+    descricao = args.get("descricao")
+
+    condicoes = ["p.eh_hospital = %s"]
+    params = [lista == "hospital"]
+    if grupo:
+        condicoes.append("g.sigla = %s")
+        params.append(grupo)
+    if processo:
+        condicoes.append("p.processo ILIKE %s")
+        params.append(f"%{processo}%")
+    if cod_seplag:
+        condicoes.append("p.codigo_srp ILIKE %s")
+        params.append(f"%{cod_seplag}%")
+    if status:
+        condicoes.append("p.status = %s")
+        params.append(status)
+    if descricao:
+        condicoes.append("p.descricao ILIKE %s")
+        params.append(f"%{descricao}%")
+
+    base_from = f"""
+        FROM ({SQL_ITENS_PROCESSOS}) p
+        JOIN sist_logistica.grupoaquisicao g ON g.grupoaquisicao = p.grupoaquisicao
+        WHERE {' AND '.join(condicoes)}
+    """
+    return base_from, params
+
+
+def _consultar_processos_sesa(sql, params):
+    # planilha nunca importada = None (lista vazia). importada antes de existir a tabela de
+    # ajuste (processohospitalajuste) = cria o que falta e tenta de novo
+    try:
+        return run_query(sql, params)
+    except psycopg2.errors.UndefinedTable:
+        if not run_query("SELECT to_regclass('sist_logistica.processosesaitem') IS NOT NULL AS existe")[0]["existe"]:
+            return None
+        _garantir_tabelas_processos_sesa()
+        return run_query(sql, params)
+
+
+# dado do processo (tipo, status, pregao...) eh repetido em cada item da planilha e as vezes diverge
+# entre itens - vale o do item atualizado por ultimo
+def _campo_item_mais_recente(campo):
+    return f"(array_agg(p.{campo} ORDER BY p.data_atualizacao DESC NULLS LAST, p.linha))[1]"
+
+
+@app.route("/api/processos_sesa")
+def api_processos_sesa():
+    # um registro por processo (itens vem por fora em /api/processos_sesa/itens, ao clicar)
+    try:
+        pagina = max(int(request.args.get("pagina", 1)), 1)
+    except ValueError:
+        pagina = 1
+    base_from, params = _filtros_processos_sesa(request.args)
+
+    tamanho_pagina = 10
+    offset = (pagina - 1) * tamanho_pagina
+    vazio = {"dados": [], "total": 0, "total_itens": 0, "pagina": pagina, "tamanho_pagina": tamanho_pagina}
+
+    try:
+        contagem = _consultar_processos_sesa(f"""
+            SELECT count(DISTINCT COALESCE(p.processo, '')) AS total, count(*) AS total_itens {base_from}
+        """, params)
+        if contagem is None:
+            return jsonify(vazio)
+        dados = run_query(f"""
+            SELECT
+                COALESCE(p.processo, '') AS processo,
+                string_agg(DISTINCT g.nome, ', ') AS grupo,
+                {_campo_item_mais_recente("tipo_aquisicao")} AS tipo_aquisicao,
+                {_campo_item_mais_recente("status")} AS status,
+                {_campo_item_mais_recente("etapa")} AS etapa,
+                {_campo_item_mais_recente("pregao")} AS pregao,
+                {_campo_item_mais_recente("ata")} AS ata,
+                {_campo_item_mais_recente("vigencia")} AS vigencia,
+                to_char(min(p.data_abertura), 'DD/MM/YYYY') AS data_abertura,
+                to_char(max(p.data_atualizacao), 'DD/MM/YYYY') AS data_atualizacao,
+                count(*) AS itens,
+                max(p.processohospitalmanual) AS processohospitalmanual
+            {base_from}
+            GROUP BY COALESCE(p.processo, '')
+            ORDER BY max(p.data_atualizacao) DESC NULLS LAST, COALESCE(p.processo, '')
+            LIMIT %s OFFSET %s
+        """, params + [tamanho_pagina, offset])
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+
+    return jsonify({**vazio, "dados": dados, "total": contagem[0]["total"], "total_itens": contagem[0]["total_itens"]})
+
+
+def _chave_numero_item(item):
+    # ordem natural do n. item: "2" antes de "10", "G1 - 2" antes de "G1 - 10", vazio por ultimo
+    texto = item.get("numero_item") or ""
+    partes = re.findall(r"\d+|[^\d\s-]+", texto)
+    return (not texto, [(0, int(parte), "") if parte.isdigit() else (1, 0, parte.upper()) for parte in partes])
+
+
+@app.route("/api/processos_sesa/itens")
+def api_itens_processo_sesa():
+    # itens de um processo na lista pedida (respeitando os mesmos filtros da listagem)
+    base_from, params = _filtros_processos_sesa(request.args)
+    try:
+        itens = _consultar_processos_sesa(f"""
+            SELECT p.item_id, p.origem, p.numero_item, p.codigo_srp, p.descricao, p.apresentacao
+            {base_from} AND COALESCE(p.processo, '') = %s
+            ORDER BY p.linha
+        """, params + [request.args.get("processo_exato", "")])
+        itens = itens or []
+        if request.args.get("lista") == "hospital":
+            _incluir_estoque_e_saldos(itens, _usuario_para_filtro_armazem(_usuario_sessao()))
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+    return jsonify(sorted(itens, key=_chave_numero_item))
+
+
+def _normalizar_codigo_seplag(codigo):
+    return (codigo or "").strip().lstrip("0")
+
+
+def _incluir_estoque_e_saldos(itens, usuario_logado):
+    # pra cada item da lista Hospital: estoque atual (mesma soma de lotes de Controle de Estoque,
+    # restrita aos armazens do usuario) e saldo a entregar em atas e em contratos validos (mesma
+    # regra do Abastecimento) - somando todos os produtos com cod. seplag = codigo SRP do item
+    codigos = sorted({_normalizar_codigo_seplag(item["codigo_srp"]) for item in itens} - {""})
+    for item in itens:
+        item.update({"total_estoque": 0, "saldo_ata": 0, "saldo_contrato": 0})
+    if not codigos:
+        return
+
+    produtos = run_query("""
+        SELECT produto, LTRIM(TRIM(codigoreferencia), '0') AS codigo
+        FROM public.produto
+        WHERE NULLIF(LTRIM(TRIM(codigoreferencia), '0'), '') = ANY(%s)
+    """, [codigos])
+    ids_produtos = [linha["produto"] for linha in produtos]
+    if not ids_produtos:
+        return
+
+    filtro_armazem, params_armazem = _fragmento_filtro_armazem("ea.armazem", usuario_logado, None)
+    estoques = run_query(f"""
+        SELECT lt.produto, SUM(e.quantidade) AS total
+        FROM public.lote lt
+        JOIN public.estoque e ON e.lote = lt.lote
+        JOIN public.estoquearmazem ea ON ea.produto = lt.produto AND ea.armazem = e.armazem
+        WHERE lt.produto = ANY(%s) {filtro_armazem}
+        GROUP BY lt.produto
+    """, [ids_produtos] + params_armazem)
+    saldos = run_query(f"""
+        SELECT
+            pi.produto,
+            COALESCE(SUM(pi.quantidade - COALESCE(pi.quantidadeentregue, 0)) FILTER (WHERE pc.atapreco = 'S'), 0) AS saldo_ata,
+            COALESCE(SUM(pi.quantidade - COALESCE(pi.quantidadeentregue, 0)) FILTER (WHERE pc.atapreco = 'N'), 0) AS saldo_contrato
+        FROM public.pedidoitem pi
+        JOIN public.pedidocabecalho pc ON pc.pedidocabecalho = pi.pedidocabecalho
+        WHERE pi.produto = ANY(%s)
+        AND {SQL_PEDIDO_VIGENTE}
+        GROUP BY pi.produto
+    """, [ids_produtos])
+
+    estoque_por_produto = {linha["produto"]: float(linha["total"] or 0) for linha in estoques}
+    saldo_por_produto = {linha["produto"]: linha for linha in saldos}
+    por_codigo = {}
+    for linha in produtos:
+        soma = por_codigo.setdefault(linha["codigo"], {"total_estoque": 0.0, "saldo_ata": 0.0, "saldo_contrato": 0.0})
+        soma["total_estoque"] += estoque_por_produto.get(linha["produto"], 0.0)
+        saldo = saldo_por_produto.get(linha["produto"])
+        if saldo:
+            soma["saldo_ata"] += float(saldo["saldo_ata"])
+            soma["saldo_contrato"] += float(saldo["saldo_contrato"])
+
+    for item in itens:
+        item.update(por_codigo.get(_normalizar_codigo_seplag(item["codigo_srp"]), {}))
+
+
+@app.route("/api/estoque_processos_aquisicao")
+def api_estoque_processos_aquisicao():
+    # botao "Processos de Aquisição" do estoque.html: processos (planilha SESA e manuais, das duas
+    # listas) que tem item com codigo SRP = cod. seplag do produto. um registro por processo, com o
+    # dado do item atualizado por ultimo (mesma regra da listagem de processos_aquisicao.html)
+    produto = request.args.get("produto")
+    if not produto:
+        return jsonify([])
+    try:
+        linhas = run_query("SELECT codigoreferencia FROM public.produto WHERE produto = %s", [produto])
+        codigo = _normalizar_codigo_seplag(linhas[0]["codigoreferencia"]) if linhas else ""
+        if not codigo:
+            return jsonify([])
+        processos = _consultar_processos_sesa(f"""
+            SELECT
+                p.processo,
+                {_campo_item_mais_recente("status")} AS status,
+                {_campo_item_mais_recente("etapa")} AS etapa,
+                {_campo_item_mais_recente("pregao")} AS pregao,
+                {_campo_item_mais_recente("ata")} AS ata,
+                {_campo_item_mais_recente("vigencia")} AS vigencia,
+                to_char(max(p.data_atualizacao), 'DD/MM/YYYY') AS data_atualizacao
+            FROM ({SQL_ITENS_PROCESSOS}) p
+            WHERE LTRIM(TRIM(p.codigo_srp), '0') = %s AND p.processo IS NOT NULL
+            GROUP BY p.processo
+            ORDER BY max(p.data_atualizacao) DESC NULLS LAST, p.processo
+        """, [codigo])
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+    return jsonify(processos or [])
+
+
+@app.route("/api/processos_sesa/descricoes_sugestoes")
+def api_descricoes_sugestoes_processos():
+    # sugestao do filtro Descricao enquanto digita - descricoes dos itens de processo (planilha e
+    # manuais), nao do catalogo de produto. respeita o grupo selecionado nos botoes
+    termo = request.args.get("termo", "").strip()
+    if not termo:
+        return jsonify([])
+    grupo = request.args.get("grupo")
+    filtro_grupo = "AND g.sigla = %s" if grupo else ""
+    params = [f"%{termo}%"] + ([grupo] if grupo else []) + [f"{termo}%"]
+    try:
+        # quem comeca com o que foi digitado vem antes de quem so contem
+        linhas = _consultar_processos_sesa(f"""
+            SELECT d.descricao
+            FROM (
+                SELECT descricao, grupoaquisicao FROM sist_logistica.processosesaitem
+                UNION ALL
+                SELECT mi.descricao, m.grupoaquisicao
+                FROM sist_logistica.processohospitalmanualitem mi
+                JOIN sist_logistica.processohospitalmanual m ON m.processohospitalmanual = mi.processohospitalmanual
+            ) d
+            JOIN sist_logistica.grupoaquisicao g ON g.grupoaquisicao = d.grupoaquisicao
+            WHERE d.descricao ILIKE %s {filtro_grupo}
+            GROUP BY d.descricao
+            ORDER BY bool_or(d.descricao ILIKE %s) DESC, d.descricao
+            LIMIT 10
+        """, params)
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+    return jsonify([linha["descricao"] for linha in linhas or []])
+
+
+@app.route("/api/processos_sesa/status")
+def api_status_processos_sesa():
+    try:
+        linhas = _consultar_processos_sesa(f"""
+            SELECT DISTINCT status FROM ({SQL_ITENS_PROCESSOS}) p
+            WHERE status IS NOT NULL ORDER BY status
+        """, None) or []
+    except psycopg2.Error:
+        return jsonify([])
+    return jsonify([linha["status"] for linha in linhas])
+
+
+@app.route("/api/processos_sesa/mover", methods=["POST"])
+def api_mover_processo_sesa():
+    # botao Incluir (Processos SESA -> Hospital) e Remover (Hospital -> SESA)
+    dados = request.get_json(force=True)
+    processosesaitem = dados.get("processosesaitem")
+    destino = dados.get("destino")
+    if destino not in ("hospital", "sesa") or not processosesaitem:
+        return jsonify({"ok": False, "msg": "Requisição inválida"}), 400
+
+    try:
+        _garantir_tabelas_processos_sesa()
+        item = run_query(
+            "SELECT processo, COALESCE(codigo_srp, '') AS codigo_srp FROM sist_logistica.processosesaitem WHERE processosesaitem = %s",
+            [processosesaitem],
+        )
+        if not item:
+            return jsonify({"ok": False, "msg": "Item não encontrado (a planilha pode ter sido reimportada)"}), 404
+        if not item[0]["processo"]:
+            return jsonify({"ok": False, "msg": "Item sem número de processo"}), 400
+
+        run_query("""
+            INSERT INTO sist_logistica.processohospitalajuste (processo, codigo_srp, acao, usuario)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (processo, codigo_srp)
+            DO UPDATE SET acao = EXCLUDED.acao, usuario = EXCLUDED.usuario, _update = now()
+        """, [item[0]["processo"], item[0]["codigo_srp"], "I" if destino == "hospital" else "R",
+              _usuario_sessao() or None])
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+
+    return jsonify({"ok": True})
+
+
+# alem de administrador, perfis que podem editar processo da lista Hospital
+PERFIS_EDITAM_PROCESSO_HOSPITAL = {"Compras"}
+
+
+def _usuario_pode_editar_processo(usuario_logado):
+    if not usuario_logado:
+        return False
+    linhas = run_query("""
+        SELECT sp.administrador, sp.nome
+        FROM sist_logistica.sistemausuario su
+        JOIN sist_logistica.sistemaperfil sp ON sp.sistemaperfil = su.sistemaperfil
+        WHERE su.identificacao = %s
+    """, [usuario_logado])
+    return bool(linhas) and (bool(linhas[0]["administrador"]) or linhas[0]["nome"] in PERFIS_EDITAM_PROCESSO_HOSPITAL)
+
+
+def _resposta_sem_permissao_edicao():
+    return jsonify({"ok": False, "msg": "Somente perfis Administrador e Compras podem editar processos"}), 403
+
+
+@app.route("/api/processos_hospital/permissoes")
+def api_permissoes_processo_hospital():
+    try:
+        return jsonify({"pode_editar": _usuario_pode_editar_processo(_usuario_sessao())})
+    except Exception:
+        return jsonify({"pode_editar": False})
+
+
+@app.route("/api/processos_hospital/edicao")
+def api_dados_edicao_processo_hospital():
+    # valores atuais (ja com edicao anterior, se tiver) do processo da planilha, pra preencher o form
+    processo = request.args.get("processo") or ""
+    try:
+        linhas = _consultar_processos_sesa(f"""
+            SELECT
+                p.processo,
+                {_campo_item_mais_recente("tipo_aquisicao")} AS tipo_aquisicao,
+                {_campo_item_mais_recente("status")} AS status,
+                {_campo_item_mais_recente("etapa")} AS etapa,
+                {_campo_item_mais_recente("pregao")} AS pregao,
+                {_campo_item_mais_recente("ata")} AS ata,
+                {_campo_item_mais_recente("vigencia")} AS vigencia,
+                to_char(min(p.data_abertura), 'YYYY-MM-DD') AS data_abertura
+            FROM ({SQL_ITENS_PROCESSOS}) p
+            WHERE p.origem = 'planilha' AND p.processo = %s
+            GROUP BY p.processo
+        """, [processo])
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+    if not linhas:
+        return jsonify({"erro": "Processo não encontrado"}), 404
+    return jsonify(linhas[0])
+
+
+@app.route("/api/processos_hospital/edicao", methods=["PUT"])
+def api_editar_processo_hospital():
+    dados = request.get_json(force=True)
+    if not _usuario_pode_editar_processo(_usuario_sessao()):
+        return _resposta_sem_permissao_edicao()
+
+    processo = (dados.get("processo") or "").strip()
+    if not processo:
+        return jsonify({"ok": False, "msg": "Processo inválido"}), 400
+    data_abertura = (dados.get("data_abertura") or "").strip() or None
+    if data_abertura:
+        try:
+            datetime.date.fromisoformat(data_abertura)
+        except ValueError:
+            return jsonify({"ok": False, "msg": "Data de abertura inválida"}), 400
+
+    def texto(campo):
+        return (dados.get(campo) or "").strip() or None
+
+    try:
+        _garantir_tabelas_processos_sesa()
+        existe = run_query("SELECT 1 FROM sist_logistica.processosesaitem WHERE processo = %s LIMIT 1", [processo])
+        if not existe:
+            return jsonify({"ok": False, "msg": "Processo não encontrado na planilha"}), 404
+        run_query("""
+            INSERT INTO sist_logistica.processohospitaledicao
+                (processo, tipo_aquisicao, status, etapa, pregao, ata, vigencia, data_abertura, usuario)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (processo) DO UPDATE SET
+                tipo_aquisicao = EXCLUDED.tipo_aquisicao, status = EXCLUDED.status, etapa = EXCLUDED.etapa,
+                pregao = EXCLUDED.pregao, ata = EXCLUDED.ata, vigencia = EXCLUDED.vigencia,
+                data_abertura = EXCLUDED.data_abertura, usuario = EXCLUDED.usuario, _update = now()
+        """, [processo, texto("tipo_aquisicao"), texto("status"), texto("etapa"), texto("pregao"),
+              texto("ata"), texto("vigencia"), data_abertura, _usuario_sessao()])
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/api/processos_hospital/produtos")
+def api_produtos_processo_hospital():
+    # busca de produto pelo cod. seplag pra incluir em processo manual da lista Hospital
+    cod_seplag = (request.args.get("cod_seplag") or "").strip()
+    if not cod_seplag:
+        return jsonify([])
+    return _consulta_generica("""
+        SELECT
+            p.produto,
+            p.codigoreferencia AS cod_seplag,
+            p.nome AS nome_produto,
+            up.sigla AS apresentacao
+        FROM public.produto p
+        LEFT JOIN public.unidadeproduto up ON up.unidadeproduto = p.unidadeproduto
+        WHERE p.codigoreferencia ILIKE %s
+        ORDER BY (TRIM(p.codigoreferencia) = %s) DESC, p.codigoreferencia, p.nome
+        LIMIT 20
+    """, [f"%{cod_seplag}%", cod_seplag])
+
+
+def _validar_processo_manual(dados):
+    # devolve (campos, ids de produto) ou levanta ValueError com a mensagem pro usuario
+    processo = (dados.get("processo") or "").strip()
+    grupo = dados.get("grupo")
+    produtos = []
+    for produto in dados.get("produtos") or []:
+        try:
+            produto = int(produto)
+        except (TypeError, ValueError):
+            raise ValueError("Produto inválido")
+        if produto not in produtos:
+            produtos.append(produto)
+    if not processo:
+        raise ValueError("Informe o número do processo")
+    if grupo not in GRUPOS_AQUISICAO:
+        raise ValueError("Selecione o grupo de aquisição")
+    if not produtos:
+        raise ValueError("Inclua pelo menos um item no processo")
+
+    data_abertura = (dados.get("data_abertura") or "").strip() or None
+    if data_abertura:
+        try:
+            datetime.date.fromisoformat(data_abertura)
+        except ValueError:
+            raise ValueError("Data de abertura inválida")
+
+    campos = {
+        "processo": processo,
+        "grupo": grupo,
+        "tipo_aquisicao": (dados.get("tipo_aquisicao") or "").strip() or None,
+        "status": (dados.get("status") or "").strip() or None,
+        "etapa": (dados.get("etapa") or "").strip() or None,
+        "data_abertura": data_abertura,
+        "usuario": _usuario_sessao() or None,
+    }
+    return campos, produtos
+
+
+def _gravar_itens_processo_manual(cursor, processohospitalmanual, produtos):
+    # refaz a lista de itens do zero, numerando 1..n na ordem em que vieram da tela - dado do item
+    # (cod. seplag, nome, apresentacao) vem do produto nessa hora
+    cursor.execute("DELETE FROM sist_logistica.processohospitalmanualitem WHERE processohospitalmanual = %s",
+                   [processohospitalmanual])
+    cursor.execute("""
+        SELECT p.produto, p.codigoreferencia, p.nome, up.sigla
+        FROM public.produto p
+        LEFT JOIN public.unidadeproduto up ON up.unidadeproduto = p.unidadeproduto
+        WHERE p.produto = ANY(%s)
+    """, [produtos])
+    por_produto = {int(linha[0]): linha for linha in cursor.fetchall()}
+    faltando = [produto for produto in produtos if produto not in por_produto]
+    if faltando:
+        raise ValueError(f"Produto não encontrado: {faltando[0]}")
+    psycopg2.extras.execute_values(cursor, """
+        INSERT INTO sist_logistica.processohospitalmanualitem
+            (processohospitalmanual, numero_item, produto, codigo_srp, descricao, apresentacao)
+        VALUES %s
+    """, [
+        [processohospitalmanual, str(numero), produto,
+         (por_produto[produto][1] or "").strip() or None, por_produto[produto][2], por_produto[produto][3]]
+        for numero, produto in enumerate(produtos, start=1)
+    ])
+
+
+def _salvar_processo_manual(processohospitalmanual=None):
+    # processohospitalmanual None = cria, senao atualiza - cabecalho e itens numa transacao so
+    try:
+        campos, produtos = _validar_processo_manual(request.get_json(force=True))
+        _garantir_tabelas_processos_sesa()
+    except ValueError as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 400
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+
+    conexao = get_conn()
+    try:
+        with conexao.cursor() as cursor:
+            cursor.execute(
+                "SELECT processohospitalmanual FROM sist_logistica.processohospitalmanual WHERE processo = %s",
+                [campos["processo"]],
+            )
+            existente = cursor.fetchone()
+            if existente and existente[0] != processohospitalmanual:
+                return jsonify({"ok": False, "msg": "Já existe um processo manual com esse número"}), 400
+
+            valores = [campos["processo"], campos["grupo"], campos["tipo_aquisicao"], campos["status"],
+                       campos["etapa"], campos["data_abertura"], campos["usuario"]]
+            if processohospitalmanual is None:
+                cursor.execute("""
+                    INSERT INTO sist_logistica.processohospitalmanual
+                        (processo, grupoaquisicao, tipo_aquisicao, status, etapa, data_abertura, usuario)
+                    SELECT %s, grupoaquisicao, %s, %s, %s, %s, %s
+                    FROM sist_logistica.grupoaquisicao WHERE sigla = %s
+                    RETURNING processohospitalmanual
+                """, [valores[0]] + valores[2:] + [campos["grupo"]])
+            else:
+                cursor.execute("""
+                    UPDATE sist_logistica.processohospitalmanual SET
+                        processo = %s,
+                        grupoaquisicao = (SELECT grupoaquisicao FROM sist_logistica.grupoaquisicao WHERE sigla = %s),
+                        tipo_aquisicao = %s, status = %s, etapa = %s, data_abertura = %s, usuario = %s,
+                        _update = now()
+                    WHERE processohospitalmanual = %s
+                    RETURNING processohospitalmanual
+                """, valores + [processohospitalmanual])
+            linha = cursor.fetchone()
+            if not linha:
+                return jsonify({"ok": False, "msg": "Processo não encontrado"}), 404
+            _gravar_itens_processo_manual(cursor, linha[0], produtos)
+        conexao.commit()
+        return jsonify({"ok": True, "processohospitalmanual": linha[0]})
+    except ValueError as erro:
+        conexao.rollback()
+        return jsonify({"ok": False, "msg": str(erro)}), 400
+    except Exception as erro:
+        conexao.rollback()
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+    finally:
+        conexao.close()
+
+
+@app.route("/api/processos_hospital_manual", methods=["POST"])
+def api_criar_processo_manual():
+    return _salvar_processo_manual()
+
+
+@app.route("/api/processos_hospital_manual/<int:processohospitalmanual>", methods=["PUT"])
+def api_editar_processo_manual(processohospitalmanual):
+    if not _usuario_pode_editar_processo(_usuario_sessao()):
+        return _resposta_sem_permissao_edicao()
+    return _salvar_processo_manual(processohospitalmanual)
+
+
+@app.route("/api/processos_hospital_manual/<int:processohospitalmanual>")
+def api_processo_manual(processohospitalmanual):
+    try:
+        linhas = run_query("""
+            SELECT m.processohospitalmanual, m.processo, g.sigla AS grupo, m.tipo_aquisicao, m.status,
+                   m.etapa, to_char(m.data_abertura, 'YYYY-MM-DD') AS data_abertura
+            FROM sist_logistica.processohospitalmanual m
+            JOIN sist_logistica.grupoaquisicao g ON g.grupoaquisicao = m.grupoaquisicao
+            WHERE m.processohospitalmanual = %s
+        """, [processohospitalmanual])
+        if not linhas:
+            return jsonify({"erro": "Processo não encontrado"}), 404
+        processo = linhas[0]
+        processo["itens"] = run_query("""
+            SELECT mi.produto, mi.codigo_srp AS cod_seplag, mi.descricao AS nome_produto, mi.apresentacao
+            FROM sist_logistica.processohospitalmanualitem mi
+            WHERE mi.processohospitalmanual = %s
+            ORDER BY mi.numero_item::integer
+        """, [processohospitalmanual])
+        return jsonify(processo)
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+
+
+@app.route("/api/processos_hospital_manual/<int:processohospitalmanual>", methods=["DELETE"])
+def api_excluir_processo_manual(processohospitalmanual):
+    if not _usuario_pode_editar_processo(_usuario_sessao()):
+        return _resposta_sem_permissao_edicao()
+    try:
+        run_query("DELETE FROM sist_logistica.processohospitalmanual WHERE processohospitalmanual = %s",
+                  [processohospitalmanual])
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/api/processos_hospital_manual/item/<int:processohospitalmanualitem>", methods=["DELETE"])
+def api_remover_item_processo_manual(processohospitalmanualitem):
+    # botao Remover num item de processo manual: apaga o item (nao tem lista SESA pra onde voltar).
+    # processo que fica sem item nenhum sai junto
+    try:
+        linhas = run_query("""
+            DELETE FROM sist_logistica.processohospitalmanualitem WHERE processohospitalmanualitem = %s
+            RETURNING processohospitalmanual
+        """, [processohospitalmanualitem])
+        if linhas:
+            run_query("""
+                DELETE FROM sist_logistica.processohospitalmanual m
+                WHERE m.processohospitalmanual = %s
+                AND NOT EXISTS (
+                    SELECT 1 FROM sist_logistica.processohospitalmanualitem mi
+                    WHERE mi.processohospitalmanual = m.processohospitalmanual
+                )
+            """, [linhas[0]["processohospitalmanual"]])
+            run_query("UPDATE sist_logistica.processohospitalmanual SET _update = now() WHERE processohospitalmanual = %s",
+                      [linhas[0]["processohospitalmanual"]])
+    except Exception as erro:
+        return jsonify({"ok": False, "msg": str(erro)}), 500
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------------------------
+# planejamento de aquisicao (planejamento_aquisicao.html) - sugestao de compra pela media mensal
+# de consumo dos ultimos 6 meses. a lista nao eh gravada: vive na tela e sai por exportacao
+# ---------------------------------------------------------------------------------------------
+
+def _sql_planejamento_aquisicao(args, produtos=None):
+    # consumo = toda saida (saidacabecalho nao estornada, status <> 'E') dos armazens do usuario
+    # (ou do armazem escolhido), nos ultimos 6 meses ate hoje - data no futuro eh lixo de digitacao
+    # na base e fica de fora. produtos=None: so quem teve consumo no periodo (botao Gerar);
+    # lista de ids: esses produtos, mesmo sem consumo (botao Inserir itens)
+    usuario_logado = _usuario_para_filtro_armazem(_usuario_sessao())
+    armazem = args.get("armazem")
+    filtro_saida, params_saida = _fragmento_filtro_armazem("sc.armazem", usuario_logado, armazem)
+    filtro_estoque, params_estoque = _fragmento_filtro_armazem("e2.armazem", usuario_logado, armazem)
+
+    condicoes = []
+    params = []
+    if produtos is None:
+        filtro_produto_consumo = ""
+        filtro_produto_estoque = "AND lt2.produto IN (SELECT produto FROM consumo)"
+        origem = "consumo c JOIN public.produto p ON p.produto = c.produto"
+        params_produto_consumo = []
+        params_produto_estoque = []
+        condicoes.append("c.consumo_6m > 0")
+    else:
+        filtro_produto_consumo = "AND lt.produto = ANY(%s)"
+        filtro_produto_estoque = "AND lt2.produto = ANY(%s)"
+        origem = "public.produto p LEFT JOIN consumo c ON c.produto = p.produto"
+        params_produto_consumo = [produtos]
+        params_produto_estoque = [produtos]
+        condicoes.append("p.produto = ANY(%s)")
+        params.append(produtos)
+
+    classe = args.get("classe")
+    subgrupo = args.get("subgrupo")
+    if classe:
+        condicoes.append("cl.descricao ILIKE %s")
+        params.append(f"%{classe}%")
+    if subgrupo:
+        condicoes.append("sg.descricao ILIKE %s")
+        params.append(f"%{subgrupo}%")
+
+    sql = f"""
+        WITH consumo AS (
+            SELECT lt.produto, SUM(si.quantidade) AS consumo_6m
+            FROM public.saidaitem si
+            JOIN public.saidacabecalho sc ON sc.saidacabecalho = si.saidacabecalho
+            JOIN public.estoque e ON e.estoque = si.estoque
+            JOIN public.lote lt ON lt.lote = e.lote
+            WHERE sc.status <> 'E'
+            AND sc.data >= CURRENT_DATE - INTERVAL '6 months'
+            AND sc.data < CURRENT_DATE + 1
+            {filtro_saida}
+            {filtro_produto_consumo}
+            GROUP BY lt.produto
+        ),
+        estoque_atual AS (
+            SELECT lt2.produto, SUM(e2.quantidade) AS total
+            FROM public.estoque e2
+            JOIN public.lote lt2 ON lt2.lote = e2.lote
+            WHERE 1=1 {filtro_estoque} {filtro_produto_estoque}
+            GROUP BY lt2.produto
+        )
+        SELECT
+            p.produto AS cod_produto,
+            p.codigoreferencia AS cod_seplag,
+            p.codigo AS cod_almox,
+            p.nome AS nome_produto,
+            p.descricao AS descricao_produto,
+            cl.descricao AS classe,
+            sg.descricao AS sub_grupo,
+            up.sigla AS apresentacao,
+            COALESCE(c.consumo_6m, 0) AS consumo_6m,
+            ROUND(COALESCE(c.consumo_6m, 0) / 6, 2) AS media_mensal,
+            COALESCE(ea.total, 0) AS total_estoque,
+            COALESCE(et.customedio, 0) AS valor_unitario
+        FROM {origem}
+        LEFT JOIN estoque_atual ea ON ea.produto = p.produto
+        LEFT JOIN public.classe cl ON cl.classe = p.classe
+        LEFT JOIN public.subgrupo sg ON sg.subgrupo = cl.subgrupo
+        LEFT JOIN public.unidadeproduto up ON up.unidadeproduto = p.unidadeproduto
+        LEFT JOIN public.estoquetotal et ON et.produto = p.produto
+        WHERE {' AND '.join(condicoes)}
+        ORDER BY p.nome
+    """
+    return sql, params_saida + params_produto_consumo + params_estoque + params_produto_estoque + params
+
+
+@app.route("/api/planejamento_aquisicao")
+def api_planejamento_aquisicao():
+    # botao Gerar - sem classe/subgrupo/armazem = todo produto com consumo nos armazens do usuario
+    sql, params = _sql_planejamento_aquisicao(request.args)
+    return _consulta_generica(sql, params)
+
+
+@app.route("/api/planejamento_aquisicao/produtos")
+def api_planejamento_aquisicao_produtos():
+    # botao Inserir itens - busca por cod. seplag, cod. produto ou nome e devolve no mesmo formato
+    # da lista gerada (consumo/estoque calculados pro mesmo escopo de armazem)
+    termo = (request.args.get("termo") or "").strip()
+    if not termo:
+        return jsonify([])
+    try:
+        candidatos = run_query("""
+            SELECT produto FROM public.produto
+            WHERE codigoreferencia ILIKE %s OR produto::text = %s OR nome ILIKE %s
+            ORDER BY (TRIM(codigoreferencia) = %s) DESC, nome
+            LIMIT 20
+        """, [f"%{termo}%", termo, f"%{termo}%", termo])
+        if not candidatos:
+            return jsonify([])
+        sql, params = _sql_planejamento_aquisicao(request.args, [int(linha["produto"]) for linha in candidatos])
+        return jsonify(run_query(sql, params))
+    except Exception as erro:
+        return jsonify({"erro": str(erro)}), 500
+
+
+def _gerar_pdf_planejamento_aquisicao(itens, filtros):
+    # mesma lista da tela (com as quantidades ajustadas) + os 4 cards. sem a descricao longa do
+    # produto pra caber as colunas de valor numa pagina paisagem (mesmo corte do pdf de vencidos)
+    linhas_tabela = []
+    total_quantidade = total_mensal = 0.0
+    for item in itens:
+        quantidade = float(item.get("quantidade") or 0)
+        valor_unitario = float(item.get("valor_unitario") or 0)
+        total_quantidade += quantidade
+        total_mensal += quantidade * valor_unitario
+        # texto do produto vai pra Paragraph do reportlab, que le marcacao - "&"/"<" no nome quebraria
+        texto = lambda campo: html.escape(str(item.get(campo) or ""))
+        linhas_tabela.append([
+            texto("cod_seplag"),
+            texto("nome_produto"),
+            texto("classe"),
+            texto("sub_grupo"),
+            texto("apresentacao"),
+            _formatar_quantidade_pdf(item.get("consumo_6m")),
+            _formatar_quantidade_pdf(item.get("media_mensal")),
+            _formatar_quantidade_pdf(item.get("total_estoque")),
+            _formatar_quantidade_pdf(quantidade),
+            _formatar_moeda_pdf(valor_unitario),
+            _formatar_moeda_pdf(quantidade * valor_unitario),
+            _formatar_quantidade_pdf(quantidade * 12),
+            _formatar_moeda_pdf(quantidade * 12 * valor_unitario),
+        ])
+
+    rotulos_filtro = [("classe", "Classe"), ("subgrupo", "Subgrupo"), ("armazem", "Armazém")]
+    descricao_filtros = [f"{rotulo}: {html.escape(str(filtros[chave]))}" for chave, rotulo in rotulos_filtro if filtros.get(chave)]
+    linhas_cabecalho = [
+        f"<b>Gerado em:</b> {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
+        f"<b>Filtros aplicados:</b> {' · '.join(descricao_filtros) if descricao_filtros else 'Nenhum (todos os itens dos armazéns do usuário)'}",
+        "<b>Qtde. Sugerida:</b> média mensal de consumo dos últimos 6 meses (ajustável na tela) · Anual = 12 × mensal",
+    ]
+    cards = [
+        ("Número de Itens", f"{len(itens):,}".replace(",", ".")),
+        ("Quantidade Total", _formatar_quantidade_pdf(total_quantidade)),
+        ("Valor Total Mensal", _formatar_moeda_pdf(total_mensal)),
+        ("Valor Total Anual", _formatar_moeda_pdf(total_mensal * 12)),
+    ]
+    return _montar_pdf_relatorio(
+        "Planejamento de Aquisição",
+        linhas_cabecalho,
+        [{
+            "cabecalho_tabela": [
+                "Cód. Seplag", "Nome do Produto", "Classe", "Sub Grupo", "Apres.", "Consumo 6 Meses",
+                "Média Mensal", "Estoque Atual", "Qtde. Sugerida", "Valor Unitário", "Valor Mensal",
+                "Qtde. Anual", "Valor Anual",
+            ],
+            "linhas_tabela": linhas_tabela,
+            "largura_colunas": [1.6 * cm, 4.2 * cm, 2.2 * cm, 2.1 * cm, 1.3 * cm, 1.8 * cm, 1.8 * cm, 1.8 * cm,
+                                1.8 * cm, 1.9 * cm, 2.3 * cm, 1.9 * cm, 2.5 * cm],
+            "linha_total": ["Total Geral", "", "", "", "", "", "", "", _formatar_quantidade_pdf(total_quantidade), "",
+                            _formatar_moeda_pdf(total_mensal), _formatar_quantidade_pdf(total_quantidade * 12),
+                            _formatar_moeda_pdf(total_mensal * 12)],
+        }],
+        cards=cards,
+    )
+
+
+@app.route("/api/planejamento_aquisicao/exportar", methods=["POST"])
+def api_planejamento_aquisicao_exportar():
+    # lista vem da tela (com as quantidades que o usuario ajustou e os itens que inseriu) - o
+    # servidor so monta o arquivo
+    dados = request.get_json(force=True)
+    formato = dados.get("formato")
+    itens = dados.get("itens") or []
+    cabecalho = [
+        "Cód. Seplag", "Nome do Produto", "Descrição", "Classe", "Sub Grupo",
+        "Apresentação", "Consumo 6 Meses", "Média Mensal", "Estoque Atual", "Qtde. Sugerida",
+        "Valor Unitário", "Valor Mensal", "Qtde. Anual", "Valor Anual",
+    ]
+    linhas = []
+    for item in itens:
+        try:
+            quantidade = float(item.get("quantidade") or 0)
+            valor_unitario = float(item.get("valor_unitario") or 0)
+        except (TypeError, ValueError):
+            return jsonify({"erro": "Quantidade inválida"}), 400
+        # qtde. sugerida eh mensal - anual = 12x (mesma conta da tela)
+        linhas.append([
+            item.get("cod_seplag") or "",
+            item.get("nome_produto") or "", item.get("descricao_produto") or "", item.get("classe") or "",
+            item.get("sub_grupo") or "", item.get("apresentacao") or "",
+            _formatar_quantidade_pdf(item.get("consumo_6m")), _formatar_quantidade_pdf(item.get("media_mensal")),
+            _formatar_quantidade_pdf(item.get("total_estoque")), _formatar_quantidade_pdf(quantidade),
+            _formatar_moeda_pdf(valor_unitario), _formatar_moeda_pdf(quantidade * valor_unitario),
+            _formatar_quantidade_pdf(quantidade * 12), _formatar_moeda_pdf(quantidade * 12 * valor_unitario),
+        ])
+
+    if formato == "pdf":
+        if not REPORTLAB_DISPONIVEL:
+            return jsonify({"erro": "Geração de PDF indisponível: biblioteca reportlab não instalada no servidor."}), 500
+        return Response(
+            _gerar_pdf_planejamento_aquisicao(itens, dados.get("filtros") or {}),
+            mimetype="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=planejamento_aquisicao.pdf"},
+        )
+    if formato == "xlsx":
+        if not OPENPYXL_DISPONIVEL:
+            return jsonify({"erro": "Geração de planilha indisponível: biblioteca openpyxl não instalada no servidor."}), 500
+        return Response(
+            _escrever_xlsx(cabecalho, linhas),
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=planejamento_aquisicao.xlsx"},
+        )
+    return Response(
+        _escrever_csv(cabecalho, linhas).encode("utf-8"),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=planejamento_aquisicao.csv"},
+    )
+
+
+def _migracoes_de_inicio():
+    # roda ao importar o modulo (python app.py ou gunicorn) - idempotente, e banco fora do ar so
+    # avisa no log em vez de derrubar o servidor
+    try:
+        if not _erro_conexao_banco() and _schema_sist_logistica_existe():
+            _migrar_chave_aquisicoes()
+    except Exception as erro:
+        print(f"migracao aquisicoes -> estoque_critico nao rodou: {erro}")
+
+
+# testes automatizados importam o app sem banco (APP_SEM_MIGRACAO_INICIO=1)
+if os.environ.get("APP_SEM_MIGRACAO_INICIO") != "1":
+    _migracoes_de_inicio()
+
+
 if __name__ == "__main__":
-    # fogo aceso, sistema roda
-    app.run(host="0.0.0.0", debug=True, port=5000)
+    # servidor de desenvolvimento. debug (recarrega ao salvar + depurador interativo) so com
+    # APP_DEBUG=1 - nunca em producao: o depurador do werkzeug executa codigo pelo navegador.
+    # producao usa gunicorn (ver Dockerfile)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("APP_PORT", "5000")),
+        debug=os.environ.get("APP_DEBUG") == "1",
+        # recarrega ao salvar arquivo, sem ligar o depurador (docker-compose de desenvolvimento)
+        use_reloader=os.environ.get("APP_RELOAD") == "1" or os.environ.get("APP_DEBUG") == "1",
+    )

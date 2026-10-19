@@ -159,16 +159,16 @@
       const linhas = dados
         .map(
           (linha) => `
-        <tr class="linha-produto" data-produto="${linha.cod_produto}">
-          <td>${linha.cod_seplag ?? ""}</td>
-          <td>${linha.cod_almox ?? ""}</td>
-          <td>${linha.cod_produto ?? ""}</td>
-          <td class="celula-quebra">${linha.nome_produto ?? ""}</td>
-          <td class="celula-quebra">${linha.descricao_produto ?? ""}</td>
-          <td class="celula-quebra">${linha.classe ?? ""}</td>
-          <td class="celula-quebra">${linha.sub_grupo ?? ""}</td>
-          <td>${linha.apresentacao ?? ""}</td>
-          <td>${linha.procedimento_sus ?? ""}</td>
+        <tr class="linha-produto" data-produto="${escaparHtml(linha.cod_produto)}">
+          <td>${escaparHtml(linha.cod_seplag)}</td>
+          <td>${escaparHtml(linha.cod_almox)}</td>
+          <td>${escaparHtml(linha.cod_produto)}</td>
+          <td class="celula-quebra">${escaparHtml(linha.nome_produto)}</td>
+          <td class="celula-quebra">${escaparHtml(linha.descricao_produto)}</td>
+          <td class="celula-quebra">${escaparHtml(linha.classe)}</td>
+          <td class="celula-quebra">${escaparHtml(linha.sub_grupo)}</td>
+          <td>${escaparHtml(linha.apresentacao)}</td>
+          <td>${escaparHtml(linha.procedimento_sus)}</td>
         </tr>`
         )
         .join("");
@@ -229,7 +229,7 @@
           linhaLote.addEventListener("click", () => alternarNotas(linhaLote, linhaLote.dataset.lote));
         });
       } catch (erro) {
-        trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Erro ao carregar lotes: ${erro}</p></td>`;
+        trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Erro ao carregar lotes: ${escaparHtml(erro)}</p></td>`;
       }
     }
 
@@ -258,7 +258,7 @@
         const notas = await resp.json();
         trDetalhe.innerHTML = `<td colspan="${numeroColunas}">${montarTabelaNotas(notas)}</td>`;
       } catch (erro) {
-        trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Erro ao carregar notas fiscais: ${erro}</p></td>`;
+        trDetalhe.innerHTML = `<td colspan="${numeroColunas}"><p class="msg-vazio">Erro ao carregar notas fiscais: ${escaparHtml(erro)}</p></td>`;
       }
     }
 
@@ -277,10 +277,10 @@
         .map(
           (item) => `
         <tr>
-          <td>${item.numero_nota ?? ""}</td>
-          <td>${item.serie ?? ""}</td>
-          <td>${item.data_emissao ?? ""}</td>
-          <td>${item.observacao ?? ""}</td>
+          <td>${escaparHtml(item.numero_nota)}</td>
+          <td>${escaparHtml(item.serie)}</td>
+          <td>${escaparHtml(item.data_emissao)}</td>
+          <td>${escaparHtml(item.observacao)}</td>
         </tr>`
         )
         .join("");
@@ -323,12 +323,12 @@
       const linhas = lotes
         .map(
           (item) => `
-        <tr class="linha-lote" data-lote="${item.lote_id}">
+        <tr class="linha-lote" data-lote="${escaparHtml(item.lote_id)}">
           <td>${formatarCnpj(item.cnpj)}</td>
-          <td>${item.fornecedor ?? ""}</td>
-          <td>${item.nome_fantasia ?? ""}</td>
-          <td>${item.lote ?? ""}</td>
-          <td>${item.validade ?? ""}</td>
+          <td>${escaparHtml(item.fornecedor)}</td>
+          <td>${escaparHtml(item.nome_fantasia)}</td>
+          <td>${escaparHtml(item.lote)}</td>
+          <td>${escaparHtml(item.validade)}</td>
         </tr>`
         )
         .join("");
@@ -407,7 +407,7 @@
         renderizarProdutos(resultado.dados);
         renderizarPaginacao(resultado.total ?? 0, resultado.pagina ?? pagina, resultado.tamanho_pagina ?? 20);
       } catch (erro) {
-        container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${erro}</p>`;
+        container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${escaparHtml(erro)}</p>`;
         document.getElementById("areaPaginacao").innerHTML = "";
       }
     }
@@ -449,7 +449,7 @@
         }
 
         caixaSugestoes.innerHTML = dados
-          .map((item) => `<div class="item-sugestao" data-nome="${item.nome_produto}">${item.nome_produto}</div>`)
+          .map((item) => `<div class="item-sugestao" data-nome="${escaparHtml(item.nome_produto)}">${escaparHtml(item.nome_produto)}</div>`)
           .join("");
         caixaSugestoes.classList.add("aberto");
 
@@ -497,7 +497,7 @@
         }
 
         caixaSugestoesProcedimentoSus.innerHTML = dados
-          .map((item) => `<div class="item-sugestao" data-valor="${item.procedimento_sus}">${item.procedimento_sus}</div>`)
+          .map((item) => `<div class="item-sugestao" data-valor="${escaparHtml(item.procedimento_sus)}">${escaparHtml(item.procedimento_sus)}</div>`)
           .join("");
         caixaSugestoesProcedimentoSus.classList.add("aberto");
 
@@ -547,7 +547,7 @@
         caixaSugestoesDescricao.innerHTML = dados
           .map(
             (item) =>
-              `<div class="item-sugestao" data-descricao="${item.descricao_produto.replace(/"/g, "&quot;")}">${item.descricao_produto}</div>`
+              `<div class="item-sugestao" data-descricao="${escaparHtml(item.descricao_produto)}">${escaparHtml(item.descricao_produto)}</div>`
           )
           .join("");
         caixaSugestoesDescricao.classList.add("aberto");

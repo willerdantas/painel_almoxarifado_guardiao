@@ -506,7 +506,7 @@ body {
 
 /* variante de .campo-largo sem flex-grow - usada quando varios campos precisam ficar com
    exatamente o mesmo tamanho entre si (ex.: Descrição/Classe/Subgrupo em estoque.html e
-   aquisicoes.html), onde flex-grow deixaria cada um com largura diferente dependendo de quantos
+   estoque_critico.html), onde flex-grow deixaria cada um com largura diferente dependendo de quantos
    campos caem na mesma linha */
 .campo-largo-fixo {
   flex: 0 1 280px;
@@ -1116,7 +1116,7 @@ table.tabela-dados tr:hover {
   background: #c8cccf;
 }
 
-/* produto do Hospital sem ata/contrato valido (estoque.html/aquisicoes.html) - vermelho claro
+/* produto do Hospital sem ata/contrato valido (estoque.html/estoque_critico.html) - vermelho claro
    pra chamar atencao na lista, :hover um pouco mais escuro pra nao sumir o sinalizador */
 tr.linha-sem-contrato {
   background: #fbdede;
@@ -1124,6 +1124,16 @@ tr.linha-sem-contrato {
 
 tr.linha-sem-contrato:hover {
   background: #f6c7c7;
+}
+
+/* produto do Hospital com ata/contrato vigente mas saldo de atas E de contratos zerado
+   (estoque.html / estoque_critico.html) - amarelo claro, mesmo esquema do vermelho acima */
+tr.linha-contrato-sem-saldo {
+  background: #fff6cc;
+}
+
+tr.linha-contrato-sem-saldo:hover {
+  background: #ffeeb0;
 }
 
 .linha-lotes td,
@@ -1242,7 +1252,7 @@ tr.linha-sem-contrato:hover {
   color: var(--azul-escuro);
   font-size: 13px;
   font-weight: 600;
-  cursor: pointer;c8cccf
+  cursor: pointer;
 }
 
 .botao-pagina:hover:not(:disabled) {
@@ -1767,4 +1777,190 @@ body.pagina-dashboard .duas-tabelas table.tabela-dados td {
     text-align: left;
     padding: 10px;
   }
+}
+
+/* importacao da planilha de processos SESA (processos_aquisicao.html) */
+.msg-ajuda-importacao {
+  font-size: 12px;
+  color: #667;
+  margin: 0;
+}
+
+.resumo-importacao {
+  margin-bottom: 12px;
+}
+
+.resumo-importacao-titulo {
+  font-size: 12px;
+  color: #667;
+  margin: 0 0 8px;
+}
+
+.resumo-importacao-grupos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* botoes de grupo de aquisicao (processos_aquisicao.html) - filtram as duas listas */
+.grupo-botoes-grupo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.botao-grupo {
+  padding: 6px 14px;
+  border: 1px solid var(--cinza-borda);
+  border-radius: 16px;
+  background: var(--branco);
+  color: var(--azul-escuro);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.botao-grupo:hover {
+  background: var(--cinza-claro);
+}
+
+.botao-grupo.ativo {
+  background: var(--vermelho);
+  border-color: var(--vermelho);
+  color: var(--branco);
+}
+
+.tabela-rolagem-horizontal {
+  overflow-x: auto;
+}
+
+/* cadastro manual de processo (processos_aquisicao.html - Processos Hospital) */
+.titulo-form-processo {
+  margin: 0;
+  font-size: 15px;
+  color: var(--azul-escuro);
+}
+
+.botao-excluir-processo {
+  margin-left: auto;
+  color: var(--vermelho);
+}
+
+/* atas_contratos: numero do contrato/ata original quando o aditivo atual tem outro numero */
+.numero-original {
+  display: block;
+  font-size: 11px;
+  color: #889;
+}
+
+/* situacao do processo de pagamento (pagamentos.html) */
+.tag-situacao {
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: var(--branco);
+}
+
+.tag-situacao-a_empenhar {
+  background: var(--laranja);
+}
+
+.tag-situacao-empenhado {
+  background: var(--azul-claro);
+}
+
+.tag-situacao-pago {
+  background: #2e7d4f;
+}
+
+.tag-situacao-cancelado {
+  background: #8a8f96;
+}
+
+/* texto explicativo acima das secoes de Processos de Pagamento */
+.ajuda-pagamentos {
+  margin: 0 0 12px;
+}
+
+/* Processos de Pagamento: larguras minimas das colunas de texto longo (a tabela larga espremia
+   as duas pra ~96px) */
+table.tabela-dados td.celula-fornecedor {
+  min-width: 250px;
+}
+
+table.tabela-dados td.celula-paciente {
+  min-width: 150px;
+}
+
+/* Processos de Pagamento: cada nº de ordem de compra (pedidodestaque) numa linha propria */
+.ordem-compra {
+  display: block;
+  white-space: nowrap;
+}
+
+/* prioridade do processo de pagamento (pagamentos.html) - mesmo formato da tag de situacao */
+.tag-prioridade {
+  display: inline-flex;
+  justify-content: center;
+  min-width: 22px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.tag-prioridade-1 {
+  background: var(--vermelho);
+  color: var(--branco);
+}
+
+.tag-prioridade-2 {
+  background: #fff3b0;
+  color: #000;
+}
+
+.tag-prioridade-3 {
+  background: #2e7d4f;
+  color: var(--branco);
+}
+
+/* area vinculada do processo de pagamento (pagamentos.html) - mesmo formato da prioridade */
+.tag-area {
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: var(--cinza-claro);
+  color: var(--azul-escuro);
+}
+
+.tag-area-hemodinamica {
+  background: #d6e9fb;
+  color: #0b3d6e;
+}
+
+.tag-area-marcapasso {
+  background: #9ca3ab;
+  color: #000;
+}
+
+.tag-area-assistencia-geral {
+  background: #d7f2dd;
+  color: #1b5e2e;
+}
+
+.tag-area-centro-cirurgico {
+  background: #fbdede;
+  color: #8b1a12;
+}
+
+.tag-area-estomaterapia {
+  background: #fff3b0;
+  color: #000;
 }

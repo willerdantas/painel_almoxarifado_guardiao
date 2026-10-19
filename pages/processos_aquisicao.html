@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSYSTEM | Processos de Aquisição</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <div id="menuContainer"></div>
+
+    <main class="conteudo">
+      <div class="topo-pagina">
+        <h1>Processos de Aquisição</h1>
+        <div class="topo-direita">
+          <div class="area-usuario">
+            <span class="usuario-logado" id="usuarioLogado"></span>
+            <button class="botao-sair" id="botaoSairTopo">Sair</button>
+          </div>
+          <img src="/static/logo_insystem.png" alt="INSYSTEM" class="logo-topo" />
+        </div>
+      </div>
+
+      <section class="cartao filtros">
+        <form id="formFiltros" class="grade-filtros">
+          <div class="campo-filtro campo-curto">
+            <label for="filtroNumeroProcesso">Nº do Processo</label>
+            <input type="text" id="filtroNumeroProcesso" placeholder="Ex.: 24001.020927/2024-08" />
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroCodSeplag">Cód. Seplag</label>
+            <input type="text" id="filtroCodSeplag" placeholder="Ex.: 1563306" />
+          </div>
+
+          <div class="campo-filtro campo-autocompletar campo-largo">
+            <label for="filtroDescricao">Descrição</label>
+            <input type="text" id="filtroDescricao" placeholder="Ex.: Agulha descartável" autocomplete="off" />
+            <div class="sugestoes" id="sugestoesDescricao"></div>
+          </div>
+
+          <div class="campo-filtro campo-curto">
+            <label for="filtroStatus">Status</label>
+            <select id="filtroStatus">
+              <option value="">Todos</option>
+            </select>
+          </div>
+
+          <div class="campo-filtro campo-acao">
+            <div class="grupo-botoes-filtro">
+              <button type="submit" class="botao-filtrar">Filtrar</button>
+              <button type="button" class="botao-resetar" id="botaoResetarFiltros">Resetar</button>
+            </div>
+          </div>
+        </form>
+
+        <div class="grupo-botoes-grupo" id="botoesGrupoAquisicao"></div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Processos SESA</h2>
+          <span class="contador-secao" id="contadorProcessosSesa">0</span>
+          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoAbrirImportacaoSesa">+ Importar Planilha</button>
+        </div>
+
+        <form id="formImportacaoSesa" class="form-cadastro oculto">
+          <div class="campo-filtro campo-largo">
+            <label for="arquivoPlanilhaSesa">Planilha CONTROLE GERAL POR ITENS (.xlsx)</label>
+            <input type="file" id="arquivoPlanilhaSesa" accept=".xlsx" required />
+          </div>
+          <p class="msg-ajuda-importacao">
+            Cada aba vira um grupo de aquisição (MED, MMH, OPME, ODONTO, NUT, GASES, LAB, EQUIP, SERV).
+            As demais abas são ignoradas. A importação inclui itens novos e atualiza os que mudaram;
+            nada é excluído (item que sair da planilha continua no sistema).
+          </p>
+          <div class="grupo-botoes-filtro">
+            <button type="submit" class="botao-filtrar" id="botaoImportarSesa">Importar</button>
+            <button type="button" class="botao-resetar" id="botaoCancelarImportacaoSesa">Cancelar</button>
+          </div>
+          <p class="erro-login" id="mensagemImportacaoSesa"></p>
+        </form>
+
+        <div class="resumo-importacao oculto" id="resumoImportacaoSesa"></div>
+
+        <div id="areaProcessosSesa">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+        <div class="paginacao" id="areaPaginacaoSesa"></div>
+      </section>
+
+      <section class="cartao secao-pedidos">
+        <div class="secao-cabecalho">
+          <h2>Processos Hospital</h2>
+          <span class="contador-secao" id="contadorProcessosHospital">0</span>
+          <button type="button" class="botao-filtrar secao-cabecalho-botao-fim" id="botaoNovoProcessoManual">+ Novo Processo</button>
+        </div>
+        <p class="msg-ajuda-importacao">
+          Itens cujo Código SRP bate com o Cód. Seplag de algum produto entram aqui automaticamente.
+          Use Incluir/Remover pra ajustar, ou + Novo Processo pra cadastrar um processo à mão.
+        </p>
+
+        <form id="formEdicaoProcesso" class="form-cadastro oculto">
+          <h3 class="titulo-form-processo">Editar processo <span id="edicaoNumeroProcesso"></span></h3>
+          <p class="msg-ajuda-importacao">
+            Processo da planilha SESA: a alteração fica guardada no sistema e continua valendo depois de reimportar a planilha.
+          </p>
+          <div class="grade-filtros">
+            <div class="campo-filtro campo-curto">
+              <label for="edicaoTipo">Tipo de Aquisição</label>
+              <input type="text" id="edicaoTipo" />
+            </div>
+            <div class="campo-filtro campo-curto">
+              <label for="edicaoStatus">Status</label>
+              <select id="edicaoStatus"></select>
+            </div>
+            <div class="campo-filtro campo-largo">
+              <label for="edicaoEtapa">Etapa</label>
+              <input type="text" id="edicaoEtapa" />
+            </div>
+            <div class="campo-filtro campo-curto">
+              <label for="edicaoPregao">Pregão</label>
+              <input type="text" id="edicaoPregao" />
+            </div>
+            <div class="campo-filtro campo-curto">
+              <label for="edicaoAta">Ata</label>
+              <input type="text" id="edicaoAta" />
+            </div>
+            <div class="campo-filtro campo-curto">
+              <label for="edicaoVigencia">Vigência</label>
+              <input type="text" id="edicaoVigencia" placeholder="Ex.: 07/10/2026 - 06/10/2027" />
+            </div>
+            <div class="campo-filtro campo-curto">
+              <label for="edicaoDataAbertura">Data de Abertura</label>
+              <input type="date" id="edicaoDataAbertura" />
+            </div>
+          </div>
+          <div class="grupo-botoes-filtro">
+            <button type="submit" class="botao-filtrar" id="botaoSalvarEdicaoProcesso">Salvar</button>
+            <button type="button" class="botao-resetar" id="botaoCancelarEdicaoProcesso">Cancelar</button>
+          </div>
+          <p class="erro-login" id="erroEdicaoProcesso"></p>
+        </form>
+
+        <form id="formProcessoManual" class="form-cadastro oculto">
+          <h3 class="titulo-form-processo" id="tituloFormProcessoManual">Novo processo</h3>
+          <div class="grade-filtros">
+            <div class="campo-filtro campo-curto">
+              <label for="manualProcesso">Nº do Processo *</label>
+              <input type="text" id="manualProcesso" placeholder="Ex.: 24001.012345/2026-00" required />
+            </div>
+            <div class="campo-filtro campo-curto">
+              <label for="manualGrupo">Grupo *</label>
+              <select id="manualGrupo" required>
+                <option value="">Selecione</option>
+              </select>
+            </div>
+            <div class="campo-filtro campo-curto">
+              <label for="manualTipo">Tipo de Aquisição</label>
+              <input type="text" id="manualTipo" placeholder="Ex.: ARP, DISPENSA" />
+            </div>
+            <div class="campo-filtro campo-curto">
+              <label for="manualStatus">Status</label>
+              <select id="manualStatus">
+                <option value="">-</option>
+                <option value="ANDAMENTO">ANDAMENTO</option>
+                <option value="FINALIZADO">FINALIZADO</option>
+              </select>
+            </div>
+            <div class="campo-filtro campo-largo">
+              <label for="manualEtapa">Etapa</label>
+              <input type="text" id="manualEtapa" placeholder="Ex.: PESQUISA DE MERCADO" />
+            </div>
+            <div class="campo-filtro campo-curto">
+              <label for="manualDataAbertura">Data de Abertura</label>
+              <input type="date" id="manualDataAbertura" />
+            </div>
+          </div>
+
+          <div class="grade-filtros">
+            <div class="campo-filtro campo-curto">
+              <label for="manualBuscaSeplag">Pesquisar item pelo Cód. Seplag</label>
+              <input type="text" id="manualBuscaSeplag" placeholder="Ex.: 371891" autocomplete="off" />
+            </div>
+            <div class="campo-filtro campo-acao">
+              <button type="button" class="botao-resetar" id="botaoBuscarSeplagManual">Pesquisar</button>
+            </div>
+          </div>
+          <div id="resultadoBuscaSeplagManual"></div>
+
+          <p class="rotulo-paginas">Itens do processo</p>
+          <div id="itensProcessoManual"></div>
+
+          <div class="grupo-botoes-filtro">
+            <button type="submit" class="botao-filtrar" id="botaoSalvarProcessoManual">Salvar Processo</button>
+            <button type="button" class="botao-resetar" id="botaoCancelarProcessoManual">Cancelar</button>
+            <button type="button" class="botao-resetar botao-excluir-processo oculto" id="botaoExcluirProcessoManual">Excluir Processo</button>
+          </div>
+          <p class="erro-login" id="erroProcessoManual"></p>
+        </form>
+        <div id="areaProcessosHospital">
+          <p class="msg-vazio">Carregando dado, aguenta ai...</p>
+        </div>
+        <div class="paginacao" id="areaPaginacaoHospital"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/js/sidebar.js"></script>
+  <script src="/static/js/tabela.js"></script>
+  <script>
+    // caverna so abre pra quem tem crachá
+    protegerPagina();
+    iniciarMenu("processos_aquisicao");
+
+    // sigla do grupo selecionado nos botoes de grupo ("" = todos) - vale pras duas listas
+    let grupoSelecionado = "";
+    const paginaAtual = { sesa: 1, hospital: 1 };
+
+    function montarQueryFiltros() {
+      const params = new URLSearchParams();
+      const processo = document.getElementById("filtroNumeroProcesso").value.trim();
+      const codSeplag = document.getElementById("filtroCodSeplag").value.trim();
+      const status = document.getElementById("filtroStatus").value;
+      const descricao = document.getElementById("filtroDescricao").value.trim();
+
+      if (processo) params.set("processo", processo);
+      if (codSeplag) params.set("cod_seplag", codSeplag);
+      if (status) params.set("status", status);
+      if (descricao) params.set("descricao", descricao);
+      if (grupoSelecionado) params.set("grupo", grupoSelecionado);
+      return params;
+    }
+
+    // ---- botoes de grupo de aquisicao ----
+    async function iniciarBotoesGrupo() {
+      const area = document.getElementById("botoesGrupoAquisicao");
+      let grupos = [];
+      try {
+        const resp = await fetch("/api/grupos_aquisicao");
+        grupos = await resp.json();
+      } catch (e) {
+        // sem servidor fica so o "Todos"
+      }
+
+      document.getElementById("manualGrupo").innerHTML = '<option value="">Selecione</option>' + grupos
+        .map((g) => `<option value="${escaparHtml(g.sigla)}">${escaparHtml(g.nome)}</option>`)
+        .join("");
+
+      area.innerHTML = [{ sigla: "", nome: "Todos" }, ...grupos]
+        .map((g) => `<button type="button" class="botao-grupo${g.sigla === grupoSelecionado ? " ativo" : ""}" data-sigla="${escaparHtml(g.sigla)}">${escaparHtml(g.nome)}</button>`)
+        .join("");
+
+      area.querySelectorAll(".botao-grupo").forEach((botao) => {
+        botao.addEventListener("click", () => {
+          grupoSelecionado = botao.dataset.sigla;
+          area.querySelectorAll(".botao-grupo").forEach((b) => b.classList.toggle("ativo", b === botao));
+          buscarTudo();
+        });
+      });
+    }
+
+    // status que existem na planilha importada (ANDAMENTO, FINALIZADO...)
+    async function iniciarFiltroStatus() {
+      try {
+        const resp = await fetch("/api/processos_sesa/status");
+        const lista = await resp.json();
+        const select = document.getElementById("filtroStatus");
+        const atual = select.value;
+        select.innerHTML = '<option value="">Todos</option>' + lista
+          .map((s) => `<option value="${escaparHtml(s)}">${escaparHtml(s)}</option>`)
+          .join("");
+        select.value = lista.includes(atual) ? atual : "";
+      } catch (e) {
+        // sem servidor fica so o "Todos"
+      }
+    }
+
+    // ---- listas ----
+    // paginador compacto: anterior, um punhado de numeros perto da atual, proxima
+    function renderizarPaginacao(total, pagina, tamanhoPagina, areaId, aoTrocarPagina) {
+      const area = document.getElementById(areaId);
+      const totalPaginas = Math.max(Math.ceil(total / tamanhoPagina), 1);
+
+      if (totalPaginas <= 1) {
+        area.innerHTML = "";
+        return;
+      }
+
+      const inicio = Math.max(pagina - 2, 1);
+      const fim = Math.min(inicio + 4, totalPaginas);
+
+      let botoes = `<button type="button" class="botao-pagina" data-pagina="${pagina - 1}" ${pagina <= 1 ? "disabled" : ""}>‹ Anterior</button>`;
+      for (let n = inicio; n <= fim; n++) {
+        botoes += `<button type="button" class="botao-pagina ${n === pagina ? "ativo" : ""}" data-pagina="${n}">${n}</button>`;
+      }
+      botoes += `<button type="button" class="botao-pagina" data-pagina="${pagina + 1}" ${pagina >= totalPaginas ? "disabled" : ""}>Próxima ›</button>`;
+
+      area.innerHTML = botoes;
+      area.querySelectorAll(".botao-pagina").forEach((botao) => {
+        botao.addEventListener("click", () => aoTrocarPagina(Number(botao.dataset.pagina)));
+      });
+    }
+
+    // Editar processo (lista Hospital) so aparece pra Administrador e Compras - o servidor confere de novo
+    let podeEditarProcesso = false;
+
+    async function carregarPermissoes() {
+      try {
+        const resp = await fetch(`/api/processos_hospital/permissoes?usuario_logado=${encodeURIComponent(identificacaoLogada() || "")}`);
+        podeEditarProcesso = (await resp.json()).pode_editar === true;
+      } catch (e) {
+        podeEditarProcesso = false;
+      }
+    }
+    // processo aberto (itens a mostra) em cada lista - reabre sozinho quando a lista recarrega
+    const processoAberto = { sesa: null, hospital: null };
+
+    // seta vermelha em L (90 graus) que indica "isso pertence a linha de cima"
+    const SETA_HIERARQUIA = `
+      <svg class="seta-hierarquia" width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M8 0 V12 A8 8 0 0 0 16 20 H22" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+        <path d="M18 16 L23 20 L18 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>`;
+
+    function renderizarProcessos(dados, lista) {
+      const container = document.getElementById(lista === "sesa" ? "areaProcessosSesa" : "areaProcessosHospital");
+
+      if (!Array.isArray(dados) || dados.length === 0) {
+        container.innerHTML = '<p class="msg-vazio">Nenhum processo encontrado.</p>';
+        return;
+      }
+
+      const comEditar = lista === "hospital" && podeEditarProcesso;
+      const linhas = dados
+        .map(
+          (processo) => `
+        <tr class="linha-produto linha-processo" data-processo="${escaparHtml(processo.processo)}" data-manual="${escaparHtml(processo.processohospitalmanual)}">
+          <td>${escaparHtml(processo.processo) || "(sem processo)"}</td>
+          <td>${escaparHtml(processo.grupo)}</td>
+          <td>${escaparHtml(processo.tipo_aquisicao)}</td>
+          <td>${escaparHtml(processo.status)}</td>
+          <td class="celula-quebra">${escaparHtml(processo.etapa)}</td>
+          <td>${escaparHtml(processo.pregao)}</td>
+          <td>${escaparHtml(processo.ata)}</td>
+          <td>${escaparHtml(processo.vigencia)}</td>
+          <td>${escaparHtml(processo.data_abertura)}</td>
+          <td>${escaparHtml(processo.data_atualizacao)}</td>
+          <td>${Number(processo.itens).toLocaleString("pt-BR")}</td>
+          ${comEditar ? '<td><button type="button" class="botao-acao-produto botao-editar-processo">Editar</button></td>' : ""}
+        </tr>`
+        )
+        .join("");
+
+      container.innerHTML = `
+        <div class="tabela-rolagem-horizontal">
+          <table class="tabela-dados">
+            <thead>
+              <tr>
+                <th>Processo</th>
+                <th>Grupo</th>
+                <th>Tipo</th>
+                <th>Status</th>
+                <th>Etapa</th>
+                <th>Pregão</th>
+                <th>Ata</th>
+                <th>Vigência</th>
+                <th>Dt. Abertura</th>
+                <th>Dt. Atualização</th>
+                <th>Itens</th>
+                ${comEditar ? "<th></th>" : ""}
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+
+      container.querySelectorAll(".linha-processo").forEach((linha) => {
+        linha.addEventListener("click", () => alternarItensProcesso(linha, lista));
+        linha.querySelector(".botao-editar-processo")?.addEventListener("click", (ev) => {
+          // nao abre/fecha os itens junto
+          ev.stopPropagation();
+          if (linha.dataset.manual) abrirFormProcessoManual(Number(linha.dataset.manual));
+          else abrirFormEdicaoProcesso(linha.dataset.processo);
+        });
+        if (linha.dataset.processo === processoAberto[lista]) abrirItensProcesso(linha, lista);
+      });
+    }
+
+    function montarTabelaItens(itens, lista) {
+      if (!Array.isArray(itens) || itens.length === 0) {
+        return '<p class="msg-vazio">Nenhum item encontrado.</p>';
+      }
+      const textoBotao = lista === "sesa" ? "Incluir" : "Remover";
+      // so a lista Hospital traz estoque e saldo de ata/contrato (item com produto cadastrado)
+      const comSaldos = lista === "hospital";
+      const linhas = itens
+        .map(
+          (item) => `
+        <tr>
+          <td>${escaparHtml(item.numero_item)}</td>
+          <td>${escaparHtml(item.codigo_srp)}</td>
+          <td class="celula-quebra">${escaparHtml(item.descricao)}</td>
+          <td class="celula-quebra">${escaparHtml(item.apresentacao)}</td>
+          ${comSaldos ? `
+          <td>${formatarQuantidade(item.total_estoque)}</td>
+          <td>${formatarQuantidade(item.saldo_ata)}</td>
+          <td>${formatarQuantidade(item.saldo_contrato)}</td>` : ""}
+          <td><button type="button" class="botao-acao-produto botao-mover-processo" data-item="${escaparHtml(item.item_id)}" data-origem="${escaparHtml(item.origem)}">${textoBotao}</button></td>
+        </tr>`
+        )
+        .join("");
+
+      return `
+        <div class="bloco-hierarquia">
+          ${SETA_HIERARQUIA}
+          <table class="tabela-lotes">
+            <thead>
+              <tr>
+                <th>Nº Item</th>
+                <th>Código SRP</th>
+                <th>Descrição</th>
+                <th>Apres.</th>
+                ${comSaldos ? "<th>Estoque</th><th>Saldo em Atas</th><th>Saldo em Contratos</th>" : ""}
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // clique na linha do processo abre/fecha os itens logo abaixo - um aberto por vez em cada lista
+    function alternarItensProcesso(linha, lista) {
+      const jaAberto = linha.classList.contains("linha-produto-ativa");
+      fecharItensProcesso(lista);
+      if (!jaAberto) abrirItensProcesso(linha, lista);
+    }
+
+    function fecharItensProcesso(lista) {
+      const container = document.getElementById(lista === "sesa" ? "areaProcessosSesa" : "areaProcessosHospital");
+      container.querySelectorAll(".linha-detalhe-itens").forEach((el) => el.remove());
+      container.querySelectorAll(".linha-produto-ativa").forEach((el) => el.classList.remove("linha-produto-ativa"));
+      processoAberto[lista] = null;
+    }
+
+    async function abrirItensProcesso(linha, lista) {
+      processoAberto[lista] = linha.dataset.processo;
+      linha.classList.add("linha-produto-ativa");
+
+      const trDetalhe = document.createElement("tr");
+      trDetalhe.className = "linha-detalhe-itens";
+      const colunas = linha.children.length;
+      trDetalhe.innerHTML = `<td colspan="${colunas}"><p class="msg-vazio">Carregando itens...</p></td>`;
+      linha.after(trDetalhe);
+
+      const params = montarQueryFiltros();
+      params.set("lista", lista);
+      params.set("processo_exato", linha.dataset.processo);
+      if (identificacaoLogada()) params.set("usuario_logado", identificacaoLogada());
+      try {
+        const resp = await fetch(`/api/processos_sesa/itens?${params.toString()}`);
+        const itens = await resp.json();
+        if (itens.erro) throw new Error(itens.erro);
+        trDetalhe.innerHTML = `<td colspan="${colunas}">${montarTabelaItens(itens, lista)}</td>`;
+        trDetalhe.querySelectorAll(".botao-mover-processo").forEach((botao) => {
+          botao.addEventListener("click", () => {
+            // item de processo manual nao tem lista SESA pra voltar - Remover apaga o item
+            if (botao.dataset.origem === "manual") removerItemManual(botao);
+            else moverProcesso(botao, lista === "sesa" ? "hospital" : "sesa");
+          });
+        });
+      } catch (erro) {
+        trDetalhe.innerHTML = `<td colspan="${colunas}"><p class="msg-vazio">Erro ao carregar itens: ${escaparHtml(String(erro))}</p></td>`;
+      }
+    }
+
+    // lista: "sesa" ou "hospital" - cada uma buscada e paginada de forma independente
+    async function buscarProcessos(lista, pagina) {
+      paginaAtual[lista] = pagina;
+      const params = montarQueryFiltros();
+      params.set("lista", lista);
+      params.set("pagina", pagina);
+
+      const sufixo = lista === "sesa" ? "Sesa" : "Hospital";
+      const container = document.getElementById(`areaProcessos${sufixo}`);
+      container.innerHTML = '<p class="msg-vazio">Carregando dado, aguenta ai...</p>';
+
+      try {
+        const resp = await fetch(`/api/processos_sesa?${params.toString()}`);
+        const resultado = await resp.json();
+        if (resultado.erro) throw new Error(resultado.erro);
+        const total = resultado.total ?? 0;
+
+        // pagina que ficou vazia depois de mover o ultimo item dela - volta uma
+        if (!resultado.dados.length && pagina > 1) {
+          return buscarProcessos(lista, pagina - 1);
+        }
+
+        const contador = document.getElementById(`contadorProcessos${sufixo}`);
+        contador.textContent = total.toLocaleString("pt-BR");
+        contador.title = `${total.toLocaleString("pt-BR")} processos · ${(resultado.total_itens ?? 0).toLocaleString("pt-BR")} itens`;
+        renderizarProcessos(resultado.dados, lista);
+        renderizarPaginacao(total, resultado.pagina ?? pagina, resultado.tamanho_pagina ?? 10,
+          `areaPaginacao${sufixo}`, (novaPagina) => buscarProcessos(lista, novaPagina));
+      } catch (erro) {
+        container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${escaparHtml(String(erro))}</p>`;
+        document.getElementById(`areaPaginacao${sufixo}`).innerHTML = "";
+      }
+    }
+
+    // filtro novo = volta pra pagina 1 com tudo fechado
+    function buscarTudo() {
+      processoAberto.sesa = null;
+      processoAberto.hospital = null;
+      buscarProcessos("sesa", 1);
+      buscarProcessos("hospital", 1);
+    }
+
+    // Incluir (SESA -> Hospital) / Remover (Hospital -> SESA) - recarrega as duas listas na
+    // pagina em que estavam (o processo aberto continua aberto se ainda tiver item na lista)
+    async function moverProcesso(botao, destino) {
+      botao.disabled = true;
+      try {
+        const resp = await fetch("/api/processos_sesa/mover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            processosesaitem: Number(botao.dataset.item),
+            destino,
+            usuario_logado: identificacaoLogada(),
+          }),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          alert(dado.msg || "Não foi possível mover o processo.");
+          botao.disabled = false;
+          return;
+        }
+        buscarProcessos("sesa", paginaAtual.sesa);
+        buscarProcessos("hospital", paginaAtual.hospital);
+      } catch (e) {
+        alert("Sem sinal de fumaça com o servidor");
+        botao.disabled = false;
+      }
+    }
+
+    async function removerItemManual(botao) {
+      if (!confirm("Remover este item do processo? Se for o último item, o processo também é excluído.")) return;
+      botao.disabled = true;
+      try {
+        const resp = await fetch(`/api/processos_hospital_manual/item/${botao.dataset.item}`, { method: "DELETE" });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          alert(dado.msg || "Não foi possível remover o item.");
+          botao.disabled = false;
+          return;
+        }
+        buscarProcessos("hospital", paginaAtual.hospital);
+      } catch (e) {
+        alert("Sem sinal de fumaça com o servidor");
+        botao.disabled = false;
+      }
+    }
+
+    // ---- edicao de processo da planilha (lista Hospital, so Administrador/Compras) ----
+    const formEdicaoProcesso = document.getElementById("formEdicaoProcesso");
+    let processoEmEdicao = null;
+    const CAMPOS_EDICAO = {
+      tipo_aquisicao: "edicaoTipo",
+      status: "edicaoStatus",
+      etapa: "edicaoEtapa",
+      pregao: "edicaoPregao",
+      ata: "edicaoAta",
+      vigencia: "edicaoVigencia",
+      data_abertura: "edicaoDataAbertura",
+    };
+
+    function fecharFormEdicaoProcesso() {
+      formEdicaoProcesso.reset();
+      formEdicaoProcesso.classList.add("oculto");
+      processoEmEdicao = null;
+      document.getElementById("erroEdicaoProcesso").textContent = "";
+    }
+
+    async function abrirFormEdicaoProcesso(processo) {
+      fecharFormProcessoManual();
+      fecharFormEdicaoProcesso();
+      try {
+        const resp = await fetch(`/api/processos_hospital/edicao?processo=${encodeURIComponent(processo)}`);
+        const dado = await resp.json();
+        if (dado.erro) throw new Error(dado.erro);
+        processoEmEdicao = processo;
+        document.getElementById("edicaoNumeroProcesso").textContent = processo;
+        // status da planilha pode ter valor fora do padrao (ex.: CORANTES) - entra como opcao pra nao sumir
+        const opcoesStatus = ["", "ANDAMENTO", "FINALIZADO"];
+        if (dado.status && !opcoesStatus.includes(dado.status)) opcoesStatus.push(dado.status);
+        document.getElementById("edicaoStatus").innerHTML = opcoesStatus
+          .map((s) => `<option value="${escaparHtml(s)}">${escaparHtml(s) || "-"}</option>`)
+          .join("");
+        Object.entries(CAMPOS_EDICAO).forEach(([campo, id]) => {
+          document.getElementById(id).value = dado[campo] ?? "";
+        });
+      } catch (erro) {
+        alert(`Não foi possível carregar o processo: ${erro}`);
+        return;
+      }
+      formEdicaoProcesso.classList.remove("oculto");
+      formEdicaoProcesso.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    document.getElementById("botaoCancelarEdicaoProcesso").addEventListener("click", fecharFormEdicaoProcesso);
+
+    formEdicaoProcesso.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const erro = document.getElementById("erroEdicaoProcesso");
+      erro.textContent = "";
+      const corpo = { processo: processoEmEdicao, usuario_logado: identificacaoLogada() };
+      Object.entries(CAMPOS_EDICAO).forEach(([campo, id]) => {
+        corpo[campo] = document.getElementById(id).value;
+      });
+
+      const botao = document.getElementById("botaoSalvarEdicaoProcesso");
+      botao.disabled = true;
+      try {
+        const resp = await fetch("/api/processos_hospital/edicao", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(corpo),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          erro.textContent = dado.msg || "Não foi possível salvar";
+          return;
+        }
+        fecharFormEdicaoProcesso();
+        await iniciarFiltroStatus();
+        // processo pode estar nas duas listas (itens em SESA e em Hospital)
+        buscarProcessos("sesa", paginaAtual.sesa);
+        buscarProcessos("hospital", paginaAtual.hospital);
+      } catch (e) {
+        erro.textContent = "Sem sinal de fumaça com o servidor";
+      } finally {
+        botao.disabled = false;
+      }
+    });
+
+    // ---- cadastro manual de processo (lista Hospital) ----
+    const formProcessoManual = document.getElementById("formProcessoManual");
+    // processo em edicao (null = novo) e itens escolhidos, na ordem em que vao ser numerados
+    let processoManualEmEdicao = null;
+    let itensProcessoManual = [];
+
+    function renderizarItensProcessoManual() {
+      const area = document.getElementById("itensProcessoManual");
+      if (!itensProcessoManual.length) {
+        area.innerHTML = '<p class="msg-vazio">Nenhum item incluído. Pesquise pelo Cód. Seplag acima.</p>';
+        return;
+      }
+      area.innerHTML = `
+        <table class="tabela-dados">
+          <thead><tr><th>Nº Item</th><th>Cód. Seplag</th><th>Produto</th><th>Apres.</th><th></th></tr></thead>
+          <tbody>${itensProcessoManual.map((item, indice) => `
+            <tr>
+              <td>${indice + 1}</td>
+              <td>${escaparHtml(item.cod_seplag)}</td>
+              <td class="celula-quebra">${escaparHtml(item.nome_produto)}</td>
+              <td>${escaparHtml(item.apresentacao)}</td>
+              <td><button type="button" class="botao-acao-produto" data-indice="${indice}">Retirar</button></td>
+            </tr>`).join("")}
+          </tbody>
+        </table>`;
+      area.querySelectorAll("button[data-indice]").forEach((botao) => {
+        botao.addEventListener("click", () => {
+          itensProcessoManual.splice(Number(botao.dataset.indice), 1);
+          renderizarItensProcessoManual();
+        });
+      });
+    }
+
+    async function buscarProdutoPorSeplag() {
+      const termo = document.getElementById("manualBuscaSeplag").value.trim();
+      const area = document.getElementById("resultadoBuscaSeplagManual");
+      if (!termo) {
+        area.innerHTML = "";
+        return;
+      }
+      area.innerHTML = '<p class="msg-vazio">Pesquisando...</p>';
+      try {
+        const resp = await fetch(`/api/processos_hospital/produtos?cod_seplag=${encodeURIComponent(termo)}`);
+        const produtos = await resp.json();
+        if (produtos.erro) throw new Error(produtos.erro);
+        if (!produtos.length) {
+          area.innerHTML = '<p class="msg-vazio">Nenhum produto com esse Cód. Seplag.</p>';
+          return;
+        }
+        area.innerHTML = `
+          <table class="tabela-dados">
+            <thead><tr><th>Cód. Seplag</th><th>Produto</th><th>Apres.</th><th></th></tr></thead>
+            <tbody>${produtos.map((p, indice) => {
+              const jaIncluido = itensProcessoManual.some((item) => String(item.produto) === String(p.produto));
+              return `
+              <tr>
+                <td>${escaparHtml(p.cod_seplag)}</td>
+                <td class="celula-quebra">${escaparHtml(p.nome_produto)}</td>
+                <td>${escaparHtml(p.apresentacao)}</td>
+                <td><button type="button" class="botao-acao-produto" data-indice="${indice}" ${jaIncluido ? "disabled" : ""}>${jaIncluido ? "Incluído" : "Incluir"}</button></td>
+              </tr>`;
+            }).join("")}
+            </tbody>
+          </table>`;
+        area.querySelectorAll("button[data-indice]").forEach((botao) => {
+          botao.addEventListener("click", () => {
+            itensProcessoManual.push(produtos[Number(botao.dataset.indice)]);
+            botao.disabled = true;
+            botao.textContent = "Incluído";
+            renderizarItensProcessoManual();
+          });
+        });
+      } catch (erro) {
+        area.innerHTML = `<p class="msg-vazio">Erro ao pesquisar: ${escaparHtml(String(erro))}</p>`;
+      }
+    }
+
+    function fecharFormProcessoManual() {
+      formProcessoManual.reset();
+      formProcessoManual.classList.add("oculto");
+      processoManualEmEdicao = null;
+      itensProcessoManual = [];
+      document.getElementById("resultadoBuscaSeplagManual").innerHTML = "";
+      document.getElementById("erroProcessoManual").textContent = "";
+    }
+
+    // id = null abre em branco (novo processo), senao carrega o processo manual pra editar
+    async function abrirFormProcessoManual(id) {
+      fecharFormEdicaoProcesso();
+      fecharFormProcessoManual();
+      document.getElementById("tituloFormProcessoManual").textContent = id ? "Editar processo" : "Novo processo";
+      document.getElementById("botaoExcluirProcessoManual").classList.toggle("oculto", !id);
+      if (id) {
+        try {
+          const resp = await fetch(`/api/processos_hospital_manual/${id}`);
+          const processo = await resp.json();
+          if (processo.erro) throw new Error(processo.erro);
+          processoManualEmEdicao = id;
+          document.getElementById("manualProcesso").value = processo.processo ?? "";
+          document.getElementById("manualGrupo").value = processo.grupo ?? "";
+          document.getElementById("manualTipo").value = processo.tipo_aquisicao ?? "";
+          document.getElementById("manualStatus").value = processo.status ?? "";
+          document.getElementById("manualEtapa").value = processo.etapa ?? "";
+          document.getElementById("manualDataAbertura").value = processo.data_abertura ?? "";
+          itensProcessoManual = processo.itens;
+        } catch (erro) {
+          alert(`Não foi possível carregar o processo: ${erro}`);
+          return;
+        }
+      }
+      renderizarItensProcessoManual();
+      formProcessoManual.classList.remove("oculto");
+      formProcessoManual.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    document.getElementById("botaoNovoProcessoManual").addEventListener("click", () => {
+      if (formProcessoManual.classList.contains("oculto")) abrirFormProcessoManual(null);
+      else fecharFormProcessoManual();
+    });
+    document.getElementById("botaoCancelarProcessoManual").addEventListener("click", fecharFormProcessoManual);
+    document.getElementById("botaoBuscarSeplagManual").addEventListener("click", buscarProdutoPorSeplag);
+    document.getElementById("manualBuscaSeplag").addEventListener("keydown", (ev) => {
+      // Enter pesquisa em vez de enviar o formulario inteiro
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        buscarProdutoPorSeplag();
+      }
+    });
+
+    formProcessoManual.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const erro = document.getElementById("erroProcessoManual");
+      erro.textContent = "";
+      if (!itensProcessoManual.length) {
+        erro.textContent = "Inclua pelo menos um item no processo";
+        return;
+      }
+
+      const corpo = {
+        processo: document.getElementById("manualProcesso").value.trim(),
+        grupo: document.getElementById("manualGrupo").value,
+        tipo_aquisicao: document.getElementById("manualTipo").value.trim(),
+        status: document.getElementById("manualStatus").value,
+        etapa: document.getElementById("manualEtapa").value.trim(),
+        data_abertura: document.getElementById("manualDataAbertura").value,
+        produtos: itensProcessoManual.map((item) => item.produto),
+        usuario_logado: identificacaoLogada(),
+      };
+      const url = processoManualEmEdicao ? `/api/processos_hospital_manual/${processoManualEmEdicao}` : "/api/processos_hospital_manual";
+
+      const botao = document.getElementById("botaoSalvarProcessoManual");
+      botao.disabled = true;
+      try {
+        const resp = await fetch(url, {
+          method: processoManualEmEdicao ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(corpo),
+        });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          erro.textContent = dado.msg || "Não foi possível salvar o processo";
+          return;
+        }
+        fecharFormProcessoManual();
+        processoAberto.hospital = corpo.processo;
+        await iniciarFiltroStatus();
+        buscarProcessos("hospital", 1);
+      } catch (e) {
+        erro.textContent = "Sem sinal de fumaça com o servidor";
+      } finally {
+        botao.disabled = false;
+      }
+    });
+
+    document.getElementById("botaoExcluirProcessoManual").addEventListener("click", async () => {
+      if (!processoManualEmEdicao || !confirm("Excluir este processo e todos os itens dele?")) return;
+      try {
+        const usuario = encodeURIComponent(identificacaoLogada() || "");
+        const resp = await fetch(`/api/processos_hospital_manual/${processoManualEmEdicao}?usuario_logado=${usuario}`, { method: "DELETE" });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          document.getElementById("erroProcessoManual").textContent = dado.msg || "Não foi possível excluir";
+          return;
+        }
+        fecharFormProcessoManual();
+        buscarProcessos("hospital", paginaAtual.hospital);
+      } catch (e) {
+        document.getElementById("erroProcessoManual").textContent = "Sem sinal de fumaça com o servidor";
+      }
+    });
+
+    // ---- sugestao de descricao enquanto digita ----
+    const campoDescricao = document.getElementById("filtroDescricao");
+    const caixaSugestoesDescricao = document.getElementById("sugestoesDescricao");
+    let temporizadorSugestaoDescricao = null;
+
+    function esconderSugestoesDescricao() {
+      caixaSugestoesDescricao.innerHTML = "";
+      caixaSugestoesDescricao.classList.remove("aberto");
+    }
+
+    async function buscarSugestoesDescricao(termo) {
+      try {
+        const params = new URLSearchParams({ termo });
+        if (grupoSelecionado) params.set("grupo", grupoSelecionado);
+        const resp = await fetch(`/api/processos_sesa/descricoes_sugestoes?${params.toString()}`);
+        const descricoes = await resp.json();
+        // usuario continuou digitando enquanto a busca ia e voltava - resposta velha, descarta
+        if (campoDescricao.value.trim() !== termo) return;
+
+        if (!Array.isArray(descricoes) || descricoes.length === 0) {
+          esconderSugestoesDescricao();
+          return;
+        }
+
+        caixaSugestoesDescricao.innerHTML = descricoes
+          .map((descricao, indice) => `<div class="item-sugestao" data-indice="${indice}">${escaparHtml(descricao)}</div>`)
+          .join("");
+        caixaSugestoesDescricao.classList.add("aberto");
+
+        caixaSugestoesDescricao.querySelectorAll(".item-sugestao").forEach((item) => {
+          item.addEventListener("click", () => {
+            campoDescricao.value = descricoes[Number(item.dataset.indice)];
+            esconderSugestoesDescricao();
+            buscarTudo();
+          });
+        });
+      } catch (erro) {
+        esconderSugestoesDescricao();
+      }
+    }
+
+    campoDescricao.addEventListener("input", () => {
+      const termo = campoDescricao.value.trim();
+      clearTimeout(temporizadorSugestaoDescricao);
+
+      if (!termo) {
+        esconderSugestoesDescricao();
+        return;
+      }
+
+      temporizadorSugestaoDescricao = setTimeout(() => buscarSugestoesDescricao(termo), 250);
+    });
+
+    document.addEventListener("click", (ev) => {
+      if (!ev.target.closest(".campo-autocompletar")) esconderSugestoesDescricao();
+    });
+
+    document.getElementById("formFiltros").addEventListener("submit", (evento) => {
+      evento.preventDefault();
+      esconderSugestoesDescricao();
+      buscarTudo();
+    });
+
+    document.getElementById("botaoResetarFiltros").addEventListener("click", () => {
+      document.getElementById("formFiltros").reset();
+      esconderSugestoesDescricao();
+      grupoSelecionado = "";
+      document.querySelectorAll("#botoesGrupoAquisicao .botao-grupo").forEach((b) => b.classList.toggle("ativo", b.dataset.sigla === ""));
+      buscarTudo();
+    });
+
+    // ---- importacao da planilha de processos SESA ----
+    const formImportacaoSesa = document.getElementById("formImportacaoSesa");
+
+    function fecharImportacaoSesa() {
+      formImportacaoSesa.reset();
+      document.getElementById("mensagemImportacaoSesa").textContent = "";
+      formImportacaoSesa.classList.add("oculto");
+    }
+
+    document.getElementById("botaoAbrirImportacaoSesa").addEventListener("click", () => {
+      formImportacaoSesa.classList.toggle("oculto");
+    });
+    document.getElementById("botaoCancelarImportacaoSesa").addEventListener("click", fecharImportacaoSesa);
+
+    function mostrarResumoImportacaoSesa(ultima) {
+      const area = document.getElementById("resumoImportacaoSesa");
+      if (!ultima) {
+        area.classList.add("oculto");
+        return;
+      }
+      const badges = ultima.grupos
+        .map((g) => `<span class="grupo-badge-armazem"><strong>${escaparHtml(g.nome)}</strong> ${Number(g.itens).toLocaleString("pt-BR")}</span>`)
+        .join("");
+      area.innerHTML = `
+        <p class="resumo-importacao-titulo">
+          Última importação: ${escaparHtml(ultima.data_importacao)} · ${escaparHtml(ultima.arquivo)}${ultima.usuario ? ` · ${escaparHtml(ultima.usuario)}` : ""}
+          · ${Number(ultima.total_itens).toLocaleString("pt-BR")} itens lidos
+          (${Number(ultima.inseridos ?? 0).toLocaleString("pt-BR")} novos, ${Number(ultima.atualizados ?? 0).toLocaleString("pt-BR")} atualizados)
+        </p>
+        <div class="resumo-importacao-grupos">${badges}</div>`;
+      area.classList.remove("oculto");
+    }
+
+    async function carregarUltimaImportacaoSesa() {
+      try {
+        const resp = await fetch("/api/processos_sesa/ultima_importacao");
+        mostrarResumoImportacaoSesa(await resp.json());
+      } catch (e) {
+        // sem servidor so nao mostra o resumo
+      }
+    }
+
+    formImportacaoSesa.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const mensagem = document.getElementById("mensagemImportacaoSesa");
+      const botao = document.getElementById("botaoImportarSesa");
+      mensagem.textContent = "";
+
+      const arquivo = document.getElementById("arquivoPlanilhaSesa").files[0];
+      if (!arquivo) return;
+
+      const dadosForm = new FormData();
+      dadosForm.append("arquivo", arquivo);
+      if (identificacaoLogada()) dadosForm.append("usuario_logado", identificacaoLogada());
+
+      botao.disabled = true;
+      botao.textContent = "Importando...";
+      try {
+        const resp = await fetch("/api/processos_sesa/importar", { method: "POST", body: dadosForm });
+        const dado = await resp.json();
+        if (!dado.ok) {
+          mensagem.textContent = dado.msg || "Erro ao importar planilha";
+          return;
+        }
+        fecharImportacaoSesa();
+        carregarUltimaImportacaoSesa();
+        await iniciarFiltroStatus();
+        buscarTudo();
+        let texto = `${dado.total_itens.toLocaleString("pt-BR")} itens lidos da planilha:\n`
+          + `- ${dado.inseridos.toLocaleString("pt-BR")} novos\n`
+          + `- ${dado.atualizados.toLocaleString("pt-BR")} atualizados\n`
+          + `- ${dado.sem_alteracao.toLocaleString("pt-BR")} sem alteração`;
+        if (dado.avisos.length) texto += `\n\nAvisos:\n- ${dado.avisos.join("\n- ")}`;
+        alert(texto);
+      } catch (e) {
+        mensagem.textContent = "Sem sinal de fumaça com o servidor";
+      } finally {
+        botao.disabled = false;
+        botao.textContent = "Importar";
+      }
+    });
+
+    iniciarBotoesGrupo();
+    iniciarFiltroStatus();
+    carregarUltimaImportacaoSesa();
+    carregarPermissoes().then(buscarTudo);
+  </script>
+</body>
+</html>

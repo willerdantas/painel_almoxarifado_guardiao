@@ -11,9 +11,9 @@ async function carregarTabela(endpoint, containerId) {
     }
 
     const colunas = Object.keys(dados[0]);
-    const cabecalho = colunas.map((c) => `<th>${c}</th>`).join("");
+    const cabecalho = colunas.map((c) => `<th>${escaparHtml(c)}</th>`).join("");
     const linhas = dados
-      .map((linha) => `<tr>${colunas.map((c) => `<td>${linha[c] ?? ""}</td>`).join("")}</tr>`)
+      .map((linha) => `<tr>${colunas.map((c) => `<td>${escaparHtml(linha[c])}</td>`).join("")}</tr>`)
       .join("");
 
     container.innerHTML = `
@@ -23,7 +23,7 @@ async function carregarTabela(endpoint, containerId) {
       </table>`;
     return dados;
   } catch (erro) {
-    container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${erro}</p>`;
+    container.innerHTML = `<p class="msg-vazio">Erro ao caçar dados: ${escaparHtml(erro)}</p>`;
     return [];
   }
 }
